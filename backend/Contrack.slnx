@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Contrack.Api/Contrack.Api.csproj" />
+    <Project Path="src/Contrack.Application/Contrack.Application.csproj" />
+    <Project Path="src/Contrack.Domain/Contrack.Domain.csproj" />
+    <Project Path="src/Contrack.Infrastructure/Contrack.Infrastructure.csproj" />
+    <Project Path="src/Contrack.Worker/Contrack.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Contrack.UnitTests/Contrack.UnitTests.csproj" />
+    <Project Path="tests/Contrack.IntegrationTests/Contrack.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Entity, enum trạng thái và business rule thuần, không phụ thuộc framework -->
+</Project>

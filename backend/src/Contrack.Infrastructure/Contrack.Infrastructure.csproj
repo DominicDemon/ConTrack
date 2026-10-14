@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- MasterDbContext, TenantDbContext, migration, MinIO, email, SMS, OCR client -->
+  <ItemGroup>
+    <ProjectReference Include="..\Contrack.Application\Contrack.Application.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.*" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.*" />
+  </ItemGroup>
+</Project>

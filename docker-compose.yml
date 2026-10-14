@@ -1,0 +1,87 @@
+# Môi trường dev của ConTrack.
+#   docker compose up -d                 -> chỉ hạ tầng: PostgreSQL, MinIO, Mailpit
+#   docker compose --profile app up -d   -> thêm API (.NET) và Web (React) chạy trong container
+name: contrack
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-contrack}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-contrack_dev}
+      POSTGRES_DB: contrack_master
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-contrack} -d contrack_master"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-contrack}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-contrack_dev_secret}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Console: http://localhost:9001
+    volumes:
+      - miniodata:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-contrack} $${MINIO_ROOT_PASSWORD:-contrack_dev_secret}; do sleep 2; done;
+      mc mb --ignore-existing local/contrack-documents;
+      echo 'bucket contrack-documents ready';
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-contrack}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-contrack_dev_secret}
+    restart: "no"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"   # SMTP cho API gửi email
+      - "8025:8025"   # Hộp thư xem email: http://localhost:8025
+
+  api:
+    profiles: ["app"]
+    build:
+      context: ./backend
+      dockerfile: src/Contrack.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__MasterDb: Host=postgres;Port=5432;Database=contrack_master;Username=${POSTGRES_USER:-contrack};Password=${POSTGRES_PASSWORD:-contrack_dev}
+      Storage__Endpoint: http://minio:9000
+      Email__SmtpHost: mailpit
+      Cors__Origins__0: http://localhost:5173
+    ports:
+      - "5080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    profiles: ["app"]
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:5080
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  miniodata:

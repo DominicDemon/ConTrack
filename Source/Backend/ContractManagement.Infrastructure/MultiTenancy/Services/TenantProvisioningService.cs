@@ -87,58 +87,81 @@ public sealed class TenantProvisioningService
         /*
          * Kiểm tra tenant đã tồn tại chưa.
          */
-        bool tenantExists =
+        var existingTenant =
             await _centralDbContext.Tenants
-                .AnyAsync(
+                .Include(x => x.TenantDatabase)
+                .SingleOrDefaultAsync(
                     x => x.TenantCode.ToLower() == normalizedTenantCode,
                     cancellationToken);
 
-        if (tenantExists)
+        if (existingTenant is not null
+            && existingTenant.Status != TenantStatus.Failed)
         {
             throw new InvalidOperationException(
                 $"Tenant '{tenantCode}' đã tồn tại.");
         }
 
-        /*
-         * DatabaseKey và tên database dùng mã chuẩn hóa chữ thường,
-         * TenantCode hiển thị vẫn giữ đúng chữ hoa/thường được nhập.
-         *
-         * Khi đặt tên database, đổi dấu gạch ngang thành gạch dưới.
-         */
-        string safeSuffix =
-            normalizedTenantCode.Replace("-", "_");
+        Tenant tenant;
+        TenantDatabase tenantDatabase;
+        string connectionString;
 
-        string databaseName =
-            $"{_options.DatabasePrefix}{safeSuffix}";
-
-        string connectionString =
-            BuildConnectionString(databaseName);
-
-        var tenantDatabase = new TenantDatabase
+        if (existingTenant is not null)
         {
-            DatabaseKey = $"dedicated-{normalizedTenantCode}",
-            DatabaseName = databaseName,
-            ConnectionString = connectionString,
-            Mode = TenantDatabaseMode.Dedicated,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        var tenant = new Tenant
+            /*
+             * Retry tenant Failed: dùng lại bản ghi tenant và database cũ
+             * (initializer chạy migrate nên an toàn khi database đã tạo dở).
+             */
+            tenant = existingTenant;
+            tenantDatabase = existingTenant.TenantDatabase;
+            connectionString = tenantDatabase.ConnectionString;
+            tenant.TenantName = tenantName;
+            tenant.Status = TenantStatus.Provisioning;
+            tenant.ProvisioningError = null;
+            tenant.UpdatedAt = DateTime.UtcNow;
+        }
+        else
         {
-            TenantCode = tenantCode,
-            TenantName = tenantName,
-            Status = TenantStatus.Provisioning,
-            TenantDatabase = tenantDatabase,
-            CreatedAt = DateTime.UtcNow
-        };
+            /*
+             * DatabaseKey và tên database dùng mã chuẩn hóa chữ thường,
+             * TenantCode hiển thị vẫn giữ đúng chữ hoa/thường được nhập.
+             *
+             * Khi đặt tên database, đổi dấu gạch ngang thành gạch dưới.
+             */
+            string safeSuffix =
+                normalizedTenantCode.Replace("-", "_");
 
-        /*
-         * Lưu trạng thái Provisioning trước khi tạo database.
-         *
-         * Nếu quá trình tạo database lỗi,
-         * hệ thống vẫn có bản ghi để kiểm tra và retry.
-         */
-        _centralDbContext.Tenants.Add(tenant);
+            string databaseName =
+                $"{_options.DatabasePrefix}{safeSuffix}";
+
+            connectionString =
+                BuildConnectionString(databaseName);
+
+            tenantDatabase = new TenantDatabase
+            {
+                DatabaseKey = $"dedicated-{normalizedTenantCode}",
+                DatabaseName = databaseName,
+                ConnectionString = connectionString,
+                Mode = TenantDatabaseMode.Dedicated,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            tenant = new Tenant
+            {
+                TenantCode = tenantCode,
+                TenantName = tenantName,
+                Status = TenantStatus.Provisioning,
+                TenantDatabase = tenantDatabase,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            /*
+             * Lưu trạng thái Provisioning trước khi tạo database.
+             *
+             * Nếu quá trình tạo database lỗi,
+             * hệ thống vẫn có bản ghi để kiểm tra và retry.
+             */
+            _centralDbContext.Tenants.Add(tenant);
+        }
 
         await _centralDbContext.SaveChangesAsync(
             cancellationToken);

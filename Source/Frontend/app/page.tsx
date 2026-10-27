@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Loader2,
@@ -14,6 +15,7 @@ import { toast } from "@/components/ui/sonner";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { authApi } from "@/services/auth-api";
 import { APP_NAME } from "@/lib/application-branding";
+import { getPricingReturnPath } from "@/lib/pricing-preview";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +32,7 @@ import { useAuthStore } from "@/hooks/use-auth-store";
 
 export default function LoginPage() {
   const recoveryLogin = useRef(false);
+  const pricingReturnPath = useRef<string | null>(null);
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [tenantCode, setTenantCode] = useState("");
@@ -57,13 +60,17 @@ export default function LoginPage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
+      pricingReturnPath.current = getPricingReturnPath(urlParams.get("returnTo"));
+      const cleanedLoginPath = pricingReturnPath.current
+        ? `/?${new URLSearchParams({ returnTo: pricingReturnPath.current })}`
+        : "/";
       const error = urlParams.get("error");
       const passwordChanged = urlParams.get("password_changed");
 
       if (passwordChanged === "1") {
         const timer = setTimeout(() => {
           toast.success("Đổi mật khẩu thành công. Vui lòng đăng nhập lại.");
-          window.history.replaceState(null, "", "/");
+          window.history.replaceState(null, "", cleanedLoginPath);
         }, 100);
         return () => clearTimeout(timer);
       }
@@ -75,7 +82,7 @@ export default function LoginPage() {
               ? "Tài khoản nhân viên đã bị khóa. Vui lòng liên hệ quản lý."
               : "Phiên đăng nhập đã hết hạn hoặc không tồn tại, vui lòng đăng nhập lại.",
           );
-          window.history.replaceState(null, "", "/");
+          window.history.replaceState(null, "", cleanedLoginPath);
         }, 100);
         return () => clearTimeout(timer);
       }
@@ -95,7 +102,7 @@ export default function LoginPage() {
         router.push(
           user.mustChangePassword
             ? "/change-password?required=1"
-            : user.defaultPage || "/contracts",
+            : pricingReturnPath.current || user.defaultPage || "/contracts",
         );
         return;
       }
@@ -106,7 +113,7 @@ export default function LoginPage() {
         router.push(
           profile.mustChangePassword
             ? "/change-password?required=1"
-            : profile.defaultPage || "/contracts",
+            : pricingReturnPath.current || profile.defaultPage || "/contracts",
         );
       } catch (error) {
         setIsLoading(false);
@@ -204,7 +211,7 @@ export default function LoginPage() {
       router.push(
         profile.mustChangePassword
           ? "/change-password?required=1"
-          : profile.defaultPage || "/contracts",
+          : pricingReturnPath.current || profile.defaultPage || "/contracts",
       );
     } catch (error: any) {
       const message =
@@ -412,6 +419,10 @@ export default function LoginPage() {
 
             <CardFooter className="p-5 pt-0 sm:p-10 sm:pt-0">
               <div className="w-full pt-6 border-t border-border">
+                <div className="mb-4 flex justify-center gap-5 text-xs text-muted-foreground">
+                  <Link href="/home" className="hover:text-primary hover:underline">Trang chủ</Link>
+                  <Link href="/pricing" className="hover:text-primary hover:underline">Xem gói dịch vụ</Link>
+                </div>
                 <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
                   <ShieldCheck className="w-4 h-4 text-emerald-500" />
                   <span>Dữ liệu được mã hóa & Bảo mật cấp doanh nghiệp</span>

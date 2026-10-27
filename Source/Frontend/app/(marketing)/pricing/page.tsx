@@ -6,7 +6,7 @@ import { APP_NAME } from "@/lib/application-branding";
 
 export const metadata: Metadata = {
   title: `${APP_NAME} | Gói dịch vụ`,
-  description: "So sánh gói dùng thử 15 ngày và các kỳ sử dụng 3, 6, 12 tháng.",
+  description: "So sánh gói dùng thử và các gói trả phí, đăng ký và thanh toán trực tuyến qua PayOS.",
 };
 
 export default function PricingPage() {

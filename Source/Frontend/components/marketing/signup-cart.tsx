@@ -9,6 +9,7 @@ import { SignupSteps } from "@/components/marketing/signup-steps";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error";
@@ -33,6 +34,9 @@ export function SignupCart() {
   const [voucherError, setVoucherError] = useState("");
   const [applying, setApplying] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [termsError, setTermsError] = useState("");
+  const termsRef = useRef<HTMLButtonElement>(null);
   const [submitError, setSubmitError] = useState<{ message: string; editInfo: boolean } | null>(null);
   const submitLock = useRef(false);
 
@@ -87,6 +91,11 @@ export function SignupCart() {
 
   const confirm = async () => {
     if (!draft?.info || !price || submitLock.current) return;
+    if (!acceptedTerms) {
+      setTermsError("Vui lòng đồng ý với Điều khoản dịch vụ để tiếp tục.");
+      termsRef.current?.focus();
+      return;
+    }
     submitLock.current = true;
     setSubmitting(true);
     setSubmitError(null);
@@ -188,6 +197,27 @@ export function SignupCart() {
                 </AlertDescription>
               </Alert>
             )}
+            <div className="space-y-2">
+              <div className="flex items-start gap-2.5">
+                <Checkbox
+                  ref={termsRef}
+                  id="accept-terms"
+                  className="mt-0.5"
+                  checked={acceptedTerms}
+                  disabled={submitting}
+                  aria-invalid={Boolean(termsError)}
+                  aria-describedby={termsError ? "accept-terms-error" : undefined}
+                  onCheckedChange={(checked) => {
+                    setAcceptedTerms(checked === true);
+                    setTermsError("");
+                  }}
+                />
+                <label htmlFor="accept-terms" className="cursor-pointer text-sm leading-5 text-muted-foreground">
+                  Tôi đồng ý với <span className="font-medium text-foreground">Điều khoản dịch vụ</span> và đã đọc <span className="font-medium text-foreground">Chính sách bảo mật</span> của eContract.
+                </label>
+              </div>
+              {termsError && <p id="accept-terms-error" role="alert" className="text-xs text-destructive">{termsError}</p>}
+            </div>
             <Button type="button" className="w-full" disabled={!price || submitting || applying} onClick={() => void confirm()}>
               {submitting && <Loader2 className="animate-spin" aria-hidden="true" />}
               {isFree ? "Xác nhận đăng ký" : "Xác nhận và thanh toán"}

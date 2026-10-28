@@ -63,7 +63,7 @@ public sealed class PublicSubscriptionService : IPublicSubscriptionService
                 x.Plan.PlanId, x.Plan.PlanCode, x.Plan.PlanName, x.Plan.PlanDescription, x.Plan.IsPaid,
                 x.Plan.AllowsSupportTickets, x.Plan.MaxUsers, x.Plan.MaxContracts, x.Plan.MaxScanPages,
                 x.Versions.Select(v => new PublicPlanVersionResponse(
-                    v.PlanVersionId, v.VersionNumber, v.Price, v.Currency, v.BillingCycle, v.DurationDays)).ToList()))
+                    v.PlanVersionId, v.VersionNumber, v.Price, v.Currency, v.BillingCycle, v.DurationDays, v.DurationMonths)).ToList()))
             .ToList();
     }
 
@@ -138,6 +138,7 @@ public sealed class PublicSubscriptionService : IPublicSubscriptionService
         var subscription = new SaasSubscription
         {
             Customer = customer, PlanVersionId = version.PlanVersionId, Status = Pending,
+            MaxUsersSnapshot = version.Plan.MaxUsers, MaxContractsSnapshot = version.Plan.MaxContracts, MaxScanPagesSnapshot = version.Plan.MaxScanPages, AllowsSupportTicketsSnapshot = version.Plan.AllowsSupportTickets,
             PriceSnapshot = version.Price, Currency = version.Currency, BillingCycle = version.BillingCycle,
             RequestedTenantCode = tenantCode, RequestedTenantName = tenantName, PublicId = Guid.NewGuid(), CreatedAt = now
         };
@@ -145,6 +146,8 @@ public sealed class PublicSubscriptionService : IPublicSubscriptionService
         {
             InvoiceCode = $"INV-{now:yyyyMM}-{invoiceSuffix}", Customer = customer, Subscription = subscription,
             BillingName = tenantName, BillingEmail = email, BillingPhone = phone,
+            PlanNameSnapshot = version.Plan.PlanName, BuyerNameSnapshot = fullName,
+            DurationMonthsSnapshot = version.DurationMonths, DurationDaysSnapshot = version.DurationDays,
             Subtotal = version.Price, DiscountAmount = discount, TotalAmount = total, Currency = version.Currency,
             Status = Unpaid, IssuedAt = now, DueAt = now.AddMinutes(_payOsOptions.PaymentLinkExpiryMinutes),
             PayosOrderCode = total > 0 ? NewOrderCode() : null, CreatedAt = now
@@ -270,7 +273,8 @@ public sealed class PublicSubscriptionService : IPublicSubscriptionService
         return new SubscriptionStatusResponse(subscription.PublicId, subscription.Status, subscription.IsPaid,
             StatusMessage(subscription.Status, subscription.IsPaid), subscription.RequestedTenantCode,
             subscription.RequestedTenantName, invoice.InvoiceCode, invoice.TotalAmount, invoice.Currency,
-            canPay ? invoice.PayosCheckoutUrl : null);
+            canPay ? invoice.PayosCheckoutUrl : null,
+            invoice.TotalAmount > 0 ? $"/billing/receipts/{invoice.PublicId}" : null);
     }
 
     private static SaasInvoice LatestInvoice(SaasSubscription subscription) =>

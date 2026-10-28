@@ -18,7 +18,7 @@ public sealed record PublicPlanVersionResponse(
     decimal Price,
     string Currency,
     string BillingCycle,
-    int? DurationDays);
+    int? DurationDays, int? DurationMonths = null);
 
 public sealed record TenantCodeCheckResponse(
     string TenantCode,
@@ -34,7 +34,7 @@ public sealed record VoucherPreviewResponse(
     decimal Total,
     string Currency);
 
-/// <summary>CheckoutUrl có giá trị khi cần chuyển sang PayOS; null với đơn 0đ (đi thẳng tới màn kết quả).</summary>
+/// <summary>CheckoutUrl cÃ³ giÃ¡ trá»‹ khi cáº§n chuyá»ƒn sang PayOS; null vá»›i Ä‘Æ¡n 0Ä‘ (Ä‘i tháº³ng tá»›i mÃ n káº¿t quáº£).</summary>
 public sealed record SubscriptionCheckoutResponse(
     Guid PublicId,
     string InvoiceCode,
@@ -52,4 +52,4 @@ public sealed record SubscriptionStatusResponse(
     string InvoiceCode,
     decimal Total,
     string Currency,
-    string? CheckoutUrl);
+    string? CheckoutUrl, string? ReceiptPath = null);

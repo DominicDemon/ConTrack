@@ -1,6 +1,6 @@
 "use client";
 
-import { LogOut, Settings, User } from "lucide-react";
+import { LogOut, ReceiptText, Settings, User } from "lucide-react";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -37,12 +37,12 @@ export function Header({ title }: { title?: string }) {
   return (
     <header className="bg-card/80 backdrop-blur-md border-b border-border sticky top-0 z-30 flex-shrink-0 transition-all">
       <div className="flex h-16 items-center justify-between px-3 sm:px-6 lg:px-8">
-        <div className="hidden md:block">
-          <h2 className="text-lg font-semibold text-foreground tracking-tight">
+        <div className="mr-3 hidden min-w-0 md:block md:pl-12 lg:pl-0">
+          <h2 className="truncate text-lg font-semibold text-foreground tracking-tight">
             {title}
           </h2>
         </div>
-        <div className="ml-auto flex items-center gap-2 sm:gap-3">
+        <div className="ml-auto flex shrink-0 items-center gap-2 sm:gap-3">
           <NotificationBell />
           <ThemeToggle />
           <DropdownMenu>
@@ -50,6 +50,7 @@ export function Header({ title }: { title?: string }) {
               <Button
                 variant="default"
                 size="icon"
+                aria-label="Menu tài khoản"
                 className="size-9 rounded-full p-0 shadow-sm transition-transform hover:scale-105"
               >
                 <Avatar className="size-9">
@@ -69,7 +70,7 @@ export function Header({ title }: { title?: string }) {
             <DropdownMenuContent
               align="center"
               side="bottom"
-              className="w-56 rounded-xl"
+              className="w-64 rounded-xl"
             >
               <DropdownMenuLabel className="font-normal px-2 py-2.5">
                 <div className="flex flex-col space-y-1.5">
@@ -96,6 +97,12 @@ export function Header({ title }: { title?: string }) {
                 <Link href="/settings">
                   <Settings className="mr-2 h-4 w-4 text-muted-foreground" />
                   <span className="font-medium">Cấu hình cá nhân</span>
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild className="cursor-pointer py-2">
+                <Link href="/billing/invoices">
+                  <ReceiptText className="mr-2 h-4 w-4 text-muted-foreground" />
+                  <span className="font-medium">Gói dịch vụ & Thanh toán</span>
                 </Link>
               </DropdownMenuItem>
 

@@ -1,4 +1,4 @@
-﻿using ContractManagement.Infrastructure.Persistence.Central.Entities;
+using ContractManagement.Infrastructure.Persistence.Central.Entities;
 using Microsoft.EntityFrameworkCore;
 using ContractManagement.Infrastructure.Persistence.Recovery;
 using ContractManagement.Infrastructure.Persistence.Central.Saas;
@@ -33,10 +33,12 @@ public sealed class CentralDbContext : DbContext
     public DbSet<SaasCustomer> Customers => Set<SaasCustomer>();
     public DbSet<SaasCustomerBusiness> CustomerBusinesses => Set<SaasCustomerBusiness>();
     public DbSet<SaasType> SaasTypes => Set<SaasType>();
+    public DbSet<PlanAudit> PlanAudits => Set<PlanAudit>();
     public DbSet<SaasPlan> Plans => Set<SaasPlan>();
     public DbSet<SaasPlanVersion> PlanVersions => Set<SaasPlanVersion>();
     public DbSet<SaasSubscription> Subscriptions => Set<SaasSubscription>();
     public DbSet<SaasPromotion> Promotions => Set<SaasPromotion>();
+    public DbSet<InvoiceEmailOutbox> InvoiceEmailOutbox => Set<InvoiceEmailOutbox>();
     public DbSet<SaasInvoice> SaasInvoices => Set<SaasInvoice>();
     public DbSet<SaasPayment> SaasPayments => Set<SaasPayment>();
     public DbSet<SaasInvoicePromotionDetail> InvoicePromotionDetails => Set<SaasInvoicePromotionDetail>();

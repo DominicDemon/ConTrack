@@ -52,6 +52,7 @@ internal static class SaasSeedData
     private static SaasPlanVersion Version(long id, long planId, int number, int days, decimal price, string cycle) => new()
     {
         PlanVersionId = id, PlanId = planId, VersionNumber = number, PurchaseType = "BUYMANY",
+        DurationMonths = cycle == "TRIAL" ? null : cycle == "QUARTERLY" ? 3 : cycle == "SEMI_ANNUAL" ? 6 : 12,
         DurationDays = days, Price = price, Currency = "VND", BillingCycle = cycle,
         EffectiveFrom = SeedAt, EffectiveTo = null, Status = "ACTIVE", CreatedAt = SeedAt
     };

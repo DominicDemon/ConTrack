@@ -18,6 +18,18 @@ public static class SaasModelConfiguration
         b.ApplyConfiguration(new SubscriptionConfig());
         b.ApplyConfiguration(new PromotionConfig());
         b.ApplyConfiguration(new InvoiceConfig());
+        b.Entity<InvoiceEmailOutbox>(e =>
+        {
+            e.ToTable("INVOICE_EMAIL_OUTBOX");
+            e.HasKey(x => x.OutboxId);
+            e.Property(x => x.Kind).HasMaxLength(50);
+            e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.FailureCode).HasMaxLength(100);
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasIndex(x => new { x.InvoiceId, x.Kind }).IsUnique();
+            e.HasIndex(x => new { x.Status, x.NextAttemptAt });
+            e.HasOne(x => x.Invoice).WithMany().HasForeignKey(x => x.InvoiceId).OnDelete(DeleteBehavior.Restrict);
+        });
         b.ApplyConfiguration(new PaymentConfig());
         b.ApplyConfiguration(new InvoicePromotionDetailConfig());
         b.ApplyConfiguration(new SubscriptionPromotionDetailConfig());
@@ -105,6 +117,8 @@ public static class SaasModelConfiguration
     {
         public void Configure(EntityTypeBuilder<SaasPlan> e)
         {
+            e.Property(x => x.Revision).IsConcurrencyToken();
+            e.HasIndex(x => x.PlanCode).IsUnique();
             e.ToTable("PLAN");   // EF tự bọc [PLAN] – không lỗi từ khóa như khi chạy script tay
             e.HasKey(x => x.PlanId).HasName("PK_PLAN");
             e.Property(x => x.PlanId).HasColumnName("plan_id");
@@ -135,6 +149,7 @@ public static class SaasModelConfiguration
             e.Property(x => x.VersionNumber).HasColumnName("plan_version_version_number");
             e.HasIndex(x => new { x.PlanId, x.VersionNumber }).IsUnique().HasDatabaseName("UX_PLAN_VERSION_Number");
             e.Property(x => x.PurchaseType).HasColumnName("plan_version_purchase_type").Ascii(20).HasDefaultValue("BUYMANY");
+            e.Property(x => x.DurationMonths).HasColumnName("plan_version_duration_months");
             e.Property(x => x.DurationDays).HasColumnName("plan_version_duration_days");
             e.Property(x => x.Price).HasColumnName("plan_version_price").Money().HasDefaultValue(0m);
             e.Property(x => x.Currency).HasColumnName("plan_version_currency").Cur().HasDefaultValue("VND");
@@ -153,6 +168,7 @@ public static class SaasModelConfiguration
         public void Configure(EntityTypeBuilder<SaasSubscription> e)
         {
             e.ToTable("SUBSCRIPTION");
+            e.Property(x => x.ProvisioningLeaseId).IsConcurrencyToken();
             e.HasKey(x => x.SubscriptionId).HasName("PK_SUBSCRIPTION");
             e.Property(x => x.SubscriptionId).HasColumnName("subscription_id");
             e.Property(x => x.TenantId).HasColumnName("tenant_id");               // NULL được
@@ -213,6 +229,10 @@ public static class SaasModelConfiguration
         public void Configure(EntityTypeBuilder<SaasInvoice> e)
         {
             e.ToTable("SAAS_INVOICE");
+            e.Property(x => x.PublicId).HasDefaultValueSql("NEWID()");
+            e.HasIndex(x => x.PublicId).IsUnique();
+            e.Property(x => x.PlanNameSnapshot).HasMaxLength(150);
+            e.Property(x => x.BuyerNameSnapshot).HasMaxLength(255);
             e.HasKey(x => x.InvoiceId).HasName("PK_SAAS_INVOICE");
             e.Property(x => x.InvoiceId).HasColumnName("invoice_id");
             e.Property(x => x.InvoiceCode).HasColumnName("invoice_code").Ascii(100).IsRequired();
@@ -228,7 +248,7 @@ public static class SaasModelConfiguration
             e.Property(x => x.DiscountAmount).HasColumnName("invoice_discount_amount").Money().HasDefaultValue(0m);
             e.Property(x => x.TotalAmount).HasColumnName("invoice_total_amount").Money();
             e.Property(x => x.Currency).HasColumnName("invoice_currency").Cur().HasDefaultValue("VND");
-            e.Property(x => x.Status).HasColumnName("invoice_status").Ascii(30).HasDefaultValue("DRAFT");
+            e.Property(x => x.Status).IsConcurrencyToken().HasColumnName("invoice_status").Ascii(30).HasDefaultValue("DRAFT");
             e.Property(x => x.IssuedAt).HasColumnName("invoice_issued_at").Dt();
             e.Property(x => x.DueAt).HasColumnName("invoice_due_at").Dt();
             e.Property(x => x.PaidAt).HasColumnName("invoice_paid_at").Dt();

@@ -64,6 +64,7 @@ public class SaasPlan
 {
     public long PlanId { get; set; }
     public long SaasTypeId { get; set; }
+    public int Revision { get; set; }
     public string PlanCode { get; set; } = null!;
     public string PlanName { get; set; } = null!;
     public string? PlanDescription { get; set; }
@@ -87,6 +88,7 @@ public class SaasPlanVersion
     public long PlanId { get; set; }
     public int VersionNumber { get; set; }                     // plan_version_version_number (UQ cùng plan_id)
     public string PurchaseType { get; set; } = "BUYMANY";      // plan_version_purchase_type
+    public int? DurationMonths { get; set; }
     public int? DurationDays { get; set; }                     // số ngày dùng (vd trial 14 ngày)
     public decimal Price { get; set; }                         // DECIMAL(19,4)
     public string Currency { get; set; } = "VND";              // CHAR(3)
@@ -104,6 +106,10 @@ public class SaasPlanVersion
 /// <summary>SUBSCRIPTION – đơn thuê bao. Được tạo ở bước "Confirm cart"; tenant được gán sau khi thanh toán.</summary>
 public class SaasSubscription
 {
+    public int? PurchaserEmployeeId { get; set; }
+    public Guid? ProvisioningLeaseId { get; set; }
+    public DateTime? ProvisioningLeaseUntil { get; set; }
+
     public long SubscriptionId { get; set; }
     public int? TenantId { get; set; }                         // tenant_id  (ĐỔI: NULL được, gán khi provision xong)
     public long? CustomerId { get; set; }
@@ -111,6 +117,10 @@ public class SaasSubscription
     public string Status { get; set; } = "PENDING";            // PENDING, ACTIVE, PAYMENT_FAILED, PROVISIONING_FAILED, EXPIRED, SUSPENDED, CANCELLED
     public DateTime? StartAt { get; set; }
     public DateTime? EndAt { get; set; }
+    public int MaxUsersSnapshot { get; set; }
+    public int MaxContractsSnapshot { get; set; }
+    public int MaxScanPagesSnapshot { get; set; }
+    public bool AllowsSupportTicketsSnapshot { get; set; }
     public decimal PriceSnapshot { get; set; }
     public string Currency { get; set; } = "VND";
     public string BillingCycle { get; set; } = "MONTHLY";
@@ -153,6 +163,12 @@ public class SaasPromotion
 /// <summary>SAAS_INVOICE – hóa đơn của subscription.</summary>
 public class SaasInvoice
 {
+    public Guid PublicId { get; set; } = Guid.NewGuid();
+    public string? PlanNameSnapshot { get; set; }
+    public string? BuyerNameSnapshot { get; set; }
+    public int? DurationMonthsSnapshot { get; set; }
+    public int? DurationDaysSnapshot { get; set; }
+
     public long InvoiceId { get; set; }
     public string InvoiceCode { get; set; } = null!;           // UQ, vd INV-202610-000123
     public long CustomerId { get; set; }

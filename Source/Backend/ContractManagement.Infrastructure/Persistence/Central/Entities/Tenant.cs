@@ -44,4 +44,9 @@ public sealed class Tenant
     public DateTime CreatedAt { get; set; }
 
     public DateTime? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// CUSTOMER đã đăng ký gói và sở hữu tenant (NULL với tenant do System Admin tạo).
+    /// </summary>
+    public long? OwnerCustomerId { get; set; }
 }

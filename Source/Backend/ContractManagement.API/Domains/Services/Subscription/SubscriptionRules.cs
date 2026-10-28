@@ -21,7 +21,7 @@ public static partial class SubscriptionRules
     public const string TenantNameInvalid = "SIGNUP_TENANT_NAME_INVALID";
     public const string EmailInvalid = "SIGNUP_EMAIL_INVALID";
     public const string PhoneInvalid = "SIGNUP_PHONE_INVALID";
-    public const string TrialAlreadyUsed = "TRIAL_ALREADY_USED";
+    public const string EmailTaken = "SIGNUP_EMAIL_TAKEN";
     public const string PaymentGatewayError = "PAYMENT_GATEWAY_ERROR";
     public const string SubscriptionNotFound = "SUBSCRIPTION_NOT_FOUND";
 
@@ -122,7 +122,7 @@ public static partial class SubscriptionRules
         TenantNameInvalid => $"Tên tổ chức không được để trống và tối đa {MaxTenantNameLength} ký tự.",
         EmailInvalid => $"Email không đúng định dạng hoặc dài quá {MaxEmailLength} ký tự.",
         PhoneInvalid => "Số điện thoại phải gồm 10 chữ số và bắt đầu bằng 0.",
-        TrialAlreadyUsed => "Email này đã sử dụng gói dùng thử.",
+        EmailTaken => "Email này đã được dùng để đăng ký một tổ chức. Vui lòng dùng email khác.",
         PaymentGatewayError => "Không tạo được liên kết thanh toán PayOS, vui lòng thử lại sau.",
         SubscriptionNotFound => "Không tìm thấy đơn đăng ký.",
         _ => "Yêu cầu không hợp lệ."

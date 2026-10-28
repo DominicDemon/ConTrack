@@ -9,6 +9,8 @@ public interface IPublicSubscriptionService
 
     Task<TenantCodeCheckResponse> CheckTenantCodeAsync(string? code, CancellationToken cancellationToken = default);
 
+    Task<EmailCheckResponse> CheckEmailAsync(string? email, string? tenantCode, CancellationToken cancellationToken = default);
+
     Task<VoucherPreviewResponse> PreviewVoucherAsync(VoucherPreviewRequest request, CancellationToken cancellationToken = default);
 
     Task<SubscriptionCheckoutResponse> CheckoutAsync(SubscriptionCheckoutRequest request, CancellationToken cancellationToken = default);

@@ -74,6 +74,15 @@ public sealed class PublicSubscriptionService : IPublicSubscriptionService
         return new TenantCodeCheckResponse(normalized, error is null, error, error is null ? null : Message(error));
     }
 
+    public async Task<EmailCheckResponse> CheckEmailAsync(string? email, string? tenantCode, CancellationToken cancellationToken = default)
+    {
+        var normalized = email?.Trim().ToLowerInvariant() ?? string.Empty;
+        var error = normalized.Length > MaxEmailLength || !SmtpEmailOptions.IsEmailAddress(normalized)
+            ? EmailInvalid
+            : await GetEmailErrorAsync(normalized, NormalizeTenantCode(tenantCode), cancellationToken);
+        return new EmailCheckResponse(normalized, error is null, error, error is null ? null : Message(error));
+    }
+
     public async Task<VoucherPreviewResponse> PreviewVoucherAsync(VoucherPreviewRequest request, CancellationToken cancellationToken = default)
     {
         var version = await GetActivePlanVersionAsync(request.PlanVersionId, cancellationToken);
@@ -115,11 +124,10 @@ public sealed class PublicSubscriptionService : IPublicSubscriptionService
             await CancelUnpaidAsync(existing, existingInvoice, "Khách đặt lại đơn", cancellationToken);
         }
 
+        var emailError = await GetEmailErrorAsync(email, tenantCode, cancellationToken);
+        if (emailError is not null) throw Fail(StatusCodes.Status409Conflict, emailError);
         var tenantCodeError = await GetTenantCodeErrorAsync(tenantCode, cancellationToken);
         if (tenantCodeError is not null) throw Fail(StatusCodes.Status409Conflict, tenantCodeError);
-        if (!version.Plan.IsPaid && await _db.Subscriptions.AnyAsync(s => s.Customer!.CustomerEmail == email
-                && s.IsPaid && !s.PlanVersion.Plan.IsPaid, cancellationToken))
-            throw Fail(StatusCodes.Status409Conflict, TrialAlreadyUsed);
 
         var customer = await _db.Customers.SingleOrDefaultAsync(c => c.CustomerEmail == email, cancellationToken);
         if (customer is null)
@@ -287,6 +295,20 @@ public sealed class PublicSubscriptionService : IPublicSubscriptionService
                 && s.Status == Pending
                 && (s.IsPaid || s.Invoices.Any(i => i.Status == Unpaid && i.DueAt > now)), cancellationToken);
         return taken ? TenantCodeTaken : null;
+    }
+
+    /// <summary>
+    /// Email đã gắn với một tổ chức: có đơn đã thanh toán (đang tạo / ACTIVE / PROVISIONING_FAILED),
+    /// hoặc đơn chưa thanh toán còn hạn cho mã tổ chức khác. Đơn cùng mã do luồng "gửi lặp" xử lý.
+    /// </summary>
+    internal async Task<string?> GetEmailErrorAsync(string normalizedEmail, string normalizedTenantCode, CancellationToken cancellationToken)
+    {
+        var now = UtcNow;
+        var taken = await _db.Subscriptions.AnyAsync(s => s.Customer!.CustomerEmail == normalizedEmail
+            && (s.IsPaid
+                || (s.Status == Pending && s.RequestedTenantCode != normalizedTenantCode
+                    && s.Invoices.Any(i => i.Status == Unpaid && i.DueAt > now))), cancellationToken);
+        return taken ? EmailTaken : null;
     }
 
     internal async Task<SaasPlanVersion> GetActivePlanVersionAsync(long planVersionId, CancellationToken cancellationToken)

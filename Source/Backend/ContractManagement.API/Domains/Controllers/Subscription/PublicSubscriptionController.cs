@@ -33,6 +33,14 @@ public sealed class PublicSubscriptionController : ControllerBase
     public async Task<IActionResult> CheckTenantCode([FromQuery] string? code, CancellationToken cancellationToken) =>
         Ok(ApiResponse<TenantCodeCheckResponse>.Ok(await _service.CheckTenantCodeAsync(code, cancellationToken)));
 
+    /// <summary>
+    /// Màn (2): email chưa gắn với tổ chức nào. tenantCode (tuỳ chọn) để không tính đơn đang chờ của chính mã đó.
+    /// Luôn 200, xem trường available.
+    /// </summary>
+    [HttpGet("email/check")]
+    public async Task<IActionResult> CheckEmail([FromQuery] string? email, [FromQuery] string? tenantCode, CancellationToken cancellationToken) =>
+        Ok(ApiResponse<EmailCheckResponse>.Ok(await _service.CheckEmailAsync(email, tenantCode, cancellationToken)));
+
     /// <summary>Màn (3): tính subtotal/discount/total với voucher. Không trừ lượt voucher.</summary>
     [HttpPost("vouchers/preview")]
     public async Task<IActionResult> PreviewVoucher([FromBody] VoucherPreviewRequest request, CancellationToken cancellationToken) =>

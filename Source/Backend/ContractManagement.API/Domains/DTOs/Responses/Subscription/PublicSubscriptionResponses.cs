@@ -26,6 +26,12 @@ public sealed record TenantCodeCheckResponse(
     string? ErrorCode,
     string? Message);
 
+public sealed record EmailCheckResponse(
+    string Email,
+    bool Available,
+    string? ErrorCode,
+    string? Message);
+
 public sealed record VoucherPreviewResponse(
     long PlanVersionId,
     string? VoucherCode,

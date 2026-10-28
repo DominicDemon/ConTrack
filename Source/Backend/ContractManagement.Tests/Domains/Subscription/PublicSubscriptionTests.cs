@@ -225,7 +225,37 @@ public sealed class PublicSubscriptionTests
 
         var again = await Assert.ThrowsAsync<BusinessRuleException>(() =>
             service.CheckoutAsync(Checkout(planVersionId: 1, tenantCode: "other-org")));
-        Assert.Equal(SubscriptionRules.TrialAlreadyUsed, again.Code);
+        Assert.Equal(SubscriptionRules.EmailTaken, again.Code);
+    }
+
+    [Fact]
+    public async Task DuplicateEmail_BlockedWhenLinkedToOrganization_AllowedAfterCancel()
+    {
+        await using var db = SubscriptionTestDb.Create();
+        var service = Service(db, new FakePayOs());
+        var pending = await service.CheckoutAsync(Checkout());
+
+        // Đơn chưa thanh toán còn hạn: chặn mã khác, cùng mã vẫn quay về đơn cũ.
+        var otherCode = await Assert.ThrowsAsync<BusinessRuleException>(() => service.CheckoutAsync(Checkout(tenantCode: "other-org")));
+        Assert.Equal((409, SubscriptionRules.EmailTaken), (otherCode.StatusCode, otherCode.Code));
+        Assert.Equal(pending.PublicId, (await service.CheckoutAsync(Checkout())).PublicId);
+        Assert.True((await service.CheckEmailAsync(" A@B.vn ", "new-org")).Available);
+        Assert.Equal(SubscriptionRules.EmailTaken, (await service.CheckEmailAsync("a@b.vn", "other-org")).ErrorCode);
+        Assert.Equal(SubscriptionRules.EmailInvalid, (await service.CheckEmailAsync("not-an-email", null)).ErrorCode);
+
+        // Hủy thì email dùng lại được.
+        await service.CancelAsync(pending.PublicId);
+        Assert.True((await service.CheckEmailAsync("a@b.vn", "other-org")).Available);
+        var paid = await service.CheckoutAsync(Checkout(tenantCode: "other-org"));
+
+        // Đã thanh toán (gắn với tổ chức): chặn mọi mã, kể cả cùng mã.
+        var subscription = await db.Subscriptions.SingleAsync(s => s.PublicId == paid.PublicId);
+        subscription.IsPaid = true;
+        subscription.Status = "ACTIVE";
+        await db.SaveChangesAsync();
+        Assert.Equal(SubscriptionRules.EmailTaken, (await service.CheckEmailAsync("a@b.vn", "other-org")).ErrorCode);
+        var again = await Assert.ThrowsAsync<BusinessRuleException>(() => service.CheckoutAsync(Checkout(tenantCode: "third-org")));
+        Assert.Equal(SubscriptionRules.EmailTaken, again.Code);
     }
 
     [Fact]

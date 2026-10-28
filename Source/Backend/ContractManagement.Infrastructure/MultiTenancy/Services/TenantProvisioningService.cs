@@ -1,4 +1,4 @@
-﻿using ContractManagement.Infrastructure.DatabaseScripts.SeedData;
+using ContractManagement.Infrastructure.DatabaseScripts.SeedData;
 using ContractManagement.Infrastructure.MultiTenancy.Contracts;
 using ContractManagement.Infrastructure.MultiTenancy.Enums;
 using ContractManagement.Infrastructure.MultiTenancy.Interfaces;
@@ -172,7 +172,7 @@ public sealed class TenantProvisioningService
                 connectionString,
                 cancellationToken);
             
-            await _tenantSeedData.InitializeAsync(
+            var initialManagerId = await _tenantSeedData.InitializeAsync(
                 connectionString,
                 tenant.TenantId,
                 command.InitialManager,
@@ -180,6 +180,18 @@ public sealed class TenantProvisioningService
                 cancellationToken);
 
             tenant.Status = TenantStatus.Active;
+            // Persist the exact purchaser so fulfillment can recover after a process restart.
+            var correlation = command.SecurityContext.CorrelationId;
+            if (correlation?.StartsWith("subscription-", StringComparison.Ordinal) == true
+                && Guid.TryParse(correlation[13..], out var subscriptionPublicId))
+            {
+                var subscription = await _centralDbContext.Subscriptions.SingleAsync(
+                    s => s.PublicId == subscriptionPublicId && s.RequestedTenantCode == tenant.TenantCode,
+                    cancellationToken);
+                subscription.TenantId = tenant.TenantId;
+                subscription.PurchaserEmployeeId = initialManagerId;
+                tenant.OwnerCustomerId = subscription.CustomerId;
+            }
             tenant.ProvisioningError = null;
             tenant.UpdatedAt = DateTime.UtcNow;
 
@@ -211,7 +223,7 @@ public sealed class TenantProvisioningService
                 tenant.TenantName,
                 tenantDatabase.DatabaseName,
                 tenantDatabase.Mode,
-                tenant.Status);
+                tenant.Status, initialManagerId);
         }
         catch (Exception exception)
         {

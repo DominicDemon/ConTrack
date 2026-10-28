@@ -1,4 +1,4 @@
-﻿using ContractManagement.Infrastructure.MultiTenancy.Enums;
+using ContractManagement.Infrastructure.MultiTenancy.Enums;
 
 namespace ContractManagement.Infrastructure.MultiTenancy.Contracts;
 
@@ -8,5 +8,6 @@ public sealed record TenantProvisioningResult(
     string TenantName,
     string DatabaseName,
     TenantDatabaseMode DatabaseMode,
-    TenantStatus Status
+    TenantStatus Status,
+    int? InitialManagerEmployeeId = null
 );

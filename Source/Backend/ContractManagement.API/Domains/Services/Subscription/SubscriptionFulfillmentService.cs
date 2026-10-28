@@ -190,7 +190,7 @@ public sealed class SubscriptionFulfillmentService
     {
         var now = UtcNow;
         var ids = await _db.Subscriptions.AsNoTracking()
-            .Where(s => s.Status == Pending && s.IsPaid)
+            .Where(s => s.Status == Pending && s.IsPaid && (s.ProvisioningLeaseUntil == null || s.ProvisioningLeaseUntil <= now))
             .OrderBy(s => s.SubscriptionId)
             .Select(s => new { s.SubscriptionId, s.ProvisioningAttemptCount, s.UpdatedAt })
             .Take(10)
@@ -211,13 +211,25 @@ public sealed class SubscriptionFulfillmentService
             .Include(s => s.Customer)
             .Include(s => s.PlanVersion)
             .SingleAsync(s => s.SubscriptionId == subscriptionId, cancellationToken);
+        if (subscription.Status != Pending || !subscription.IsPaid || subscription.ProvisioningLeaseUntil > UtcNow) return;
+        subscription.ProvisioningLeaseId = Guid.NewGuid();
+        subscription.ProvisioningLeaseUntil = UtcNow.AddMinutes(30);
+        try { await _db.SaveChangesAsync(cancellationToken); }
+        catch (DbUpdateConcurrencyException) { _db.ChangeTracker.Clear(); return; }
         var customer = subscription.Customer!;
         var password = TenantPasswordGenerator.Generate();
 
         TenantProvisioningResult result;
         try
         {
-            result = await _provisioning.CreateDedicatedAsync(new TenantProvisioningCommand(
+            if (subscription.TenantId is { } existingTenantId && subscription.PurchaserEmployeeId is { } purchaser)
+            {
+                var existing = await _db.Tenants.Include(t => t.TenantDatabase).SingleAsync(t => t.TenantId == existingTenantId, cancellationToken);
+                result = new TenantProvisioningResult(existing.TenantId, existing.TenantCode, existing.TenantName,
+                    existing.TenantDatabase.DatabaseName, existing.TenantDatabase.Mode, existing.Status, purchaser);
+                password = ""; // A restart must not email a newly generated password for an existing account.
+            }
+            else result = await _provisioning.CreateDedicatedAsync(new TenantProvisioningCommand(
                 subscription.RequestedTenantCode,
                 subscription.RequestedTenantName,
                 new InitialManagerProvisioningCommand(
@@ -237,6 +249,8 @@ public sealed class SubscriptionFulfillmentService
             _db.ChangeTracker.Clear();
             subscription = await _db.Subscriptions.SingleAsync(s => s.SubscriptionId == subscriptionId, cancellationToken);
             subscription.ProvisioningAttemptCount++;
+            subscription.ProvisioningLeaseId = null;
+            subscription.ProvisioningLeaseUntil = null;
             subscription.UpdatedAt = UtcNow;
             if (subscription.ProvisioningAttemptCount >= MaxProvisioningAttempts) subscription.Status = ProvisioningFailed;
             await _db.SaveChangesAsync(cancellationToken);
@@ -250,14 +264,23 @@ public sealed class SubscriptionFulfillmentService
         var now = UtcNow;
         tenant.OwnerCustomerId = subscription.CustomerId;
         subscription.TenantId = result.TenantId;
+        subscription.PurchaserEmployeeId = result.InitialManagerEmployeeId;
         subscription.Status = Active;
         subscription.StartAt = now;
         subscription.EndAt = now.AddDays(DurationDays(subscription.PlanVersion.DurationDays, subscription.BillingCycle));
         subscription.ProvisioningAttemptCount++;
         subscription.UpdatedAt = now;
+        subscription.ProvisioningLeaseId = null;
+        subscription.ProvisioningLeaseUntil = null;
+        // One SaveChanges transaction activates the subscription and queues its receipt.
+        var invoices = await _db.SaasInvoices.Where(i => i.SubscriptionId == subscriptionId && i.Status == Paid && i.TotalAmount > 0).ToListAsync(cancellationToken);
+        foreach (var invoice in invoices)
+            if (subscription.PurchaserEmployeeId != null && !string.IsNullOrWhiteSpace(invoice.BillingEmail)
+                && !await _db.InvoiceEmailOutbox.AnyAsync(x => x.InvoiceId == invoice.InvoiceId && x.Kind == "PaymentConfirmation", cancellationToken))
+                _db.InvoiceEmailOutbox.Add(new InvoiceEmailOutbox { InvoiceId = invoice.InvoiceId, NextAttemptAt = now });
         await _db.SaveChangesAsync(cancellationToken);
 
-        await SendAccountEmailAsync(subscription, result.TenantCode, password, cancellationToken);
+        if (password.Length > 0) await SendAccountEmailAsync(subscription, result.TenantCode, password, cancellationToken);
     }
 
     private async Task SendAccountEmailAsync(SaasSubscription subscription, string tenantCode, string password, CancellationToken cancellationToken)

@@ -484,7 +484,23 @@ builder.Services.AddAutoMapper(config =>
 
 #endregion
 
+builder.Services.AddScoped<ContractManagement.API.Domains.Services.Subscription.InvoiceService>();
+builder.Services.AddOptions<ContractManagement.API.Domains.Services.Subscription.InvoiceEmailOptions>()
+    .Bind(builder.Configuration.GetSection("InvoiceEmail"))
+    .Validate(o => o.Provider is "Test" or "Smtp", "InvoiceEmail.Provider must be Test or Smtp.")
+    .Validate(o => !o.Enabled || o.Provider != "Test" || builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"),
+        "InvoiceEmail Test provider is restricted to Development/Testing.")
+    .ValidateOnStart();
+builder.Services.AddHostedService<ContractManagement.API.Domains.Services.Subscription.InvoiceEmailWorker>();
 var app = builder.Build();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api/billing/invoices")
+        || context.Request.Path.StartsWithSegments("/api/public/invoices")
+        || context.Request.Path.StartsWithSegments("/api/public/subscriptions"))
+        context.Response.OnStarting(() => { context.Response.Headers.CacheControl = "no-store"; return Task.CompletedTask; });
+    await next();
+});
 _ = app.Services.GetRequiredService<IContractPlaceholderSourceRegistry>();
 
 // Khởi tạo sớm để fail-fast khi đường dẫn, quyền ghi hoặc dung lượng private

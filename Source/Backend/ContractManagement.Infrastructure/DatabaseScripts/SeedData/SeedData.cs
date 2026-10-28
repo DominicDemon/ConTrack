@@ -16,7 +16,7 @@ public sealed class TenantSeedData : ITenantSeedData
         _passwordHasher = passwordHasher;
     }
 
-    public async Task InitializeAsync(
+    public async Task<int> InitializeAsync(
         string connectionString,
         int tenantId,
         InitialManagerProvisioningCommand initialManager,
@@ -82,6 +82,7 @@ public sealed class TenantSeedData : ITenantSeedData
                 securityContext.CorrelationId));
 
         await dbContext.SaveChangesAsync(cancellationToken);
+        return manager.EmployeeId;
     }
 
     private static string NormalizeRequired(string value)

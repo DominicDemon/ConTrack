@@ -9,12 +9,15 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using ContractManagement.API.Domains.Services.Subscription;
 
 // Explicit maintenance CLI, never hosted by the API and never runs at startup.
 // Reads existing settings/secret environment variables; never prints their contents.
 if (args.Length < 2)
 {
-    Console.WriteLine("Usage: RecoveryOps <inventory|migrate-local|check-config|smtp-test|status> <API config directory> [expected Central catalog OR SMTP recipient]");
+    Console.WriteLine("Usage: RecoveryOps <inventory|migrate-local|check-config|smtp-test|status|invoice-backfill|invoice-deliver> <API config directory> [expected Central catalog OR SMTP recipient OR invoice public ID]");
     return 2;
 }
 var correlation = Guid.NewGuid().ToString("N");
@@ -48,6 +51,38 @@ try
     var centralConnection = config.GetConnectionString("CentralDatabase");
     if (string.IsNullOrWhiteSpace(centralConnection)) throw new OpsError("Central database is not configured.");
     await using var central = new CentralDbContext(new DbContextOptionsBuilder<CentralDbContext>().UseSqlServer(centralConnection).Options);
+    if (args[0] == "invoice-deliver")
+    {
+        if (args.Length != 3 || !Guid.TryParse(args[2], out var publicId))
+            throw new OpsError("Specify exactly one invoice public ID with an existing queued email.");
+        var delivery = config.GetSection("InvoiceEmail").Get<InvoiceEmailOptions>() ?? new();
+        if (!delivery.Enabled || delivery.Provider != "Smtp" || !smtp.IsConfigured()
+            || !Uri.TryCreate(settings.TenantFrontendBaseUrl, UriKind.Absolute, out var frontendUrl)
+            || frontendUrl.Scheme is not ("http" or "https"))
+            throw new OpsError("Invoice SMTP delivery or trusted frontend URL is not configured.");
+        if (!await central.InvoiceEmailOutbox.AnyAsync(x => x.Invoice.PublicId == publicId))
+            throw new OpsError("No queued email for this invoice; historical invoices are not automatically enqueued.");
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var worker = new InvoiceEmailWorker(services.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(delivery), Options.Create(settings), new SmtpEmailTransport(Options.Create(smtp)),
+            new RecoveryTestMailbox(), TimeProvider.System, NullLogger<InvoiceEmailWorker>.Instance);
+        await worker.ProcessAsync(central, default, publicId);
+        var row = await central.InvoiceEmailOutbox.AsNoTracking().SingleAsync(x => x.Invoice.PublicId == publicId);
+        Console.WriteLine($"INVOICE_EMAIL status={row.Status}; attempts={row.AttemptCount}; SMTP acceptance does not guarantee inbox placement.");
+        return row.Status == "SENT" ? 0 : 1;
+    }
+    if (args[0] == "invoice-backfill")
+    {
+        var connection = new SqlConnectionStringBuilder(centralConnection);
+        if (args.Length != 3 || connection.InitialCatalog != args[2]
+            || !(connection.DataSource is "localhost" or "." or "(local)" || connection.DataSource.StartsWith("localhost,")))
+            throw new OpsError("Invoice backfill requires the expected catalog on a local SQL Server.");
+        var changed = await new ContractManagement.API.Domains.Services.Subscription.InvoicePurchaserBackfill(
+            central, new ContractManagement.Infrastructure.MultiTenancy.Services.TenantDbContextFactory()).RunAsync(default);
+        var unresolved = await central.Subscriptions.CountAsync(s => s.TenantId != null && s.PurchaserEmployeeId == null);
+        Console.WriteLine($"INVOICE_PURCHASERS matched={changed}; needs_reconciliation={unresolved}; no emails queued.");
+        return 0;
+    }
     var tenants = await central.Tenants.AsNoTracking().Select(x => new {
         x.TenantCode, x.Status, x.TenantDatabase.Mode, x.TenantDatabase.ConnectionString
     }).ToListAsync();

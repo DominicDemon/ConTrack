@@ -94,6 +94,6 @@ internal sealed class FakeProvisioning(CentralDbContext db) : ITenantProvisionin
         db.Tenants.Add(tenant);
         await db.SaveChangesAsync(cancellationToken);
         return new TenantProvisioningResult(tenant.TenantId, tenant.TenantCode, tenant.TenantName, "d",
-            TenantDatabaseMode.Dedicated, TenantStatus.Active);
+            TenantDatabaseMode.Dedicated, TenantStatus.Active, 1);
     }
 }

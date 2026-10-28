@@ -226,7 +226,7 @@ public sealed class TenantProvisioningServiceTests
 
         public InitialManagerProvisioningCommand? InitialManager { get; private set; }
 
-        public Task InitializeAsync(
+        public Task<int> InitializeAsync(
             string connectionString,
             int tenantId,
             InitialManagerProvisioningCommand initialManager,
@@ -235,8 +235,8 @@ public sealed class TenantProvisioningServiceTests
         {
             InitialManager = initialManager;
             return _exception is null
-                ? Task.CompletedTask
-                : Task.FromException(_exception);
+                ? Task.FromResult(1)
+                : Task.FromException<int>(_exception);
         }
     }
 }

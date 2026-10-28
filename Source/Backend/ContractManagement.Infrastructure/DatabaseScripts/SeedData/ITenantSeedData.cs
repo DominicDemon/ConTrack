@@ -4,7 +4,7 @@ namespace ContractManagement.Infrastructure.DatabaseScripts.SeedData;
 
 public interface ITenantSeedData
 {
-    Task InitializeAsync(
+    Task<int> InitializeAsync(
         string connectionString,
         int tenantId,
         InitialManagerProvisioningCommand initialManager,

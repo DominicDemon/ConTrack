@@ -62,6 +62,25 @@ public sealed class TenantProvisioningServiceTests
     }
 
     [Fact]
+    public async Task ProvisioningRetry_ReusesFailedTenantAndDatabase_ButRejectsActiveTenant()
+    {
+        await using var centralDbContext = CreateCentralDbContext();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => CreateService(centralDbContext,
+            new RecordingInitializer(), new RecordingSeedData(new InvalidOperationException("seed failure")))
+            .CreateDedicatedAsync(NewCommand("tenant-r")));
+
+        var service = CreateService(centralDbContext, new RecordingInitializer(), new RecordingSeedData());
+        var result = await service.CreateDedicatedAsync(NewCommand("tenant-r") with { SecurityContext = new(null, null, null, "self-service") });
+
+        Assert.Equal(TenantStatus.Active, result.Status);
+        var tenant = await centralDbContext.Tenants.SingleAsync();
+        Assert.Null(tenant.ProvisioningError);
+        Assert.Equal(1, await centralDbContext.TenantDatabases.CountAsync());
+        Assert.Null((await centralDbContext.SecurityAudits.OrderBy(x => x.CentralSecurityAuditId).LastAsync()).ActorSystemAdminId);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreateDedicatedAsync(NewCommand("tenant-r")));
+    }
+
+    [Fact]
     public async Task Provisioning_PreservesMixedCaseCodeAndUsesNormalizedDatabaseIdentity()
     {
         await using var centralDbContext = CreateCentralDbContext();

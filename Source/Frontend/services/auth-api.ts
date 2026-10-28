@@ -1,4 +1,4 @@
-import axiosClient from "@/lib/axios-interceptor";
+import axiosClient, { publicAxiosClient } from "@/lib/axios-interceptor";
 import type { RbacPermission } from "@/lib/rbac";
 import type { EmployeeType } from "@/services/employees-api";
 
@@ -47,6 +47,14 @@ export const authApi = {
 
   getMe: () => {
     return axiosClient.get<any, UserProfileDto>(`${BASE_URL}/me`);
+  },
+
+  // Public pages may inspect an existing session without redirecting visitors.
+  getPublicSession: (signal?: AbortSignal) => {
+    return publicAxiosClient.get<unknown, UserProfileDto>(`${BASE_URL}/me`, {
+      signal,
+      timeout: 10_000,
+    });
   },
 
   logout: async () => {

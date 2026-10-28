@@ -1,6 +1,7 @@
 ﻿using ContractManagement.Infrastructure.Persistence.Central.Entities;
 using Microsoft.EntityFrameworkCore;
 using ContractManagement.Infrastructure.Persistence.Recovery;
+using ContractManagement.Infrastructure.Persistence.Central.Saas;
 
 namespace ContractManagement.Infrastructure.Persistence.Central;
 
@@ -29,6 +30,18 @@ public sealed class CentralDbContext : DbContext
 
     public DbSet<CentralSecurityAudit> SecurityAudits => Set<CentralSecurityAudit>();
 
+    public DbSet<SaasCustomer> Customers => Set<SaasCustomer>();
+    public DbSet<SaasCustomerBusiness> CustomerBusinesses => Set<SaasCustomerBusiness>();
+    public DbSet<SaasType> SaasTypes => Set<SaasType>();
+    public DbSet<SaasPlan> Plans => Set<SaasPlan>();
+    public DbSet<SaasPlanVersion> PlanVersions => Set<SaasPlanVersion>();
+    public DbSet<SaasSubscription> Subscriptions => Set<SaasSubscription>();
+    public DbSet<SaasPromotion> Promotions => Set<SaasPromotion>();
+    public DbSet<SaasInvoice> SaasInvoices => Set<SaasInvoice>();
+    public DbSet<SaasPayment> SaasPayments => Set<SaasPayment>();
+    public DbSet<SaasInvoicePromotionDetail> InvoicePromotionDetails => Set<SaasInvoicePromotionDetail>();
+    public DbSet<SaasSubscriptionPromotionDetail> SubscriptionPromotionDetails => Set<SaasSubscriptionPromotionDetail>();
+
     protected override void OnModelCreating(
         ModelBuilder modelBuilder)
     {
@@ -42,6 +55,12 @@ public sealed class CentralDbContext : DbContext
 
         ConfigureSecurityAudit(modelBuilder);
         AccountRecoveryMapping.Configure(modelBuilder, "AccountRecoveryChallenges", "AccountRecoveryEmailOutbox", "SystemAdminId");
+
+        modelBuilder.ApplySaasModel();
+        modelBuilder.Entity<Tenant>()
+            .HasOne<SaasCustomer>().WithMany().HasForeignKey(x => x.OwnerCustomerId)
+            .OnDelete(DeleteBehavior.Restrict);
+        SaasSeedData.Apply(modelBuilder);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)

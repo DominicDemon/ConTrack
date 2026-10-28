@@ -331,6 +331,16 @@ builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
 builder.Services.AddScoped<ISystemHealthService, SystemHealthService>();
 builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
+builder.Services.Configure<ContractManagement.API.Domains.Payments.PayOsOptions>(
+    builder.Configuration.GetSection(ContractManagement.API.Domains.Payments.PayOsOptions.SectionName));
+builder.Services.AddSingleton<
+    ContractManagement.API.Domains.Payments.IPayOsGateway,
+    ContractManagement.API.Domains.Payments.PayOsGateway>();
+builder.Services.AddScoped<ContractManagement.API.Domains.Services.Subscription.SubscriptionFulfillmentService>();
+builder.Services.AddHostedService<ContractManagement.API.Domains.Services.Subscription.SubscriptionFulfillmentWorker>();
+builder.Services.AddScoped<
+    ContractManagement.API.Domains.Interfaces.Subscription.IPublicSubscriptionService,
+    ContractManagement.API.Domains.Services.Subscription.PublicSubscriptionService>();
 
 builder.Services.AddScoped<
     IContractAttachmentService,

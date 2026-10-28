@@ -11,6 +11,7 @@ import {
   HeartPulse,
   LogOut,
   Menu,
+  Package,
   ScrollText,
   Settings,
   LayoutDashboard,
@@ -43,6 +44,12 @@ const navItems = [
     label: "Quản lý tenant",
     icon: Building2,
     href: "/tenants",
+    disabled: false,
+  },
+  {
+    label: "Gói dịch vụ",
+    icon: Package,
+    href: "/plans",
     disabled: false,
   },
   {

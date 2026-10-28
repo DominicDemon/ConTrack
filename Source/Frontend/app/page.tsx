@@ -15,7 +15,7 @@ import { toast } from "@/components/ui/sonner";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { authApi } from "@/services/auth-api";
 import { APP_NAME } from "@/lib/application-branding";
-import { getPricingReturnPath } from "@/lib/pricing-preview";
+import { authDestination, authHref, currentAuthHref, getAuthReturnPath } from "@/lib/auth-return";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +32,7 @@ import { useAuthStore } from "@/hooks/use-auth-store";
 
 export default function LoginPage() {
   const recoveryLogin = useRef(false);
-  const pricingReturnPath = useRef<string | null>(null);
+  const returnPath = useRef<string | null>(null);
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
   const [tenantCode, setTenantCode] = useState("");
@@ -60,10 +60,8 @@ export default function LoginPage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       const urlParams = new URLSearchParams(window.location.search);
-      pricingReturnPath.current = getPricingReturnPath(urlParams.get("returnTo"));
-      const cleanedLoginPath = pricingReturnPath.current
-        ? `/?${new URLSearchParams({ returnTo: pricingReturnPath.current })}`
-        : "/";
+      returnPath.current = getAuthReturnPath(urlParams.get("returnTo"));
+      const cleanedLoginPath = authHref("/", returnPath.current, urlParams.get("tenantCode"));
       const error = urlParams.get("error");
       const passwordChanged = urlParams.get("password_changed");
 
@@ -92,7 +90,8 @@ export default function LoginPage() {
   useEffect(() => {
     const checkAlreadyLoggedIn = async () => {
       const query = new URLSearchParams(window.location.search);
-      if (query.get("password_reset") === "1") recoveryLogin.current = true;
+      if (query.get("password_reset") === "1" || query.get("password_changed") === "1") recoveryLogin.current = true;
+      setTenantCode(query.get("tenantCode") ?? "");
       if (recoveryLogin.current) {
         setTenantCode(query.get("tenantCode") ?? "");
         setIsLoading(false);
@@ -101,8 +100,8 @@ export default function LoginPage() {
       if (isAuthenticated && user) {
         router.push(
           user.mustChangePassword
-            ? "/change-password?required=1"
-            : pricingReturnPath.current || user.defaultPage || "/contracts",
+            ? currentAuthHref("/change-password", { required: "1" })
+            : authDestination(returnPath.current, user.tenantCode) || user.defaultPage || "/contracts",
         );
         return;
       }
@@ -112,8 +111,8 @@ export default function LoginPage() {
         setUser(profile);
         router.push(
           profile.mustChangePassword
-            ? "/change-password?required=1"
-            : pricingReturnPath.current || profile.defaultPage || "/contracts",
+            ? currentAuthHref("/change-password", { required: "1" })
+            : authDestination(returnPath.current, profile.tenantCode) || profile.defaultPage || "/contracts",
         );
       } catch (error) {
         setIsLoading(false);
@@ -195,6 +194,7 @@ export default function LoginPage() {
     }
 
     setIsLoading(true);
+    window.history.replaceState(null, "", authHref("/", returnPath.current, tenantCode.trim()));
 
     try {
       const data = await authApi.login(
@@ -210,8 +210,8 @@ export default function LoginPage() {
       setUser(profile);
       router.push(
         profile.mustChangePassword
-          ? "/change-password?required=1"
-          : pricingReturnPath.current || profile.defaultPage || "/contracts",
+          ? currentAuthHref("/change-password", { required: "1" })
+          : authDestination(returnPath.current, profile.tenantCode) || profile.defaultPage || "/contracts",
       );
     } catch (error: any) {
       const message =

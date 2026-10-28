@@ -46,7 +46,8 @@ export const authApi = {
   },
 
   getMe: () => {
-    return axiosClient.get<any, UserProfileDto>(`${BASE_URL}/me`);
+    // Login and ProtectedLayout own this redirect, avoiding competing SPA/full-page navigations.
+    return publicAxiosClient.get<any, UserProfileDto>(`${BASE_URL}/me`);
   },
 
   // Public pages may inspect an existing session without redirecting visitors.

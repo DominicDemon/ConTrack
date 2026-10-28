@@ -1,5 +1,6 @@
 "use client";
 
+import { currentAuthHref } from "@/lib/auth-return";
 import { FormEvent, useMemo, useState } from "react";
 import { getAccountPasswordRules, isValidAccountPassword, PASSWORD_POLICY_MESSAGE } from "@/lib/password-policy";
 import { useRouter } from "next/navigation";
@@ -140,8 +141,9 @@ export function ChangePasswordForm({
     setIsSaving(true);
     try {
       await profileApi.changePassword({ currentPassword, newPassword });
+      const login = currentAuthHref("/", { password_changed: "1" }, useAuthStore.getState().user?.tenantCode);
       logout();
-      router.replace("/?password_changed=1");
+      router.replace(login);
     } catch (requestError) {
       setError(getApiErrorMessage(requestError, "Không thể đổi mật khẩu."));
     } finally {

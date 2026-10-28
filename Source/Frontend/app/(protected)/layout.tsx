@@ -1,5 +1,6 @@
 "use client";
 
+import { currentAuthHref } from "@/lib/auth-return";
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { authApi } from "@/services/auth-api";
@@ -25,9 +26,11 @@ export default function ProtectedLayout({
   const user = useAuthStore((state) => state.user);
 
   useEffect(() => {
+    let active = true;
     const checkAuth = async () => {
       try {
         const userData = await authApi.getMe();
+        if (!active) return;
         if (userData.permissionVersion !== RBAC_PERMISSION_VERSION) {
           throw new Error("Phiên bản phân quyền không tương thích.");
         }
@@ -38,16 +41,15 @@ export default function ProtectedLayout({
           pathname !== "/profile" &&
           pathname !== "/change-password"
         ) {
-          router.replace("/change-password?required=1");
+          router.replace(currentAuthHref("/change-password", { required: "1" }, userData.tenantCode));
         }
       } catch (error) {
+        if (!active) return;
         setUser(null);
         const code = getApiErrorCode(error);
         if (code === "AuthenticationRequired" || code === "EmployeeInactive") {
           router.replace(
-            code === "EmployeeInactive"
-              ? "/?error=employee_inactive"
-              : "/?error=session_expired",
+            currentAuthHref("/", { error: code === "EmployeeInactive" ? "employee_inactive" : "session_expired" }),
           );
         } else {
           setCheckError(
@@ -57,11 +59,12 @@ export default function ProtectedLayout({
           );
         }
       } finally {
-        setIsChecking(false);
+        if (active) setIsChecking(false);
       }
     };
 
     checkAuth();
+    return () => { active = false; };
   }, [pathname, router, setUser, retryKey]);
 
   if (isChecking) {
@@ -108,13 +111,13 @@ export default function ProtectedLayout({
   return (
     <NotificationProvider key={`${user.tenantId}:${user.employeeId}`}
       tenantId={user.tenantId} employeeId={user.employeeId}>
-    <div className="flex flex-row h-screen w-screen overflow-hidden bg-background">
-      <Sidebar />
-      <main className="relative z-10 flex min-w-0 grow flex-col overflow-hidden">
-        <div className="flex min-w-0 grow flex-col overflow-hidden">
+    <div className="flex flex-row h-screen w-screen overflow-hidden bg-background print:block print:h-auto print:w-auto print:overflow-visible">
+      <div className="contents print:hidden"><Sidebar /></div>
+      <main className="relative z-10 flex min-w-0 grow flex-col overflow-hidden print:block print:overflow-visible">
+        <div className="flex min-w-0 grow flex-col overflow-hidden print:block print:overflow-visible">
           {children}
         </div>
-        <footer className="z-20 mt-auto flex shrink-0 items-center justify-between border-t border-border bg-card/50 px-3 py-2.5 text-xs text-muted-foreground backdrop-blur-sm sm:px-6">
+        <footer className="print:hidden z-20 mt-auto flex shrink-0 items-center justify-between border-t border-border bg-card/50 px-3 py-2.5 text-xs text-muted-foreground backdrop-blur-sm sm:px-6">
           <div className="truncate">
             Copyright &copy; 2026 DTC.,Ltd. All rights reserved.
           </div>

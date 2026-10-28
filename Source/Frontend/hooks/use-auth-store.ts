@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { UserProfileDto } from "@/services/auth-api";
+import type { UserProfileDto } from "@/services/auth-api";
 
 interface AuthState {
   user: UserProfileDto | null;

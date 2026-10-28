@@ -1,5 +1,8 @@
 import axios, { AxiosError, AxiosInstance, AxiosResponse } from "axios";
 
+import { useAuthStore } from "@/hooks/use-auth-store";
+import { currentAuthHref } from "@/lib/auth-return";
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 const axiosClient: AxiosInstance = axios.create({
@@ -43,6 +46,13 @@ const getResponseErrorCode = (error: AxiosError) => {
   return undefined;
 };
 
+let redirecting = false;
+function redirectOnce(href: string) {
+  if (redirecting) return;
+  redirecting = true;
+  window.location.replace(href);
+}
+
 axiosClient.interceptors.response.use(
   unwrapApiResponse,
 
@@ -53,12 +63,12 @@ axiosClient.interceptors.response.use(
       typeof window !== "undefined" &&
       window.location.pathname !== "/change-password"
     ) {
-      window.location.replace("/change-password?required=1");
+      redirectOnce(currentAuthHref("/change-password", { required: "1" }, useAuthStore.getState().user?.tenantCode));
     }
     if (error.response?.status === 401) {
       if (typeof window !== "undefined") {
         if (window.location.pathname !== "/") {
-          window.location.replace(`/?error=${getEmployeeLoginError(error)}`);
+          redirectOnce(currentAuthHref("/", { error: getEmployeeLoginError(error) }, useAuthStore.getState().user?.tenantCode));
         }
       }
     }

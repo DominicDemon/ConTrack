@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -25,6 +25,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\ContractManagement.API\ContractManagement.API.csproj" />
+    <ProjectReference Include="..\ContractManagement.Application\ContractManagement.Application.csproj" />
+    <ProjectReference Include="..\ContractManagement.Domain\ContractManagement.Domain.csproj" />
+    <ProjectReference Include="..\ContractManagement.Infrastructure\ContractManagement.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

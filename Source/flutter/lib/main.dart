@@ -4,6 +4,10 @@ import 'pages/login_page.dart';
 import 'pages/catalog/services/service_list_page.dart';
 import 'pages/catalog/service-types/service_type_list_page.dart';
 import 'pages/dashboard_page.dart';
+import 'pages/support/ticket_list_page.dart';
+import 'pages/support/create_ticket_page.dart';
+import 'pages/support/ticket_detail_page.dart';
+import 'models/support/ticket_dto.dart';
 import 'services/api_client.dart';
 import 'theme/app_theme.dart';
 import 'utils/auth_store.dart';
@@ -84,6 +88,22 @@ class MyApp extends StatelessWidget {
             if (settings.name == '/catalog/services') {
               return MaterialPageRoute(
                 builder: (context) => const ServiceListPage(),
+              );
+            }
+            if (settings.name == '/support/tickets') {
+              return MaterialPageRoute(
+                builder: (context) => const TicketListPage(),
+              );
+            }
+            if (settings.name == '/support/create-ticket') {
+              return MaterialPageRoute(
+                builder: (context) => const CreateTicketPage(),
+              );
+            }
+            if (settings.name == '/support/ticket-detail') {
+              final ticket = settings.arguments as TicketModel;
+              return MaterialPageRoute(
+                builder: (context) => TicketDetailPage(ticket: ticket),
               );
             }
             return null;

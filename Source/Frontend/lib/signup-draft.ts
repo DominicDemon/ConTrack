@@ -9,6 +9,7 @@ export interface SignupPlan {
   price: number;
   currency: string;
   durationDays: number;
+  durationMonths?: number | null;
   label: string;
 }
 
@@ -56,17 +57,22 @@ export function clearSignupDraft() {
   }
 }
 
-const monthsOf = (days: number | null) => Math.max(1, Math.round((days ?? 30) / 30));
+const monthsOf = (months: number | null) => months ?? 0;
 
 /** Thẻ gói trả phí cho trang /pricing, tính "Tiết kiệm x%" so với phiên bản ngắn nhất. */
 export function toPaidPlanCards(plans: PublicPlan[]): PaidPlanPreview[] {
-  const versions = plans.filter((plan) => plan.isPaid).flatMap((plan) => plan.versions);
+  const versions = plans.filter((plan) => plan.isPaid).flatMap((plan) => plan.versions).filter((v) => v.durationMonths != null && v.durationMonths >= 1 && v.durationMonths <= 24);
   if (versions.length === 0) return [];
-  const base = versions.reduce((shortest, v) => (monthsOf(v.durationDays) < monthsOf(shortest.durationDays) ? v : shortest));
-  const baseMonthly = base.price / monthsOf(base.durationDays);
-  const longest = Math.max(...versions.map((v) => monthsOf(v.durationDays)));
-  return versions.map((v) => {
-    const months = monthsOf(v.durationDays);
+  const base = versions.reduce((shortest, v) => (monthsOf(v.durationMonths) < monthsOf(shortest.durationMonths) ? v : shortest));
+  const baseMonthly = base.price / monthsOf(base.durationMonths);
+  // Recommend the lowest monthly cost; prefer the shorter commitment on ties.
+  const bestValue = versions.reduce((best, v) => {
+    const monthly = v.price / monthsOf(v.durationMonths);
+    const bestMonthly = best.price / monthsOf(best.durationMonths);
+    return monthly < bestMonthly || (monthly === bestMonthly && monthsOf(v.durationMonths) < monthsOf(best.durationMonths)) ? v : best;
+  });
+  return [...versions].sort((a, b) => monthsOf(a.durationMonths) - monthsOf(b.durationMonths)).map((v) => {
+    const months = monthsOf(v.durationMonths);
     const originalPrice = Math.round(baseMonthly * months);
     const saving = originalPrice > 0 ? Math.round((1 - v.price / originalPrice) * 100) : 0;
     return {
@@ -74,7 +80,7 @@ export function toPaidPlanCards(plans: PublicPlan[]): PaidPlanPreview[] {
       price: v.price,
       originalPrice,
       caption: saving > 0 ? `Tiết kiệm ${saving}%` : "Linh hoạt khởi đầu",
-      recommended: versions.length > 1 && months === longest,
+      recommended: versions.length > 1 && v.planVersionId === bestValue.planVersionId,
     };
   });
 }
@@ -93,9 +99,9 @@ export function resolveSignupPlan(plans: PublicPlan[], selection: PlanSelection)
     return { planVersionId: version.planVersionId, planName: trial.planName, isPaid: false, price: version.price, currency: version.currency, durationDays: days, label: `Dùng thử ${days} ngày` };
   }
   for (const plan of plans.filter((item) => item.isPaid)) {
-    const version = plan.versions.find((v) => monthsOf(v.durationDays) === selection.months);
+    const version = plan.versions.find((v) => monthsOf(v.durationMonths) === selection.months);
     if (version) {
-      return { planVersionId: version.planVersionId, planName: plan.planName, isPaid: true, price: version.price, currency: version.currency, durationDays: version.durationDays ?? selection.months * 30, label: `${plan.planName} · ${selection.months} tháng` };
+      return { planVersionId: version.planVersionId, planName: plan.planName, isPaid: true, price: version.price, currency: version.currency, durationMonths: version.durationMonths, durationDays: version.durationDays ?? selection.months * 30, label: `${plan.planName} · ${selection.months} tháng` };
     }
   }
   return null;

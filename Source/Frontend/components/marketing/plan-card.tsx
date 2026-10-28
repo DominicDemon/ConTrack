@@ -25,11 +25,11 @@ export function PlanCard({ plan, selected, onSelect }: PlanCardProps) {
           <span className="font-semibold">{plan.months} tháng</span>
           <span aria-hidden="true" className={selected ? "size-4 shrink-0 rounded-full border-[5px] border-primary bg-card" : "size-4 shrink-0 rounded-full border border-muted-foreground/50 bg-card"} />
         </span>
-        <span className="text-2xl font-bold tracking-tight tabular-nums">{formatCurrency(plan.price)}</span>
+        <span className="break-words text-2xl font-bold tracking-tight tabular-nums">{formatCurrency(plan.price)}</span>
         <span className="text-xs text-muted-foreground">{formatCurrency(plan.price / plan.months)} / tháng</span>
-        <span className="mt-auto flex flex-wrap items-center gap-2 text-xs font-medium text-primary">
+        <span className="mt-auto flex min-h-6 flex-wrap items-center gap-2 text-xs font-medium text-primary">
           {plan.caption}
-          {plan.recommended && <Badge variant="secondary" className="text-[10px]">Đề xuất</Badge>}
+          {plan.recommended && <Badge variant="secondary" className="text-[10px]" title="Giá trung bình mỗi tháng thấp nhất">Đề xuất</Badge>}
         </span>
       </span>
     </label>

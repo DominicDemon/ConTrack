@@ -23,7 +23,7 @@ export const COMMON_PLAN_FEATURES = [
 export function readPlanSelection(params: { get: (key: string) => string | null }): PlanSelection {
   if (params.get("plan") === "trial") return { kind: "trial" };
   const months = Number(params.get("months"));
-  return { kind: "paid", months: Number.isInteger(months) && months >= 1 && months <= 60 ? months : 12 };
+  return { kind: "paid", months: Number.isInteger(months) && months >= 1 && months <= 24 ? months : 12 };
 }
 
 export function getPricingHref(selection: PlanSelection) {

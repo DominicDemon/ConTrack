@@ -7,6 +7,7 @@ export interface PublicPlanVersion {
   currency: string;
   billingCycle: string;
   durationDays: number | null;
+  durationMonths: number | null;
 }
 
 export interface PublicPlan {
@@ -65,6 +66,7 @@ export type SubscriptionStatus =
   | "PROVISIONING_FAILED";
 
 export interface SubscriptionStatusResponse {
+  receiptPath: string | null;
   publicId: string;
   status: SubscriptionStatus;
   isPaid: boolean;
@@ -101,11 +103,11 @@ export const subscriptionApi = {
   getStatus: (publicId: string, signal?: AbortSignal) =>
     publicAxiosClient.get<unknown, SubscriptionStatusResponse>(
       `${BASE_URL}/subscriptions/${encodeURIComponent(publicId)}/status`,
-      { signal },
+      { signal, timeout: 15_000 },
     ),
 
   cancel: (publicId: string) =>
     publicAxiosClient.post<unknown, SubscriptionStatusResponse>(
-      `${BASE_URL}/subscriptions/${encodeURIComponent(publicId)}/cancel`,
+      `${BASE_URL}/subscriptions/${encodeURIComponent(publicId)}/cancel`, {}, { timeout: 15_000 },
     ),
 };

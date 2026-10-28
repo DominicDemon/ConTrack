@@ -90,9 +90,22 @@ export function PricingContent() {
                   </span>
                 </label>
               )}
-              <div className="grid gap-3 sm:grid-cols-3">
-                {cards.map((plan) => (
+              <div className="grid auto-rows-fr gap-3 sm:grid-cols-6">
+                {cards.map((plan, index) => (
+                  <div
+                    key={plan.months}
+                    className={cards.length === 1
+                      ? "min-w-0 sm:col-span-6"
+                      : cards.length === 2 || cards.length === 4
+                        ? "min-w-0 sm:col-span-3"
+                        : `min-w-0 sm:col-span-2 ${cards.length % 3 === 1 && index === cards.length - 1
+                          ? "sm:col-start-3"
+                          : cards.length % 3 === 2 && index === cards.length - 2
+                            ? "sm:col-start-2"
+                            : ""}`}
+                  >
                   <PlanCard key={plan.months} plan={plan} selected={selection.kind === "paid" && selection.months === plan.months} onSelect={() => handleSelect({ kind: "paid", months: plan.months })} />
+                  </div>
                 ))}
               </div>
             </fieldset>

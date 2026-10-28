@@ -110,7 +110,7 @@ export function SignupInfoForm() {
   }
 
   const backHref = draft.plan.isPaid
-    ? getPricingHref({ kind: "paid", months: Math.max(1, Math.round(draft.plan.durationDays / 30)) })
+    ? getPricingHref({ kind: "paid", months: draft.plan.durationMonths ?? 12 })
     : getPricingHref({ kind: "trial" });
 
   return (

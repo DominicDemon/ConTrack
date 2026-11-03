@@ -11,7 +11,9 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using ContractManagement.Infrastructure.Security;
 using LoginRequest = ContractManagement.Domains.DTOs.Requests.Authentication.LoginRequest;
 
 namespace ContractManagement.Domains.Controllers.Authentication
@@ -25,17 +27,20 @@ namespace ContractManagement.Domains.Controllers.Authentication
         private readonly IEmployeeAccountService? _employeeAccountService;
 
         private readonly ICurrentTenant _currentTenant;
+        private readonly LoginThrottle _loginThrottle;
 
         public AuthController(
             DbDtctechContext dbDtctechContext,
             IPasswordHasher<TblEmployee> passwordHasher,
             ICurrentTenant currentTenant,
-            IEmployeeAccountService? employeeAccountService = null)
+            IEmployeeAccountService? employeeAccountService = null,
+            LoginThrottle? loginThrottle = null)
         {
             this._dbDtctechContext = dbDtctechContext;
             _passwordHasher = passwordHasher;
             _currentTenant = currentTenant;
             _employeeAccountService = employeeAccountService;
+            _loginThrottle = loginThrottle ?? LoginRateLimit.CreateStandaloneThrottle();
         }
 
         [HttpGet("profile")]
@@ -175,35 +180,40 @@ namespace ContractManagement.Domains.Controllers.Authentication
         }
 
         [HttpPost("login")]
+        [EnableRateLimiting(LoginRateLimit.PolicyName)]
         public async Task<IActionResult> Login([FromHeader(Name = "X-Tenant-Code")] string tenantCode,[FromBody] LoginRequest request)
         {
             // 0. Get current tenant (if needed for multi-tenancy)
             var tenant = _currentTenant.GetRequiredTenant();
+            var throttleKey = LoginThrottle.EmployeeKey(tenant.TenantId, request.AccountName);
+            if (_loginThrottle.GetLockoutRemaining(throttleKey) is { } remaining)
+            {
+                await WriteFailedLoginAuditAsync(tenant.TenantId, request.AccountName, LoginRateLimit.LockedCode);
+                return LoginRateLimit.Locked(this, remaining);
+            }
 
             // 1. Get employee by account name
             var employee = await _dbDtctechContext.TblEmployees.FirstOrDefaultAsync(e => e.EmployeeAccount == request.AccountName);
 
-            // 2. Check if employee exists
-            if (employee == null
-                || string.IsNullOrEmpty(employee.EmployeePassword)
-                || string.IsNullOrEmpty(request.Password))
+            // 2-3. Verify password. Tài khoản không tồn tại vẫn verify với hash giả để thời gian phản hồi như nhau.
+            var passwordVerificationResult = string.IsNullOrEmpty(request.Password)
+                ? PasswordVerificationResult.Failed
+                : employee is null || string.IsNullOrEmpty(employee.EmployeePassword)
+                    ? VerifyAgainstDummyHash(request.Password)
+                    : _passwordHasher.VerifyHashedPassword(employee, employee.EmployeePassword, request.Password);
+
+            if (employee is null || passwordVerificationResult == PasswordVerificationResult.Failed)
             {
+                var locked = _loginThrottle.RecordFailure(throttleKey);
+                await WriteFailedLoginAuditAsync(tenant.TenantId, request.AccountName,
+                    locked ? LoginRateLimit.LockedCode : AuthorizationErrorCodes.AuthenticationRequired);
                 return Unauthorized(new
                 {
                     message = "Sai tên đăng nhập hoặc mật khẩu."
                 });
             }
 
-            // 3. Verify password
-            var passwordVerificationResult = _passwordHasher.VerifyHashedPassword(employee, employee.EmployeePassword, request.Password);
-
-            if (passwordVerificationResult == PasswordVerificationResult.Failed)
-            {
-                return Unauthorized(new
-                {
-                    message = "Sai tên đăng nhập hoặc mật khẩu."
-                });
-            }
+            _loginThrottle.Reset(throttleKey);
 
             if (employee.Status != 1)
             {
@@ -305,6 +315,38 @@ namespace ContractManagement.Domains.Controllers.Authentication
             {
                 message = "Đăng xuất thành công."
             });
+        }
+
+        private static readonly string DummyPasswordHash =
+            new PasswordHasher<TblEmployee>().HashPassword(new TblEmployee(), Guid.NewGuid().ToString("N"));
+
+        private PasswordVerificationResult VerifyAgainstDummyHash(string password)
+        {
+            _passwordHasher.VerifyHashedPassword(new TblEmployee(), DummyPasswordHash, password);
+            return PasswordVerificationResult.Failed;
+        }
+
+        private async Task WriteFailedLoginAuditAsync(int tenantId, string? accountName, string failureCode)
+        {
+            var account = (accountName ?? string.Empty).Trim();
+            _dbDtctechContext.TblAuthorizationAudits.Add(AuthorizationAuditRecordFactory.CreateTenant(
+                tenantId,
+                null,
+                "Anonymous",
+                AuthorizationAuditActionTypes.EmployeeLogin,
+                AuthorizationAuditResultTypes.Denied,
+                "Employee",
+                account.Length > 100 ? account[..100] : account,
+                null,
+                null,
+                null,
+                null,
+                failureCode,
+                DateTime.UtcNow,
+                HttpContext.Connection.RemoteIpAddress?.ToString(),
+                HttpContext.Request.Headers.UserAgent.ToString(),
+                HttpContext.TraceIdentifier));
+            await _dbDtctechContext.SaveChangesAsync(HttpContext.RequestAborted);
         }
 
         private IEmployeeAccountService AccountService =>

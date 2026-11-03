@@ -14,6 +14,7 @@ public static class AuthorizationAuditActionTypes
     public const string PasswordRecoveryDenied = "PasswordRecoveryDenied";
     public const string CentralApiAccessDenied = "CentralApiAccessDenied";
     public const string SystemAdminLogin = "SystemAdminLogin";
+    public const string EmployeeLogin = "EmployeeLogin";
     public const string EmployeeCreated = "EmployeeCreated";
     public const string EmployeeRoleChanged = "EmployeeRoleChanged";
     public const string EmployeeStatusChanged = "EmployeeStatusChanged";

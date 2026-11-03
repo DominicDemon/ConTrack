@@ -329,6 +329,7 @@ builder.Services.AddScoped<
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
 builder.Services.AddScoped<ISystemHealthService, SystemHealthService>();
+ContractManagement.API.Common.Security.LoginRateLimit.AddLoginProtection(builder.Services);
 builder.Services.Configure<ContractManagement.API.Domains.Payments.PayOsOptions>(
     builder.Configuration.GetSection(ContractManagement.API.Domains.Payments.PayOsOptions.SectionName));
 builder.Services.AddSingleton<
@@ -545,6 +546,11 @@ app.UseRouting();
  * CORS phải chạy trước Controller.
  */
 app.UseCors("CorsPolicy");
+
+/*
+ * Rate limit theo endpoint ([EnableRateLimiting]); đặt sau CORS để response 429 vẫn có header CORS.
+ */
+app.UseRateLimiter();
 
 /*
  * Session phải chạy trước TenantResolutionMiddleware,

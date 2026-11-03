@@ -101,7 +101,7 @@ export function SignupCart() {
       const code = getApiErrorCode(error) ?? "";
       setSubmitError({
         message: getApiErrorMessage(error, "Không tạo được đơn đăng ký. Vui lòng thử lại."),
-        editInfo: code.startsWith("SIGNUP_") || code.startsWith("TENANT_CODE") || code === "TRIAL_ALREADY_USED",
+        editInfo: code.startsWith("SIGNUP_") || code.startsWith("TENANT_CODE"),
       });
       submitLock.current = false;
       setSubmitting(false);

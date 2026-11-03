@@ -44,6 +44,7 @@ export function SignupInfoForm() {
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const checkSeq = useRef(0);
+  const emailSeq = useRef(0);
 
   useEffect(() => {
     const saved = readSignupDraft();
@@ -75,10 +76,33 @@ export function SignupInfoForm() {
     }
   };
 
+  /** Trả thông báo lỗi nếu email đã gắn với tổ chức khác; null nếu dùng được, sai định dạng hoặc lỗi mạng (server kiểm tra lại khi checkout). */
+  const checkEmail = async (): Promise<string | null> => {
+    if (validateSignupInfo(info).email) return null;
+    try {
+      const result = await subscriptionApi.checkEmail(info.email.trim().toLowerCase(), normalizeTenantCode(info.tenantCode));
+      return result.available ? null : result.message ?? "Email đã được sử dụng.";
+    } catch {
+      return null;
+    }
+  };
+
   const update = (name: keyof SignupInfo, value: string) => {
     setInfo((current) => ({ ...current, [name]: value }));
     setErrors((current) => ({ ...current, [name]: undefined }));
     if (name === "tenantCode") setCodeCheck(null);
+    if (name === "email") emailSeq.current++; // bỏ kết quả kiểm tra của giá trị cũ
+  };
+
+  const handleBlur = async (name: keyof SignupInfo) => {
+    if (name === "tenantCode") {
+      const result = await checkCode(info.tenantCode);
+      if (result && !result.available) setErrors((current) => ({ ...current, tenantCode: result.message ?? undefined }));
+    } else if (name === "email") {
+      const seq = ++emailSeq.current;
+      const error = await checkEmail();
+      if (error && seq === emailSeq.current) setErrors((current) => ({ ...current, email: error }));
+    }
   };
 
   const submit = async (event: React.FormEvent) => {
@@ -88,9 +112,12 @@ export function SignupInfoForm() {
     setErrors(validation);
     if (Object.keys(validation).length > 0) return;
     setSubmitting(true);
-    const check = await checkCode(info.tenantCode);
-    if (check && !check.available) {
-      setErrors({ tenantCode: check.message ?? "Mã tổ chức đã được sử dụng." });
+    const [check, emailError] = await Promise.all([checkCode(info.tenantCode), checkEmail()]);
+    if ((check && !check.available) || emailError) {
+      setErrors({
+        tenantCode: check && !check.available ? check.message ?? "Mã tổ chức đã được sử dụng." : undefined,
+        email: emailError ?? undefined,
+      });
       setSubmitting(false);
       return;
     }
@@ -141,10 +168,7 @@ export function SignupInfoForm() {
                     aria-invalid={Boolean(error)}
                     aria-describedby={`${id}-hint ${id}-error`}
                     onChange={(event) => update(field.name, event.target.value)}
-                    onBlur={field.name === "tenantCode" ? async () => {
-                      const result = await checkCode(info.tenantCode);
-                      if (result && !result.available) setErrors((current) => ({ ...current, tenantCode: result.message ?? undefined }));
-                    } : undefined}
+                    onBlur={() => void handleBlur(field.name)}
                   />
                   {field.hint && <p id={`${id}-hint`} className="text-xs text-muted-foreground">{field.hint}</p>}
                   {field.name === "tenantCode" && checking && <p role="status" className="flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="size-3.5 animate-spin" aria-hidden="true" />Đang kiểm tra mã...</p>}

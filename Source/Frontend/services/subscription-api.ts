@@ -29,6 +29,13 @@ export interface TenantCodeCheckResponse {
   message: string | null;
 }
 
+export interface EmailCheckResponse {
+  email: string;
+  available: boolean;
+  errorCode: string | null;
+  message: string | null;
+}
+
 export interface VoucherPreviewResponse {
   planVersionId: number;
   voucherCode: string | null;
@@ -86,6 +93,13 @@ export const subscriptionApi = {
   checkTenantCode: (code: string, signal?: AbortSignal) =>
     publicAxiosClient.get<unknown, TenantCodeCheckResponse>(`${BASE_URL}/tenant-code/check`, {
       params: { code },
+      signal,
+    }),
+
+  /** tenantCode giúp server bỏ qua đơn đang chờ của chính mã tổ chức đó (nộp lại form). */
+  checkEmail: (email: string, tenantCode: string, signal?: AbortSignal) =>
+    publicAxiosClient.get<unknown, EmailCheckResponse>(`${BASE_URL}/email/check`, {
+      params: { email, tenantCode },
       signal,
     }),
 

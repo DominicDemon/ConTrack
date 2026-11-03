@@ -8,6 +8,7 @@ import {
   Building2,
   ChevronLeft,
   FileText,
+  Headset,
   HeartPulse,
   LogOut,
   Menu,
@@ -43,6 +44,12 @@ const navItems = [
     label: "Quản lý tenant",
     icon: Building2,
     href: "/tenants",
+    disabled: false,
+  },
+  {
+    label: "Hỗ trợ & Ticket",
+    icon: Headset,
+    href: "/support-tickets",
     disabled: false,
   },
   {

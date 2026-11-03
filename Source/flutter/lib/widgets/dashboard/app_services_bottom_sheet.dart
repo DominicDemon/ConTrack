@@ -343,6 +343,18 @@ class __AppServicesBottomSheetContentState
                         bgColor: onPrimaryColor,
                         onTapNormal: () => Navigator.of(context).pop(),
                       ),
+                      _buildItem(
+                        context,
+                        id: 'support_tickets',
+                        title: 'Hỗ trợ Ticket',
+                        icon: Icons.support_agent_rounded,
+                        color: primaryColor,
+                        bgColor: onPrimaryColor,
+                        onTapNormal: () {
+                          Navigator.of(context).pop();
+                          Navigator.of(context).pushNamed('/support/tickets');
+                        },
+                      ),
                     ],
                   ),
                 ],

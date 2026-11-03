@@ -154,6 +154,14 @@ class _DashboardPageState extends State<DashboardPage> {
         bgColor: onPrimaryColor,
         onTap: () {},
       ),
+      'support_tickets': QuickActionData(
+        id: 'support_tickets',
+        title: "Hỗ trợ Ticket",
+        icon: Icons.support_agent_rounded,
+        color: primaryColor,
+        bgColor: onPrimaryColor,
+        onTap: () => Navigator.of(context).pushNamed('/support/tickets'),
+      ),
     };
   }
 

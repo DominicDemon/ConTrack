@@ -52,6 +52,9 @@ const contractTabs = new Set([
 ]);
 
 export function notificationHref(item: NotificationItem): string | null {
+  if (item.subjectType === "SupportTicket" && item.subjectId > 0) {
+    return `/support-tickets/${item.subjectId}`;
+  }
   if (
     item.subjectType !== "Contract" ||
     !Number.isSafeInteger(item.subjectId) ||

@@ -11,6 +11,7 @@ import {
   FileBadge,
   FileSignature,
   FileText,
+  Headset,
   LayoutDashboard,
   LibraryBig,
   LogOut,
@@ -50,6 +51,11 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: "Tổng quan", icon: LayoutDashboard, href: "/dashboard" },
+  {
+    label: "Hỗ trợ khách hàng",
+    icon: Headset,
+    href: "/support-tickets",
+  },
   {
     label: "Hợp đồng",
     icon: FileText,

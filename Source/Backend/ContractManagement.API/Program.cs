@@ -45,6 +45,7 @@ using ContractManagement.API.Domains.Discussions;
 using System.Net;
 using ContractManagement.API.Domains.Email;
 using ContractManagement.API.Domains.Recovery;
+using ContractManagement.API.Domains.Support;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -329,6 +330,7 @@ builder.Services.AddScoped<
 builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
 builder.Services.AddScoped<ISystemHealthService, SystemHealthService>();
+builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
 ContractManagement.API.Common.Security.LoginRateLimit.AddLoginProtection(builder.Services);
 builder.Services.Configure<ContractManagement.API.Domains.Payments.PayOsOptions>(
     builder.Configuration.GetSection(ContractManagement.API.Domains.Payments.PayOsOptions.SectionName));

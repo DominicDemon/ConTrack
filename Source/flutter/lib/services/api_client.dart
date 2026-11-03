@@ -198,8 +198,23 @@ class ApiClient {
     }
   }
 
+  Uri _buildUrl(String endpoint) {
+    var base = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+    var path = endpoint.startsWith('/') ? endpoint : '/$endpoint';
+
+    // If base doesn't end with /api and path doesn't start with /api/, ensure /api is included
+    if (!base.endsWith('/api') && !path.startsWith('/api/')) {
+      path = '/api$path';
+    } else if (base.endsWith('/api') && path.startsWith('/api/')) {
+      // Avoid duplicate /api/api
+      path = path.substring(4);
+    }
+
+    return Uri.parse('$base$path');
+  }
+
   Future<dynamic> get(String endpoint, {Map<String, String>? headers}) async {
-    final url = Uri.parse('$baseUrl$endpoint');
+    final url = _buildUrl(endpoint);
     final builtHeaders = _buildHeaders(headers);
 
     if (kDebugMode) {
@@ -224,7 +239,7 @@ class ApiClient {
     dynamic body,
     Map<String, String>? headers,
   }) async {
-    final url = Uri.parse('$baseUrl$endpoint');
+    final url = _buildUrl(endpoint);
     final builtHeaders = _buildHeaders(headers);
     final jsonBody = body != null ? jsonEncode(body) : null;
 
@@ -257,7 +272,7 @@ class ApiClient {
     dynamic body,
     Map<String, String>? headers,
   }) async {
-    final url = Uri.parse('$baseUrl$endpoint');
+    final url = _buildUrl(endpoint);
     final builtHeaders = _buildHeaders(headers);
     final jsonBody = body != null ? jsonEncode(body) : null;
 
@@ -289,7 +304,7 @@ class ApiClient {
     String endpoint, {
     Map<String, String>? headers,
   }) async {
-    final url = Uri.parse('$baseUrl$endpoint');
+    final url = _buildUrl(endpoint);
     final builtHeaders = _buildHeaders(headers);
 
     if (kDebugMode) {
@@ -314,7 +329,7 @@ class ApiClient {
     dynamic body,
     Map<String, String>? headers,
   }) async {
-    final url = Uri.parse('$baseUrl$endpoint');
+    final url = _buildUrl(endpoint);
     final builtHeaders = _buildHeaders(headers);
     final jsonBody = body != null ? jsonEncode(body) : null;
 

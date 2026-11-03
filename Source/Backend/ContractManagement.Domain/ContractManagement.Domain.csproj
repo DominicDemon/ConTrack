@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\Shared\application-branding.json" LogicalName="ContractManagement.ApplicationBranding.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ContractManagement.Application" />
+    <InternalsVisibleTo Include="ContractManagement.Infrastructure" />
+    <InternalsVisibleTo Include="ContractManagement.API" />
+    <InternalsVisibleTo Include="ContractManagement.Tests" />
+  </ItemGroup>
+
+</Project>
+

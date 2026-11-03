@@ -19,6 +19,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="..\..\Shared\application-branding.json" LogicalName="ContractManagement.ApplicationBranding.json" />
+    <EmbeddedResource Include="..\..\Artifacts\Database\Master\001-internal-drafts.sql" LogicalName="InternalDraftUpgrade.sql" />
+    <EmbeddedResource Include="..\..\Artifacts\ContractTemplates\Mẫu Contract Placeholder - đã gắn placeholder.docx" LogicalName="InternalDraftTemplate.docx" />
     <Content Include="DatabaseScripts\StoredProcedures\Quotations\sp_Quotation_Create.sql" />
     <Content Include="DatabaseScripts\StoredProcedures\Quotations\sp_Quotation_GetById.sql" />
   </ItemGroup>
@@ -36,6 +38,7 @@
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0" />
     <PackageReference Include="payOS" Version="2.1.0" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
 

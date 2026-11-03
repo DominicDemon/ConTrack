@@ -20,6 +20,7 @@ public static class InternalHost
         builder.Services.AddScoped<IInternalRepository, InternalRepository>();
         builder.Services.AddScoped<InternalDraftService>();
         builder.Services.AddScoped<InternalBootstrap>();
+        builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
         builder.Services.AddSingleton(new InternalTemplateStorage(builder.Configuration["InternalStorage:Root"]
             ?? Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "private-storage", "internal-templates"))));
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new StringLongConverter()));
@@ -83,6 +84,9 @@ public static class InternalHost
             return await next(invocation);
         });
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
+        secured.MapPost("/contract-templates/extract", (TemplateFileInput input, IInternalTemplateImport importer) => Results.Ok(importer.Extract(input)));
+        secured.MapPost("/contract-templates/import", async (TemplateImportInput input, HttpContext c, IInternalTemplateImport importer, CancellationToken ct) =>
+            Results.Ok(await importer.Save(input, Current(c).Id, ct)));
         secured.MapGet("/contract-templates/{id:long}", async (long id, IInternalRepository r, CancellationToken ct) =>
             (await r.Templates(ct)).FirstOrDefault(t => t.Id == id) is { } t ? Results.Ok(t) : Results.NotFound());
         secured.MapGet("/customers", async (string? search, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Customers(search, ct)));

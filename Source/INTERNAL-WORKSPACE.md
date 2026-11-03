@@ -43,6 +43,20 @@ Không có gửi khách, OTP, phê duyệt, thanh toán, ký hoặc xuất DOCX/
 
 ## Dữ liệu và kỹ thuật
 
+### Tải mẫu Word/PDF tại màn tạo nháp
+
+- Nút “Tải lên hợp đồng mẫu” nằm dưới ô chọn mẫu, chỉ ở nháp mới vì nháp đã lưu giữ nguyên snapshot.
+- DOCX/PDF tối đa 10 MB, PDF tối đa 100 trang; Word .doc cần lưu lại thành .docx.
+- Đọc nội dung chữ, cho người dùng sửa và xác nhận trước khi tạo mẫu dùng chung.
+  Không tự nhận diện các bên, không tự thay tên khách trong văn bản và không giữ nguyên bố cục file gốc.
+- PDF không có lớp chữ được cảnh báo; người soạn phải tự bổ sung nội dung. Chưa có OCR.
+- `POST /api/internal/contract-templates/extract`: `{fileName, base64}` trả `{name, content, warning}`.
+- `POST /api/internal/contract-templates/import`: thêm `{name, content}` đã kiểm tra, trả `TemplateDefinition` có `isImported=true`.
+  Cả hai endpoint dùng session/CSRF và quyền `draft.write`; mẫu nhập vẫn chưa được coi là đã phê duyệt.
+- File gốc và định nghĩa mẫu có checksum được lưu private storage, liên kết `FILE_STORAGE`;
+  mẫu, trường và audit được tạo trong transaction. Không thay schema DB.
+- Màn nháp kế thừa token màu/font sáng/tối từ giao diện chung và sử dụng `SummaryCards` của các màn cũ.
+
 - Domain tính tiền/làm sạch nội dung; Application kiểm tra quyền và điều phối;
   Infrastructure lưu EF/storage; API ánh xạ request/response.
 - API `/api/internal` dùng session HttpOnly riêng, CSRF và hạn chế tốc độ đăng nhập.

@@ -4,6 +4,12 @@ export default function DraftPreview({ content, code }: { content: DraftContent;
   const totals = estimateTotals(content);
   const field = (key: string, label: string) => content.fields[key]?.trim() || <span className={s.missing}>Chưa điền: {label}</span>;
   const date = (value: string | null) => value ? value.split("-").reverse().join("/") : <span className={s.missing}>Chưa điền ngày</span>;
+  if (content.templateSnapshot?.isImported) return <div className={s.previewPane}><div className={s.previewLabel}><span>Bản xem trước • văn bản nhập</span><span>Chưa ký</span></div><article className={s.paper} aria-label="Bản xem trước hợp đồng">
+    <div className={s.demoStamp}>BẢN NHÁP • MẪU TẢI LÊN — CHƯA XÁC NHẬN PHÊ DUYỆT</div>
+    <h2>{content.name || "Tên hợp đồng"}</h2>
+    <p style={{fontSize:11}}>Mã nháp: {code || "Được cấp khi lưu"}</p>
+    {content.terms.map(term => <p key={term.key}>{term.content || <span className={s.missing}>Chưa nhập nội dung</span>}</p>)}
+  </article></div>;
   return <div className={s.previewPane}><div className={s.previewLabel}><span>Bản xem trước • A4</span><span>Chưa ký</span></div><article className={s.paper} aria-label="Bản xem trước hợp đồng">
     <div className={s.demoStamp}>BẢN NHÁP • MẪU MINH HỌA — CHƯA ĐƯỢC CÔNG TY PHÊ DUYỆT</div>
     <p style={{ textAlign: "center", fontWeight: 700, marginTop: 22 }}>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</p><p style={{ textAlign: "center" }}>Độc lập – Tự do – Hạnh phúc</p>

@@ -5,7 +5,7 @@ namespace ContractManagement.Domain.Internal;
 public sealed record DraftField(string Key, string Label, bool Required = false);
 public sealed record DraftTerm(string Key, string Title, string Content, bool Editable = true);
 public sealed record TemplateDefinition(long Id, string Name, string Revision, bool IsDemo,
-    List<DraftField> Fields, List<DraftTerm> Terms);
+    List<DraftField> Fields, List<DraftTerm> Terms, bool IsImported = false);
 public sealed record DraftItem(long? ProductId, string Name, decimal Quantity, decimal UnitPrice,
     decimal DiscountPercent, decimal DiscountAmount);
 public sealed record DraftTotals(decimal Subtotal, decimal Discount, decimal Vat, decimal Total);

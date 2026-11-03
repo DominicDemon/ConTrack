@@ -1,7 +1,7 @@
 export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean };
 export type DraftField = { key: string; label: string; required: boolean };
 export type DraftTerm = { key: string; title: string; content: string; editable: boolean };
-export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; fields: DraftField[]; terms: DraftTerm[] };
+export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; fields: DraftField[]; terms: DraftTerm[] };
 export type CustomerOption = { id: string; name: string; phone: string; fields: Record<string, string> };
 export type CustomerInput = { name: string; phone: string; email: string; company: string; taxCode: string; address: string };
 export type ProductOption = { id: string; name: string; price: number };

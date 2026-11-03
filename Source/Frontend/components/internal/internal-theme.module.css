@@ -1,38 +1,9 @@
 .theme {
-  --background: #f5f7fa;
-  --foreground: #172b2c;
-  --card: #fff;
-  --card-foreground: #172b2c;
-  --popover: #fff;
-  --popover-foreground: #172b2c;
-  --primary: #007f83;
-  --primary-foreground: #fff;
-  --secondary: #c6ebe4;
-  --secondary-foreground: #172b2c;
-  --muted: #f0f5f4;
-  --muted-foreground: #5d6d70;
-  --accent: #eaf7f5;
-  --accent-foreground: #172b2c;
-  --destructive: #b42318;
-  --destructive-foreground: #fff;
-  --border: #d7e2e3;
-  --input: #a3b7b8;
-  --ring: #007f83;
-  --radius: 0.625rem;
-  --sidebar: #fff;
-  --sidebar-foreground: #172b2c;
-  --sidebar-primary: #007f83;
-  --sidebar-primary-foreground: #fff;
-  --sidebar-accent: #eaf7f5;
-  --sidebar-accent-foreground: #172b2c;
-  --sidebar-border: #d7e2e3;
-  --sidebar-ring: #007f83;
-  color-scheme: light;
   min-height: 100dvh;
   min-width: 0;
   background: var(--background);
   color: var(--foreground);
-  font-family: "Open Sans", "Segoe UI", Arial, sans-serif;
+  font-family: var(--font-sans);
   font-size: 0.9375rem;
   line-height: 1.55;
 }
@@ -44,7 +15,7 @@
   outline-offset: 3px;
 }
 .theme :where(button):disabled { cursor: not-allowed; opacity: 0.5; }
-.theme ::selection { background: #c6ebe4; color: #172b2c; }
+.theme ::selection { background: var(--secondary); color: var(--foreground); }
 
 .card {
   border: 1px solid var(--border);
@@ -66,18 +37,18 @@
   cursor: pointer;
   transition: background-color 150ms ease;
 }
-.primaryButton { background: var(--primary); color: #fff; }
-.primaryButton:hover:not(:disabled) { background: #006b70; }
-.secondaryButton { background: #fff; border-color: var(--border); color: var(--foreground); }
+.primaryButton { background: var(--primary); color: var(--primary-foreground); }
+.primaryButton:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 90%, black); }
+.secondaryButton { background: var(--card); border-color: var(--border); color: var(--foreground); }
 .secondaryButton:hover:not(:disabled) { background: var(--accent); }
 
 .field {
   width: 100%;
   min-height: 42px;
   padding: 9px 12px;
-  border: 1px solid var(--input);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: #fff;
+  background: var(--card);
   color: var(--foreground);
 }
 .field[aria-invalid="true"] { border-color: var(--destructive); }

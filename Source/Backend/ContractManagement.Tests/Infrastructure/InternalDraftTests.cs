@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ContractManagement.Tests.Infrastructure;
 
+[Collection("InternalMaster")]
 public class InternalDraftTests
 {
     private static TemplateDefinition Template => new(1, "Demo", "v1", true,

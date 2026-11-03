@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FilePlus2, Files, FileCheck2, FilePenLine, RefreshCw, ArrowUpRight } from "lucide-react";
+import { FilePlus2, Files, CircleCheck, ClipboardList, CircleAlert, RefreshCw, ArrowUpRight } from "lucide-react";
+import { SummaryCards } from "@/components/ui/custom/summary-cards";
 import { useInternalUser } from "@/components/internal/internal-shell";
 import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
@@ -15,7 +16,11 @@ export default function DraftList() {
   }, 250); return () => { active = false; clearTimeout(timer); }; }, [search, owner, reload]);
   const complete = rows.filter(r => r.missingCount === 0).length;
   return <div className={s.page}><div className={s.titleRow}><div><span className={s.eyebrow}>Hồ sơ hợp đồng</span><h1>Hợp đồng nháp</h1><p className={s.muted}>Bắt đầu từ mẫu và hoàn thiện nội dung cùng đội ngũ của bạn.</p></div><Link href="/workspace/contracts/drafts/new" className={ui.primaryButton}><FilePlus2 size={18}/>Tạo hợp đồng nháp</Link></div>
-    <div className={s.stats}>{[[Files, rows.length, "Bản nháp trong kết quả"], [FilePenLine, rows.length - complete, "Cần bổ sung nội dung"], [FileCheck2, complete, "Đã đủ trường thông tin"]].map(([Icon, n, label], i) => { const Component = Icon as typeof Files; return <div className={s.stat} key={i}><Component size={29} strokeWidth={1.5}/><div><strong>{n as number}</strong><span className={s.muted}>{label as string}</span></div></div>; })}</div>
+    <div style={{ marginBottom: 24 }}><SummaryCards isLoading={busy} items={[
+      { title: "Bản nháp trong kết quả", value: rows.length, icon: <ClipboardList size={24}/>, iconWrapperClassName: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-400" },
+      { title: "Cần bổ sung nội dung", value: rows.length - complete, icon: <CircleAlert size={24}/>, iconWrapperClassName: "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400" },
+      { title: "Đã đủ trường thông tin", value: complete, icon: <CircleCheck size={24}/>, iconWrapperClassName: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400" },
+    ]}/></div>
     {error && <p role="alert" className={ui.error} style={{ marginBottom: 16 }}>{error}</p>}
     <section className={ui.card}><div className={s.toolbar}><input aria-label="Tìm hợp đồng nháp" className={ui.field} placeholder="Tìm tên hợp đồng, mã hoặc khách hàng…" value={search} onChange={e => setSearch(e.target.value)}/>
       {user.canManageAll && <select aria-label="Lọc người phụ trách" className={ui.field} style={{ maxWidth: 240 }} value={owner} onChange={e => setOwner(e.target.value)}><option value="">Tất cả người phụ trách</option>{employees.map(e => <option value={e.id} key={e.id}>{e.name}</option>)}</select>}

@@ -19,7 +19,7 @@ export default function InternalLogin() {
     <section className={s.loginIntro}>
       <div className={s.brand}><span className={s.brandMark}><FileText size={23}/></span>{APP_NAME}</div>
       <div><span className={s.eyebrow}>Không gian làm việc nội bộ</span><h1>Từ bản nháp đầu tiên,<br/>đến một thỏa thuận rõ ràng.</h1><p>Soạn hợp đồng theo mẫu, kiểm tra nội dung và cùng hoàn thiện từng điều khoản trong một không gian thống nhất.</p>
-        <div style={{ display: "grid", gap: 16, marginTop: 32 }}>{["Thông tin tập trung, dễ tìm lại", "Soạn và xem trước trên cùng màn hình", "Phân quyền theo trách nhiệm"].map(text => <div key={text} style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 14 }}><Check size={18} color="#007f83"/>{text}</div>)}</div>
+        <div style={{ display: "grid", gap: 16, marginTop: 32 }}>{["Thông tin tập trung, dễ tìm lại", "Soạn và xem trước trên cùng màn hình", "Phân quyền theo trách nhiệm"].map(text => <div key={text} style={{ display: "flex", alignItems: "center", gap: 12, fontSize: 14 }}><Check size={18} color="var(--primary)"/>{text}</div>)}</div>
       </div><p className={s.muted}>Hệ thống quản lý hợp đồng dành cho nhân viên công ty.</p>
     </section>
     <section className={s.loginForm}><span className={s.eyebrow}>Chào mừng trở lại</span><h2 style={{ marginTop: 12 }}>Đăng nhập</h2><p className={s.muted}>Sử dụng tài khoản nhân viên được cấp để tiếp tục.</p>

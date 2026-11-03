@@ -46,8 +46,15 @@ using System.Net;
 using ContractManagement.API.Domains.Email;
 using ContractManagement.API.Domains.Recovery;
 using ContractManagement.API.Domains.Support;
+using ContractManagement.Infrastructure.Persistence.Master;
 
 var builder = WebApplication.CreateBuilder(args);
+
+if (string.Equals(builder.Configuration["ApplicationMode"], "Internal", StringComparison.OrdinalIgnoreCase))
+{
+    await ContractManagement.API.Internal.InternalHost.Run(builder, args);
+    return;
+}
 
 ValidateProductionConfiguration(builder.Configuration, builder.Environment);
 
@@ -131,6 +138,7 @@ builder.Services.AddSwaggerGen(options =>
  */
 builder.Services.AddContractManagementInfrastructure(
     builder.Configuration);
+builder.Services.AddMasterDatabase(builder.Configuration);
 
 builder.Services.AddOptions<SmtpEmailOptions>()
     .Bind(builder.Configuration.GetSection(SmtpEmailOptions.SectionName))

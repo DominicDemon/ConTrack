@@ -1,0 +1,92 @@
+.theme {
+  --background: #f5f7fa;
+  --foreground: #172b2c;
+  --card: #fff;
+  --card-foreground: #172b2c;
+  --popover: #fff;
+  --popover-foreground: #172b2c;
+  --primary: #007f83;
+  --primary-foreground: #fff;
+  --secondary: #c6ebe4;
+  --secondary-foreground: #172b2c;
+  --muted: #f0f5f4;
+  --muted-foreground: #5d6d70;
+  --accent: #eaf7f5;
+  --accent-foreground: #172b2c;
+  --destructive: #b42318;
+  --destructive-foreground: #fff;
+  --border: #d7e2e3;
+  --input: #a3b7b8;
+  --ring: #007f83;
+  --radius: 0.625rem;
+  --sidebar: #fff;
+  --sidebar-foreground: #172b2c;
+  --sidebar-primary: #007f83;
+  --sidebar-primary-foreground: #fff;
+  --sidebar-accent: #eaf7f5;
+  --sidebar-accent-foreground: #172b2c;
+  --sidebar-border: #d7e2e3;
+  --sidebar-ring: #007f83;
+  color-scheme: light;
+  min-height: 100dvh;
+  min-width: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Open Sans", "Segoe UI", Arial, sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.theme *, .theme *::before, .theme *::after { box-sizing: border-box; }
+.theme :where(button, input, select, textarea) { font: inherit; }
+.theme :where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.theme :where(button):disabled { cursor: not-allowed; opacity: 0.5; }
+.theme ::selection { background: #c6ebe4; color: #172b2c; }
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 2px 8px rgb(23 43 44 / 4%);
+}
+
+.primaryButton, .secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+.primaryButton { background: var(--primary); color: #fff; }
+.primaryButton:hover:not(:disabled) { background: #006b70; }
+.secondaryButton { background: #fff; border-color: var(--border); color: var(--foreground); }
+.secondaryButton:hover:not(:disabled) { background: var(--accent); }
+
+.field {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--foreground);
+}
+.field[aria-invalid="true"] { border-color: var(--destructive); }
+.field::placeholder { color: var(--muted-foreground); }
+.field:disabled { background: var(--muted); }
+
+.notice { padding: 12px 16px; border-radius: 8px; background: var(--accent); color: var(--foreground); }
+.error { padding: 12px 16px; border-radius: 8px; background: #fff1f0; color: #b42318; }
+
+@media (prefers-reduced-motion: reduce) {
+  .primaryButton, .secondaryButton { transition: none; }
+}

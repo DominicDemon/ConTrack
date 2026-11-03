@@ -25,6 +25,7 @@ npm run dev
 Truy cập http://localhost:3000. Tài khoản `sale.local` và `office.local` cùng mật khẩu
 ngẫu nhiên nằm ở `.local/internal-accounts.json`, không được commit. Script chạy lại
 không đổi mật khẩu đã có. Không xóa file này để tạo lại mật khẩu của tài khoản hiện hữu.
+Swagger (Development): http://localhost:5005/swagger.
 API được proxy cùng origin qua Next; đổi đích bằng `INTERNAL_API_ORIGIN` nếu cần.
 
 ## Luồng sử dụng
@@ -39,7 +40,37 @@ Chỉ mẫu, khách hàng và tên là bắt buộc khi lưu. Thông tin thiếu
 Mẫu demo chưa được công ty phê duyệt; thông tin pháp nhân phải do người dùng nhập.
 Khách và mẫu được chụp vào nháp, không tự cập nhật theo dữ liệu gốc về sau.
 Sale chỉ truy cập nháp của mình; văn phòng có quyền toàn công ty. Cả hai được tạo khách.
-Không có gửi khách, OTP, phê duyệt, thanh toán, ký hoặc xuất DOCX/PDF trong đợt này.
+Chưa có OTP ký, màn hành chính duyệt từng bước, thanh toán, ký hoặc xuất DOCX/PDF.
+
+## Gửi khách xem
+
+Nhân viên làm việc ở SystemAdmin (`npm run dev` tại `Source/SystemAdmin`, http://localhost:3001, proxy `/api/internal`).
+Khách dùng cổng `/portal` của Frontend (http://localhost:3000/portal/login, proxy `/api/customer`).
+Khu workspace cũ ở Frontend vẫn còn song song, sẽ gỡ sau.
+
+1. Nháp đủ thông tin → **Gửi khách xem**: khóa phiên bản (hash SHA-256 của `__draft.v1`), tạo CONTRACT_REVIEW_REQUEST `SENT`,
+   hồ sơ → 1. Khách chưa đổi mật khẩu tạm (`customer_personal_phone_verified_at` NULL) nhận SMS mật khẩu tạm 24 giờ;
+   khách đã có mật khẩu nhận SMS báo có hợp đồng.
+2. Khách đăng nhập bằng SĐT, bị bắt đổi mật khẩu tạm (`PASSWORD_CHANGE_REQUIRED`), xem đúng phiên bản đã gửi,
+   góp ý theo điều khoản, rồi Đồng ý (hồ sơ 2, tạo CONTRACT_APPROVAL_REQUEST theo workflow `CONTRACT_INTERNAL_CHECK`),
+   Yêu cầu sửa (hồ sơ giữ 1) hoặc Từ chối (hồ sơ 7). Mỗi phản hồi tạo NOTIFICATION cho sale (và hành chính khi đồng ý).
+3. Sale trả lời/đánh dấu đã xử lý góp ý, **Tạo phiên bản mới** rồi gửi lại (lần trước `CHANGES_REQUESTED` → `SUPERSEDED`).
+   Sau khi khách từ chối: **Thương lượng tiếp** (về 1) hoặc **Đóng draft** (6). Lần bị từ chối giữ trạng thái `REJECTED`
+   vì CHECK `CK_ReviewRequest_Followup` chỉ cho quyết định trên dòng `REJECTED`.
+4. **Cấp lại mật khẩu tạm**: chỉ khi khách chưa đổi mật khẩu tạm, tối đa 3 lần/giờ.
+
+Session khách dùng cookie riêng `.ConTrack.Customer` (chọn theo đường dẫn `/api/customer`), không dùng chung `.ConTrack.Internal`.
+Đăng nhập khách: giới hạn theo IP và 5 lần sai/15 phút theo SĐT. Mật khẩu khách tối thiểu 8 ký tự, có chữ và số.
+
+### eSMS
+
+Cấu hình `Esms` trong `appsettings.json`; `ApiKey`/`SecretKey` chỉ đặt ở `appsettings.Development.json` hoặc biến môi trường
+(`Esms__ApiKey`, `Esms__SecretKey`). `Esms:Enabled=false` dùng FakeSmsSender (không gọi mạng, chỉ log SĐT đã che và độ dài).
+`Sandbox=true` gửi `Sandbox: "1"`: eSMS kiểm tra và trả 100 nhưng không gửi tới máy, không trừ tiền; gửi thật cần `Sandbox=false` cùng brandname/template đã đăng ký (xem CONTRACT-REVIEW-CHANGES.md). Template tin nhắn nằm ở `Esms:TemporaryPasswordTemplate` / `Esms:ReviewNoticeTemplate`
+và phải khớp template CSKH đã đăng ký. `CustomerPortal:BaseUrl` là link trong SMS.
+SMS_OUTBOX mã hóa SĐT/nội dung bằng Data Protection (`ConTrack.SmsOutbox.v1`); worker gửi lại 1/5/15 phút, tối đa 5 lần,
+xóa ciphertext khi rời hàng đợi. Callback `GET /api/sms/esms/callback` chỉ nhận IP trong `AllowedCallbackIps`
+(`AllowAnyCallbackIp=true` chỉ để thử local). Khóa Data Protection phải được giữ ổn định giữa các lần chạy để gửi được tin đang chờ.
 
 ## Dữ liệu và kỹ thuật
 
@@ -83,7 +114,7 @@ Từ `Source/Backend`:
 
 ```powershell
 $env:CONTRACK_MASTER_TEST_CONNECTION = 'Server=localhost;Database=ContractManagement_Master;Integrated Security=True;TrustServerCertificate=True'
-dotnet test ContractManagement.Tests --filter 'FullyQualifiedName~InternalDraftTests|FullyQualifiedName~MasterDatabaseTests'
+dotnet test ContractManagement.Tests --filter 'FullyQualifiedName~InternalDraftTests|FullyQualifiedName~MasterDatabaseTests|FullyQualifiedName~ContractReview'
 ```
 
 Live tests tạo và dọn dữ liệu thử; gồm lưu/mở lại, snapshot khách, quyền sở hữu,

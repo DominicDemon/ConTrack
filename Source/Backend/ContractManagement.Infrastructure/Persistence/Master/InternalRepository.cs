@@ -11,7 +11,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 public sealed class InternalRepository(MasterDbContext db, InternalTemplateStorage storage) : IInternalRepository
 {
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-    private const string SnapshotKey = "__draft.v1";
+    internal const string SnapshotKey = "__draft.v1";
     public async Task<InternalUser?> Authenticate(string username, string password, CancellationToken ct)
     {
         var employee = await db.Employees.SingleOrDefaultAsync(e => e.EmployeeUsername == username && e.EmployeeStatus == "ACTIVE", ct);
@@ -67,9 +67,8 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     public async Task<CustomerOption> CreateCustomer(CustomerInput input, long actor, CancellationToken ct)
     {
         var name = InternalDraftPolicy.Text(input.Name, 200);
-        var phone = System.Text.RegularExpressions.Regex.Replace(input.Phone ?? "", @"[\s().-]", "");
-        if (phone.StartsWith("+84")) phone = "0" + phone[3..];
-        if (name.Length == 0 || !System.Text.RegularExpressions.Regex.IsMatch(phone, @"^0\d{9,10}$")) throw new ArgumentException("Nhập tên và số điện thoại Việt Nam hợp lệ.");
+        var phone = PhoneNumber.Normalize(input.Phone);
+        if (name.Length == 0 || phone is null) throw new ArgumentException("Nhập tên và số điện thoại Việt Nam hợp lệ.");
         var email = InternalDraftPolicy.Text(input.Email, 255);
         if (email.Length > 0 && !System.Net.Mail.MailAddress.TryCreate(email, out _)) throw new ArgumentException("Email không hợp lệ.");
         var company = InternalDraftPolicy.Text(input.Company, 1000);
@@ -105,31 +104,41 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     }
     public Task<List<EmployeeOption>> Employees(CancellationToken ct) => db.Employees.AsNoTracking().Where(e => e.EmployeeStatus == "ACTIVE")
         .OrderBy(e => e.EmployeeDisplayName).Select(e => new EmployeeOption(e.EmployeeId, e.EmployeeDisplayName)).ToListAsync(ct);
-    public async Task<List<DraftSummary>> Drafts(long? owner, string? search, CancellationToken ct)
+    public async Task<List<DraftSummary>> Drafts(long? owner, string? search, int? status, CancellationToken ct)
     {
         var query = from d in db.ContractDocuments.AsNoTracking() join e in db.Employees on d.EmployeeId equals e.EmployeeId
             join c in db.Customers on d.CustomerId equals c.CustomerId
             join v in db.ContractDynamicValues on d.ContractDocumentId equals v.ContractDocumentId
-            where d.ContractDocumentStatus == 0 && d.TenantId == null && v.FieldKey == SnapshotKey && v.ContractVersionId == d.ContractDocumentCurrentVersionId
+            where (!status.HasValue || d.ContractDocumentStatus == status) && d.TenantId == null && v.FieldKey == SnapshotKey && v.ContractVersionId == d.ContractDocumentCurrentVersionId
                 && (!owner.HasValue || d.EmployeeId == owner)
                 && (search == null || d.ContractDocumentName.Contains(search) || d.ContractDocumentCode!.Contains(search) || c.CustomerDisplayName.Contains(search))
             orderby d.UpdatedDate ?? d.CreatedDate descending
-            select new { d, e.EmployeeDisplayName, c.CustomerDisplayName, v.FieldValue };
+            select new { d, e.EmployeeDisplayName, c.CustomerDisplayName, v.FieldValue, Latest = db.ContractReviewRequests
+                .Where(r => r.ContractDocumentId == d.ContractDocumentId).OrderByDescending(r => r.ContractReviewRequestId).Select(r => r.ContractReviewRequestStatus).FirstOrDefault() };
         return (await query.Take(200).ToListAsync(ct)).Select(x => new DraftSummary(x.d.ContractDocumentId, x.d.ContractDocumentCode!, x.d.ContractDocumentName,
             x.CustomerDisplayName, x.d.EmployeeId, x.EmployeeDisplayName, x.d.UpdatedDate ?? x.d.CreatedDate,
-            JsonSerializer.Deserialize<DraftContent>(x.FieldValue, Json)!.MissingFields.Count)).ToList();
+            JsonSerializer.Deserialize<DraftContent>(x.FieldValue, Json)!.MissingFields.Count, x.d.ContractDocumentStatus, x.Latest)).ToList();
     }
     public async Task<DraftRecord?> Draft(long id, CancellationToken ct)
     {
-        var d = await db.ContractDocuments.AsNoTracking().SingleOrDefaultAsync(d => d.ContractDocumentId == id && d.TenantId == null && d.ContractDocumentStatus == 0, ct);
+        var d = await db.ContractDocuments.AsNoTracking().SingleOrDefaultAsync(d => d.ContractDocumentId == id && d.TenantId == null, ct);
         if (d is null) return null;
-        var v = await db.ContractVersions.AsNoTracking().SingleOrDefaultAsync(v => v.ContractVersionId == d.ContractDocumentCurrentVersionId && !v.ContractVersionIslocked, ct);
+        var v = await db.ContractVersions.AsNoTracking().SingleOrDefaultAsync(v => v.ContractVersionId == d.ContractDocumentCurrentVersionId, ct);
         if (v is null) return null;
         var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleOrDefaultAsync(x => x.ContractDocumentId == id && x.ContractVersionId == v.ContractVersionId && x.FieldKey == SnapshotKey, ct);
         if (snapshot is null) return null;
         var name = await db.Employees.Where(e => e.EmployeeId == d.EmployeeId).Select(e => e.EmployeeDisplayName).SingleAsync(ct);
+        var customer = await db.Customers.AsNoTracking().Where(c => c.CustomerId == d.CustomerId).Select(c => new { c.CustomerDisplayName, c.CustomerPersonalPhone }).SingleAsync(ct);
+        var latest = await db.ContractReviewRequests.AsNoTracking().Where(r => r.ContractDocumentId == id).OrderByDescending(r => r.ContractReviewRequestId)
+            .Select(r => r.ContractReviewRequestStatus).FirstOrDefaultAsync(ct);
+        var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!;
+        var phone = PhoneNumber.Normalize(customer.CustomerPersonalPhone);
+        var blocked = ContractReviewPolicy.CanSend(d.ContractDocumentStatus, latest, v.ContractVersionIslocked, content.MissingFields.Count)
+            ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null);
         return new(id, d.ContractDocumentCode!, d.EmployeeId, name, Convert.ToBase64String(d.RowVersion), Convert.ToBase64String(v.ContractVersionRowversion),
-            d.UpdatedDate ?? d.CreatedDate, JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!);
+            d.UpdatedDate ?? d.CreatedDate, content, d.ContractDocumentStatus, v.ContractVersionVersionNo, v.ContractVersionIslocked,
+            ContractReviewPolicy.CanEdit(d.ContractDocumentStatus, v.ContractVersionIslocked), customer.CustomerDisplayName,
+            PhoneNumber.Mask(phone ?? customer.CustomerPersonalPhone), latest, blocked);
     }
     public async Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct)
     {
@@ -150,7 +159,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                         ?? throw new InternalAppException(404, "Không tìm thấy bản nháp.");
                     InternalDraftService.RequireAccess(actor, document.EmployeeId);
                     version = await db.ContractVersions.SingleAsync(v => v.ContractVersionId == document.ContractDocumentCurrentVersionId, ct);
-                    if (document.ContractDocumentStatus != 0 || version.ContractVersionIslocked) throw new InternalAppException(409, "Nháp đã khóa hoặc chuyển trạng thái.");
+                    if (!ContractReviewPolicy.CanEdit(document.ContractDocumentStatus, version.ContractVersionIslocked)) throw new InternalAppException(409, "Nháp đã khóa hoặc chuyển trạng thái.");
                     if (request.RowVersion != Convert.ToBase64String(document.RowVersion) || request.VersionRowVersion != Convert.ToBase64String(version.ContractVersionRowversion))
                         throw new InternalAppException(409, "Nháp đã được người khác sửa. Tải lại bản mới trước khi lưu.");
                     var values = await db.ContractDynamicValues.Where(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId).ToListAsync(ct);

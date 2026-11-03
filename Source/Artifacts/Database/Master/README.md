@@ -65,6 +65,9 @@ credentials, run commands, permissions, storage and verification.
 `001-internal-drafts.sql` upgrades the version pointer to BIGINT, adds a unique
 employee username index, and filters the unique customer email index to non-null values.
 It is applied explicitly by the idempotent internal bootstrap.
+`002-contract-review.sql` adds the customer review flow (CONTRACT_REVIEW_REQUEST, SMS_OUTBOX,
+SMS_PROVIDER_CALLBACK, review columns, document status 0..7 and foreign keys); 63 tables / 724 columns after it.
+The bootstrap splits it on `GO` lines and runs all batches in one transaction.
 
 ## Legacy scope
 

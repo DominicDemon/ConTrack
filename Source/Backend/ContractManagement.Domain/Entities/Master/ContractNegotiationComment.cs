@@ -27,6 +27,10 @@ public partial class ContractNegotiationComment
 
     public long? CustomerAccessSessionId { get; set; }
 
+    public long? AuthorCustomerId { get; set; }
+
+    public long? ContractReviewRequestId { get; set; }
+
     public int ContractNegotiationCommentState { get; set; }
 
     public DateTime CreatedAt { get; set; }

@@ -25,5 +25,7 @@ public partial class ContractApprovalRequest
 
     public string? ContractApprovalRequestDecisioncomment { get; set; }
 
+    public long? ContractReviewRequestId { get; set; }
+
     public byte[] ContractApprovalRequestRowversion { get; set; } = null!;
 }

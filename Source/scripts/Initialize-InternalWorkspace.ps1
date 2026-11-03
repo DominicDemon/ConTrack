@@ -3,11 +3,13 @@ $ErrorActionPreference = 'Stop'
 $sourceRoot = Split-Path $PSScriptRoot -Parent
 $localDirectory = Join-Path $sourceRoot '.local'
 $accountPath = Join-Path $localDirectory 'internal-accounts.json'
+# Windows PowerShell 5.1 has no static RandomNumberGenerator.GetBytes.
+function New-RandomSecret { $bytes = New-Object byte[] 24; $rng = [Security.Cryptography.RandomNumberGenerator]::Create(); try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }; [Convert]::ToBase64String($bytes) }
 New-Item -ItemType Directory -Force -Path $localDirectory | Out-Null
 if (!(Test-Path -LiteralPath $accountPath)) {
     $accounts = @{
-        sale = @{ username = 'sale.local'; password = 'Aa1!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)) }
-        office = @{ username = 'office.local'; password = 'Aa1!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(24)) }
+        sale = @{ username = 'sale.local'; password = 'Aa1!' + (New-RandomSecret) }
+        office = @{ username = 'office.local'; password = 'Aa1!' + (New-RandomSecret) }
     }
     $accounts | ConvertTo-Json | Set-Content -LiteralPath $accountPath -Encoding utf8
 }

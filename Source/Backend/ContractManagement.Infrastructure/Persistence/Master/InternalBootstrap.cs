@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ContractManagement.Domain.Entities.Master;
 using ContractManagement.Domain.Internal;
 using Microsoft.AspNetCore.Identity;
@@ -17,6 +18,16 @@ public sealed class InternalBootstrap(MasterDbContext db, InternalTemplateStorag
         var assembly = typeof(InternalBootstrap).Assembly;
         using (var reader = new StreamReader(assembly.GetManifestResourceStream("InternalDraftUpgrade.sql")!))
             await db.Database.ExecuteSqlRawAsync(await reader.ReadToEndAsync(ct), ct);
+        string reviewSql;
+        using (var reader = new StreamReader(assembly.GetManifestResourceStream("ContractReviewUpgrade.sql")!))
+            reviewSql = await reader.ReadToEndAsync(ct);
+        await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            foreach (var batch in Regex.Split(reviewSql, @"^\s*GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase).Where(b => !string.IsNullOrWhiteSpace(b)))
+                await db.Database.ExecuteSqlRawAsync(batch, ct);
+            await tx.CommitAsync(ct);
+        });
         // An explicit bootstrap command, never a background worker or normal startup side effect.
         await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
@@ -44,6 +55,17 @@ public sealed class InternalBootstrap(MasterDbContext db, InternalTemplateStorag
                 }
                 if (!await db.EmployeeRoles.AnyAsync(r => r.EmployeeId == employee.EmployeeId && r.SystemRoleId == role.SystemRoleId, ct)) db.EmployeeRoles.Add(new() {
                     EmployeeId = employee.EmployeeId, SystemRoleId = role.SystemRoleId, CreatedAt = DateTime.UtcNow, SystemMemberRoleAssignedAt = DateTime.UtcNow });
+                await db.SaveChangesAsync(ct);
+            }
+            if (!await db.ApprovalWorkflows.AnyAsync(w => w.ApprovalWorkflowCode == ContractReviewRepository.InternalCheckWorkflow, ct))
+            {
+                var workflow = new ApprovalWorkflow { ApprovalWorkflowCode = ContractReviewRepository.InternalCheckWorkflow, ApprovalWorkflowName = "Kiểm tra nội bộ hợp đồng",
+                    ApprovalWorkflowDescription = "Hành chính kiểm tra sau khi khách đồng ý bản nháp.", ApprovalWorkflowObjecttype = "CONTRACT_DOCUMENT",
+                    ApprovalWorkflowIsactive = true, ApprovalWorkflowCreatedat = DateTime.UtcNow };
+                db.ApprovalWorkflows.Add(workflow); await db.SaveChangesAsync(ct);
+                var office = await db.SystemRoles.SingleAsync(r => r.SystemRoleCode == "INTERNAL_OFFICE", ct);
+                db.ApprovalWorkflowSteps.Add(new() { ApprovalWorkflowId = workflow.ApprovalWorkflowId, ApprovalWorkflowStepOrder = 1,
+                    ApprovalWorkflowStepName = "Hành chính kiểm tra", SystemRoleId = office.SystemRoleId, ApprovalWorkflowStepIsrequired = true });
                 await db.SaveChangesAsync(ct);
             }
             const string templateCode = "INTERNAL_DEMO_V1";

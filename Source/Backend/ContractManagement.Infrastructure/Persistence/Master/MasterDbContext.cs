@@ -24,6 +24,12 @@ public partial class MasterDbContext : DbContext
 
     public virtual DbSet<ContractApprovalRequest> ContractApprovalRequests { get; set; }
 
+    public virtual DbSet<ContractReviewRequest> ContractReviewRequests { get; set; }
+
+    public virtual DbSet<SmsOutbox> SmsOutboxes { get; set; }
+
+    public virtual DbSet<SmsProviderCallback> SmsProviderCallbacks { get; set; }
+
     public virtual DbSet<ContractDocument> ContractDocuments { get; set; }
 
     public virtual DbSet<ContractDocumentFile> ContractDocumentFiles { get; set; }
@@ -291,6 +297,7 @@ public partial class MasterDbContext : DbContext
             entity.Property(e => e.ContractDocumentId).HasColumnName("contract_document_id");
             entity.Property(e => e.ContractVersionId).HasColumnName("contract_version_id");
             entity.Property(e => e.ResolvedByEmployeeId).HasColumnName("resolved_by_employee_id");
+            entity.Property(e => e.ContractReviewRequestId).HasColumnName("contract_review_request_id");
             entity.Property(e => e.SubmittedAt)
                 .HasDefaultValueSql("(sysutcdatetime())", "DF_ContractApprovalRequest_SubmittedDate")
                 .HasColumnName("submitted_at");
@@ -565,6 +572,8 @@ public partial class MasterDbContext : DbContext
                 .HasDefaultValueSql("(sysutcdatetime())")
                 .HasColumnName("created_at");
             entity.Property(e => e.CustomerAccessSessionId).HasColumnName("customer_access_session_id");
+            entity.Property(e => e.AuthorCustomerId).HasColumnName("author_customer_id");
+            entity.Property(e => e.ContractReviewRequestId).HasColumnName("contract_review_request_id");
             entity.Property(e => e.RecordedByEmployeeId).HasColumnName("recorded_by_employee_id");
             entity.Property(e => e.Rowversion)
                 .IsRowVersion()
@@ -2110,6 +2119,91 @@ public partial class MasterDbContext : DbContext
                 .HasColumnType("datetime")
                 .HasColumnName("ticket_support_employee_unassigned_at");
             entity.Property(e => e.TicketSupportId).HasColumnName("ticket_support_id");
+        });
+
+        modelBuilder.Entity<ContractReviewRequest>(entity =>
+        {
+            entity.ToTable("CONTRACT_REVIEW_REQUEST");
+
+            entity.HasIndex(e => new { e.ContractDocumentId, e.SentAt }, "IX_ReviewRequest_Document");
+            entity.HasIndex(e => new { e.CustomerId, e.ContractReviewRequestStatus }, "IX_ReviewRequest_Customer_Status");
+
+            entity.Property(e => e.ContractReviewRequestId).HasColumnName("contract_review_request_id");
+            entity.Property(e => e.ContractDocumentId).HasColumnName("contract_document_id");
+            entity.Property(e => e.ContractVersionId).HasColumnName("contract_version_id");
+            entity.Property(e => e.ContractReviewRequestDocumentHash).HasMaxLength(64).IsUnicode(false).IsFixedLength().HasColumnName("contract_review_request_document_hash");
+            entity.Property(e => e.PreviousReviewRequestId).HasColumnName("previous_review_request_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.ContractReviewRequestMessage).HasMaxLength(1000).HasColumnName("contract_review_request_message");
+            entity.Property(e => e.SentByEmployeeId).HasColumnName("sent_by_employee_id");
+            entity.Property(e => e.SentAt).HasDefaultValueSql("(sysutcdatetime())", "DF_ReviewRequest_SentAt").HasColumnName("sent_at");
+            entity.Property(e => e.ContractReviewRequestStatus).HasMaxLength(30).IsUnicode(false).HasColumnName("contract_review_request_status");
+            entity.Property(e => e.FirstViewedAt).HasColumnName("first_viewed_at");
+            entity.Property(e => e.ContractReviewRequestCustomerNote).HasMaxLength(4000).HasColumnName("contract_review_request_customer_note");
+            entity.Property(e => e.RespondedByCustomerId).HasColumnName("responded_by_customer_id");
+            entity.Property(e => e.RespondedAt).HasColumnName("responded_at");
+            entity.Property(e => e.RespondedIpAddress).HasMaxLength(45).IsUnicode(false).HasColumnName("responded_ip_address");
+            entity.Property(e => e.RespondedUserAgent).HasMaxLength(1000).HasColumnName("responded_user_agent");
+            entity.Property(e => e.ContractReviewRequestFollowupDecision).HasMaxLength(20).IsUnicode(false).HasColumnName("contract_review_request_followup_decision");
+            entity.Property(e => e.ContractReviewRequestFollowupNote).HasMaxLength(2000).HasColumnName("contract_review_request_followup_note");
+            entity.Property(e => e.FollowupDecidedByEmployeeId).HasColumnName("followup_decided_by_employee_id");
+            entity.Property(e => e.FollowupDecidedAt).HasColumnName("followup_decided_at");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())", "DF_ReviewRequest_CreatedAt").HasColumnName("created_at");
+            entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
+            entity.Property(e => e.Rowversion).IsRowVersion().IsConcurrencyToken().HasColumnName("rowversion");
+        });
+
+        modelBuilder.Entity<SmsOutbox>(entity =>
+        {
+            entity.ToTable("SMS_OUTBOX");
+
+            entity.HasIndex(e => e.SmsOutboxRequestId, "UQ_SmsOutbox_RequestId").IsUnique();
+
+            entity.Property(e => e.SmsOutboxId).HasColumnName("sms_outbox_id");
+            entity.Property(e => e.SmsOutboxPurpose).HasMaxLength(30).IsUnicode(false).HasColumnName("sms_outbox_purpose");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.ContractDocumentId).HasColumnName("contract_document_id");
+            entity.Property(e => e.SmsOutboxPhoneCiphertext).HasMaxLength(512).HasColumnName("sms_outbox_phone_ciphertext");
+            entity.Property(e => e.SmsOutboxContentCiphertext).HasMaxLength(2048).HasColumnName("sms_outbox_content_ciphertext");
+            entity.Property(e => e.SmsOutboxPhoneMasked).HasMaxLength(20).IsUnicode(false).HasColumnName("sms_outbox_phone_masked");
+            entity.Property(e => e.SmsOutboxDeliveryExpiresAt).HasColumnName("sms_outbox_delivery_expires_at");
+            entity.Property(e => e.SmsOutboxStatus).HasMaxLength(20).IsUnicode(false).HasColumnName("sms_outbox_status");
+            entity.Property(e => e.SmsOutboxAttemptCount).HasColumnName("sms_outbox_attempt_count");
+            entity.Property(e => e.SmsOutboxNextAttemptAt).HasColumnName("sms_outbox_next_attempt_at");
+            entity.Property(e => e.SmsOutboxLeaseId).HasColumnName("sms_outbox_lease_id");
+            entity.Property(e => e.SmsOutboxLeaseUntil).HasColumnName("sms_outbox_lease_until");
+            entity.Property(e => e.SmsOutboxSentAt).HasColumnName("sms_outbox_sent_at");
+            entity.Property(e => e.SmsOutboxFailedAt).HasColumnName("sms_outbox_failed_at");
+            entity.Property(e => e.SmsOutboxLastFailure).HasMaxLength(1000).HasColumnName("sms_outbox_last_failure");
+            entity.Property(e => e.SmsOutboxProvider).HasMaxLength(30).IsUnicode(false).HasColumnName("sms_outbox_provider");
+            entity.Property(e => e.SmsOutboxRequestId).HasMaxLength(50).IsUnicode(false).HasColumnName("sms_outbox_request_id");
+            entity.Property(e => e.SmsOutboxBrandname).HasMaxLength(50).IsUnicode(false).HasColumnName("sms_outbox_brandname");
+            entity.Property(e => e.SmsOutboxIsSandbox).HasColumnName("sms_outbox_is_sandbox");
+            entity.Property(e => e.SmsOutboxCodeResult).HasMaxLength(10).IsUnicode(false).HasColumnName("sms_outbox_code_result");
+            entity.Property(e => e.SmsOutboxProviderSmsId).HasMaxLength(100).IsUnicode(false).HasColumnName("sms_outbox_provider_sms_id");
+            entity.Property(e => e.SmsOutboxSendStatus).HasMaxLength(5).IsUnicode(false).HasColumnName("sms_outbox_send_status");
+            entity.Property(e => e.SmsOutboxSendSuccess).HasColumnName("sms_outbox_send_success");
+            entity.Property(e => e.SmsOutboxSendFailed).HasColumnName("sms_outbox_send_failed");
+            entity.Property(e => e.SmsOutboxTelcoId).HasMaxLength(10).IsUnicode(false).HasColumnName("sms_outbox_telco_id");
+            entity.Property(e => e.SmsOutboxTotalPrice).HasColumnType("decimal(18, 4)").HasColumnName("sms_outbox_total_price");
+            entity.Property(e => e.SmsOutboxDeliveredAt).HasColumnName("sms_outbox_delivered_at");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())", "DF_SmsOutbox_CreatedAt").HasColumnName("created_at");
+            entity.Property(e => e.Rowversion).IsRowVersion().IsConcurrencyToken().HasColumnName("rowversion");
+        });
+
+        modelBuilder.Entity<SmsProviderCallback>(entity =>
+        {
+            entity.ToTable("SMS_PROVIDER_CALLBACK");
+
+            entity.Property(e => e.SmsProviderCallbackId).HasColumnName("sms_provider_callback_id");
+            entity.Property(e => e.SmsOutboxId).HasColumnName("sms_outbox_id");
+            entity.Property(e => e.SmsProviderCallbackProviderSmsId).HasMaxLength(100).IsUnicode(false).HasColumnName("sms_provider_callback_provider_sms_id");
+            entity.Property(e => e.SmsProviderCallbackRequestId).HasMaxLength(50).IsUnicode(false).HasColumnName("sms_provider_callback_request_id");
+            entity.Property(e => e.SmsProviderCallbackSendStatus).HasMaxLength(5).IsUnicode(false).HasColumnName("sms_provider_callback_send_status");
+            entity.Property(e => e.SmsProviderCallbackRawQuery).HasMaxLength(4000).HasColumnName("sms_provider_callback_raw_query");
+            entity.Property(e => e.SmsProviderCallbackSourceIp).HasMaxLength(45).IsUnicode(false).HasColumnName("sms_provider_callback_source_ip");
+            entity.Property(e => e.SmsProviderCallbackIsProcessed).HasColumnName("sms_provider_callback_is_processed");
+            entity.Property(e => e.ReceivedAt).HasDefaultValueSql("(sysutcdatetime())", "DF_SmsCallback_ReceivedAt").HasColumnName("received_at");
         });
 
         OnModelCreatingPartial(modelBuilder);

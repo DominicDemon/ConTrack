@@ -11,10 +11,16 @@ public sealed record CustomerOption(long Id, string Name, string Phone, Dictiona
 public sealed record CustomerInput(string Name, string Phone, string? Email, string? Company, string? TaxCode, string? Address);
 public sealed record ProductOption(long Id, string Name, decimal Price);
 public sealed record EmployeeOption(long Id, string Name);
-public sealed record DraftSummary(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName, DateTime UpdatedAt, int MissingCount);
-public sealed record DraftRecord(long Id, string Code, long EmployeeId, string EmployeeName, string RowVersion, string VersionRowVersion, DateTime UpdatedAt, DraftContent Content);
+public sealed record DraftSummary(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName, DateTime UpdatedAt, int MissingCount,
+    int Status, string? LatestReviewStatus);
+public sealed record DraftRecord(long Id, string Code, long EmployeeId, string EmployeeName, string RowVersion, string VersionRowVersion, DateTime UpdatedAt, DraftContent Content,
+    int Status, long VersionNo, bool Locked, bool CanEdit, string CustomerName, string CustomerPhoneMasked, string? LatestReviewStatus, string? SendBlockedReason);
 public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion);
-public sealed class InternalAppException(int status, string message) : Exception(message) { public int Status { get; } = status; }
+public sealed class InternalAppException(int status, string message, string? code = null) : Exception(message)
+{
+    public int Status { get; } = status;
+    public string? Code { get; } = code;
+}
 
 public interface IInternalRepository
 {
@@ -27,7 +33,7 @@ public interface IInternalRepository
     Task<List<ProductOption>> Products(string? search, CancellationToken ct);
     Task<bool> ProductsExist(IEnumerable<long> ids, CancellationToken ct);
     Task<List<EmployeeOption>> Employees(CancellationToken ct);
-    Task<List<DraftSummary>> Drafts(long? owner, string? search, CancellationToken ct);
+    Task<List<DraftSummary>> Drafts(long? owner, string? search, int? status, CancellationToken ct);
     Task<DraftRecord?> Draft(long id, CancellationToken ct);
     Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct);
 }

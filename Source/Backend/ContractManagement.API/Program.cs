@@ -46,8 +46,15 @@ using System.Net;
 using ContractManagement.API.Domains.Email;
 using ContractManagement.API.Domains.Recovery;
 using ContractManagement.API.Domains.Support;
+using ContractManagement.Infrastructure.Persistence.Master;
 
 var builder = WebApplication.CreateBuilder(args);
+
+if (string.Equals(builder.Configuration["ApplicationMode"], "Internal", StringComparison.OrdinalIgnoreCase))
+{
+    await ContractManagement.API.Internal.InternalHost.Run(builder, args);
+    return;
+}
 
 ValidateProductionConfiguration(builder.Configuration, builder.Environment);
 
@@ -131,6 +138,7 @@ builder.Services.AddSwaggerGen(options =>
  */
 builder.Services.AddContractManagementInfrastructure(
     builder.Configuration);
+builder.Services.AddMasterDatabase(builder.Configuration);
 
 builder.Services.AddOptions<SmtpEmailOptions>()
     .Bind(builder.Configuration.GetSection(SmtpEmailOptions.SectionName))
@@ -331,6 +339,7 @@ builder.Services.AddScoped<IDashboardService, DashboardService>();
 builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
 builder.Services.AddScoped<ISystemHealthService, SystemHealthService>();
 builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
+ContractManagement.API.Common.Security.LoginRateLimit.AddLoginProtection(builder.Services);
 builder.Services.Configure<ContractManagement.API.Domains.Payments.PayOsOptions>(
     builder.Configuration.GetSection(ContractManagement.API.Domains.Payments.PayOsOptions.SectionName));
 builder.Services.AddSingleton<
@@ -547,6 +556,11 @@ app.UseRouting();
  * CORS phải chạy trước Controller.
  */
 app.UseCors("CorsPolicy");
+
+/*
+ * Rate limit theo endpoint ([EnableRateLimiting]); đặt sau CORS để response 429 vẫn có header CORS.
+ */
+app.UseRateLimiter();
 
 /*
  * Session phải chạy trước TenantResolutionMiddleware,

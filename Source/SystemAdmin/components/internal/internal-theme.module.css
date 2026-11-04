@@ -1,0 +1,63 @@
+.theme {
+  min-height: 100dvh;
+  min-width: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+.theme *, .theme *::before, .theme *::after { box-sizing: border-box; }
+.theme :where(button, input, select, textarea) { font: inherit; }
+.theme :where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.theme :where(button):disabled { cursor: not-allowed; opacity: 0.5; }
+.theme ::selection { background: var(--secondary); color: var(--foreground); }
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 2px 8px rgb(23 43 44 / 4%);
+}
+
+.primaryButton, .secondaryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+.primaryButton { background: var(--primary); color: var(--primary-foreground); }
+.primaryButton:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 90%, black); }
+.secondaryButton { background: var(--card); border-color: var(--border); color: var(--foreground); }
+.secondaryButton:hover:not(:disabled) { background: var(--accent); }
+
+.field {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+}
+.field[aria-invalid="true"] { border-color: var(--destructive); }
+.field::placeholder { color: var(--muted-foreground); }
+.field:disabled { background: var(--muted); }
+
+.notice { padding: 12px 16px; border-radius: 8px; background: var(--accent); color: var(--foreground); }
+.error { padding: 12px 16px; border-radius: 8px; background: #fff1f0; color: #b42318; }
+
+@media (prefers-reduced-motion: reduce) {
+  .primaryButton, .secondaryButton { transition: none; }
+}

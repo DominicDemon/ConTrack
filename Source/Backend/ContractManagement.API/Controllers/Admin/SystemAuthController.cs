@@ -12,6 +12,7 @@ using ContractManagement.Infrastructure.Persistence.Central.Entities;
 using ContractManagement.Infrastructure.Security;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 namespace ContractManagement.Domains.Controllers.SystemAuth;
@@ -25,17 +26,23 @@ public sealed class SystemAuthController : ControllerBase
     private readonly IPasswordHasher<SystemAdmin> _passwordHasher;
     private readonly ICentralSecurityAuditWriter _securityAuditWriter;
     private readonly ISystemAdminAccountService? _systemAdminAccountService;
+    private readonly LoginThrottle _loginThrottle;
+
+    private static readonly string DummyPasswordHash =
+        new PasswordHasher<SystemAdmin>().HashPassword(new SystemAdmin(), Guid.NewGuid().ToString("N"));
 
     public SystemAuthController(
         CentralDbContext centralDbContext,
         IPasswordHasher<SystemAdmin> passwordHasher,
         ICentralSecurityAuditWriter securityAuditWriter,
-        ISystemAdminAccountService? systemAdminAccountService = null)
+        ISystemAdminAccountService? systemAdminAccountService = null,
+        LoginThrottle? loginThrottle = null)
     {
         _centralDbContext = centralDbContext;
         _passwordHasher = passwordHasher;
         _securityAuditWriter = securityAuditWriter;
         _systemAdminAccountService = systemAdminAccountService;
+        _loginThrottle = loginThrottle ?? LoginRateLimit.CreateStandaloneThrottle();
     }
 
     [HttpGet("profile")]
@@ -149,44 +156,50 @@ public sealed class SystemAuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting(LoginRateLimit.PolicyName)]
     public async Task<IActionResult> Login(
         [FromBody] SystemAdminLoginRequest request,
         CancellationToken cancellationToken)
     {
+        var throttleKey = LoginThrottle.SystemAdminKey(request.Username);
+        if (_loginThrottle.GetLockoutRemaining(throttleKey) is { } remaining)
+        {
+            await WriteLoginAuditAsync(
+                null,
+                AuthorizationAuditResultTypes.Denied,
+                LoginRateLimit.LockedCode,
+                cancellationToken);
+            return LoginRateLimit.Locked(this, remaining);
+        }
+
         var admin = await _centralDbContext.SystemAdmins
             .FirstOrDefaultAsync(
                 x => x.Username == request.Username
                      && x.IsActive,
                 cancellationToken);
 
-        if (admin is null)
+        // Tài khoản không tồn tại vẫn verify với hash giả để thời gian phản hồi như nhau.
+        var result = admin is null
+            ? VerifyAgainstDummyHash(request.Password)
+            : _passwordHasher.VerifyHashedPassword(
+                admin,
+                admin.PasswordHash,
+                request.Password);
+
+        if (admin is null || result == PasswordVerificationResult.Failed)
         {
+            var locked = _loginThrottle.RecordFailure(throttleKey);
             await WriteLoginAuditAsync(
-                null,
+                admin?.SystemAdminId,
                 AuthorizationAuditResultTypes.Denied,
-                AuthorizationErrorCodes.AuthenticationRequired,
+                locked ? LoginRateLimit.LockedCode : AuthorizationErrorCodes.AuthenticationRequired,
                 cancellationToken);
             return Unauthorized(new AuthorizationErrorResponse(
                 AuthorizationErrorCodes.AuthenticationRequired,
                 "Sai tên đăng nhập hoặc mật khẩu."));
         }
 
-        var result = _passwordHasher.VerifyHashedPassword(
-            admin,
-            admin.PasswordHash,
-            request.Password);
-
-        if (result == PasswordVerificationResult.Failed)
-        {
-            await WriteLoginAuditAsync(
-                admin.SystemAdminId,
-                AuthorizationAuditResultTypes.Denied,
-                AuthorizationErrorCodes.AuthenticationRequired,
-                cancellationToken);
-            return Unauthorized(new AuthorizationErrorResponse(
-                AuthorizationErrorCodes.AuthenticationRequired,
-                "Sai tên đăng nhập hoặc mật khẩu."));
-        }
+        _loginThrottle.Reset(throttleKey);
 
         if (result == PasswordVerificationResult.SuccessRehashNeeded)
         {
@@ -287,6 +300,12 @@ public sealed class SystemAuthController : ControllerBase
         {
             message = "System admin đăng xuất thành công."
         });
+    }
+
+    private PasswordVerificationResult VerifyAgainstDummyHash(string? password)
+    {
+        _passwordHasher.VerifyHashedPassword(new SystemAdmin(), DummyPasswordHash, password ?? string.Empty);
+        return PasswordVerificationResult.Failed;
     }
 
     private Task WriteLoginAuditAsync(

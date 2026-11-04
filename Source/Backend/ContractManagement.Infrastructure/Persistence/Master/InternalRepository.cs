@@ -151,14 +151,15 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleOrDefaultAsync(x => x.ContractDocumentId == id && x.ContractVersionId == v.ContractVersionId && x.FieldKey == SnapshotKey, ct);
         if (snapshot is null) return null;
         var name = await db.Employees.Where(e => e.EmployeeId == d.EmployeeId).Select(e => e.EmployeeDisplayName).SingleAsync(ct);
-        var customer = await db.Customers.AsNoTracking().Where(c => c.CustomerId == d.CustomerId).Select(c => new { c.CustomerDisplayName, c.CustomerPersonalPhone }).SingleAsync(ct);
+        var customer = await db.Customers.AsNoTracking().Where(c => c.CustomerId == d.CustomerId).Select(c => new { c.CustomerDisplayName, c.CustomerPersonalPhone, c.CustomerEmail }).SingleAsync(ct);
         var latest = await db.ContractReviewRequests.AsNoTracking().Where(r => r.ContractDocumentId == id).OrderByDescending(r => r.ContractReviewRequestId)
             .Select(r => r.ContractReviewRequestStatus).FirstOrDefaultAsync(ct);
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!;
         if (!v.ContractVersionIslocked) InternalDraftPolicy.Prepare(content, DraftCompletionPolicy.UpgradeTemplate(content.TemplateSnapshot!));
-        var phone = PhoneNumber.Normalize(customer.CustomerPersonalPhone);
+        var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone);
         var blocked = ContractReviewPolicy.CanSend(d.ContractDocumentStatus, latest, v.ContractVersionIslocked, content.MissingFields.Count)
-            ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null);
+            ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null)
+            ?? (ReviewLink.ContactEmail(content.Fields, customer.CustomerEmail) is null ? "Nhập email khách hàng trong hợp đồng để gửi link xem." : null);
         var carried = await (from comment in db.ContractNegotiationComments.AsNoTracking()
             join term in db.ContractTerms on (long?)comment.ContractNegotiationCommentTermid equals term.ContractTermTermid into terms
             from term in terms.DefaultIfEmpty()

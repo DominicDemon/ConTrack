@@ -9,13 +9,16 @@ using Microsoft.Extensions.Options;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
-public sealed class ContractReviewRepository(MasterDbContext db, IInternalRepository drafts, SmsOutboxWriter sms, IConfiguration config) : IContractReviewRepository
+public sealed class ContractReviewRepository(MasterDbContext db, IInternalRepository drafts, SmsOutboxWriter sms, ReviewLinkMailer mailer, IConfiguration config) : IContractReviewRepository
 {
     public const string InternalCheckWorkflow = "CONTRACT_INTERNAL_CHECK";
     private string PortalUrl => config["CustomerPortal:BaseUrl"] ?? "http://localhost:3000/portal";
 
-    public Task<ReviewSummary> SendReview(long documentId, SendReviewRequest request, InternalUser actor, CancellationToken ct) => ReviewData.InTransaction(db, async () =>
+    public async Task<ReviewSummary> SendReview(long documentId, SendReviewRequest request, InternalUser actor, CancellationToken ct)
     {
+        var mail = await ReviewData.InTransaction(db, async () =>
+    {
+        var expires = ReviewLink.Expiry(request.LinkExpiresAt, DateTime.UtcNow) ?? throw new ArgumentException("Chọn thời gian hết hạn link sau thời điểm hiện tại.");
         var doc = await OwnedDocument(documentId, actor, ct);
         ReviewData.Expect(doc.RowVersion, request.RowVersion);
         var version = await db.ContractVersions.SingleAsync(v => v.ContractVersionId == doc.ContractDocumentCurrentVersionId, ct);
@@ -35,7 +38,8 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
             throw new InternalAppException(409, error);
         var customer = await db.Customers.SingleOrDefaultAsync(c => c.CustomerId == doc.CustomerId && c.CustomerStatus == 1, ct)
             ?? throw new InternalAppException(409, "Khách hàng không còn hoạt động.");
-        var phone = PhoneNumber.Normalize(customer.CustomerPersonalPhone) ?? throw new InternalAppException(409, "Khách hàng chưa có số điện thoại hợp lệ.");
+        var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone) ?? throw new InternalAppException(409, "Khách hàng chưa có số điện thoại hợp lệ.");
+        var email = ReviewLink.ContactEmail(content.Fields, customer.CustomerEmail) ?? throw new InternalAppException(409, "Hợp đồng chưa có email khách hàng hợp lệ để gửi link.");
         var now = DateTime.UtcNow;
         version.ContractVersionIslocked = true; version.ContractVersionLockeddate = now;
         version.ContractVersionLockedbyemployeeid = checked((int)actor.Id); version.ContractVersionSnapshothash = SnapshotHash.Compute(snapshot.FieldValue);
@@ -50,15 +54,61 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
         };
         db.ContractReviewRequests.Add(review);
         doc.ContractDocumentStatus = ContractDocumentStatus.Negotiating; doc.UpdatedDate = now;
-        if (customer.CustomerPersonalPhoneVerifiedAt is null) IssueTemporaryPassword(customer, phone, doc.ContractDocumentId, actor.Id, now);
-        else sms.Enqueue(db, SmsPurpose.ReviewNotice, customer.CustomerId, doc.ContractDocumentId, phone, sms.ReviewNoticeMessage(PortalUrl, doc.ContractDocumentCode ?? ""), now);
         await db.SaveChangesAsync(ct);
         foreach (var comment in await db.ContractNegotiationComments.Where(c => c.ContractDocumentId == documentId && c.ContractVersionId == version.ContractVersionId && c.ContractReviewRequestId == null).ToListAsync(ct))
             comment.ContractReviewRequestId = review.ContractReviewRequestId;
         ReviewData.Audit(db, "SEND_REVIEW", "CONTRACT_REVIEW_REQUEST", review.ContractReviewRequestId, "EMPLOYEE", actor.Id, now);
+        var token = await NewLink(documentId, version.ContractVersionId, phone, actor.Id, expires, now, ct);
         await db.SaveChangesAsync(ct);
-        return (await Summaries(documentId, ct)).First();
+        return new LinkMail(review.ContractReviewRequestId, email, customer.CustomerDisplayName, doc.ContractDocumentName, token, expires, review.ContractReviewRequestMessage);
     }, ct);
+        var sent = await mailer.Send(mail, PortalUrl, ct);
+        return (await Summaries(documentId, ct)).First() with { LinkEmailSent = sent };
+    }
+
+    /// <summary>Replaces the link of an open review: for a lost or failed email, or to give the customer a new deadline. The old link stops working.</summary>
+    public async Task<ReviewSummary> ResendLink(long reviewId, ResendLinkRequest request, InternalUser actor, CancellationToken ct)
+    {
+        var mail = await ReviewData.InTransaction(db, async () =>
+        {
+            var now = DateTime.UtcNow;
+            var expires = ReviewLink.Expiry(request.LinkExpiresAt, now) ?? throw new ArgumentException("Chọn thời gian hết hạn link sau thời điểm hiện tại.");
+            var review = await db.ContractReviewRequests.SingleOrDefaultAsync(r => r.ContractReviewRequestId == reviewId, ct) ?? throw new InternalAppException(404, "Không tìm thấy lần gửi.");
+            var doc = await OwnedDocument(review.ContractDocumentId, actor, ct);
+            ReviewData.Expect(review.Rowversion, request.RowVersion);
+            if (ContractReviewPolicy.CanRespond(review.ContractReviewRequestStatus) is { } error) throw new InternalAppException(409, error);
+            var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleAsync(x => x.ContractDocumentId == doc.ContractDocumentId
+                && x.ContractVersionId == review.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
+            var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
+            var customer = await db.Customers.AsNoTracking().SingleAsync(c => c.CustomerId == review.CustomerId, ct);
+            var email = ReviewLink.ContactEmail(content.Fields, customer.CustomerEmail) ?? throw new InternalAppException(409, "Hợp đồng chưa có email khách hàng hợp lệ để gửi link.");
+            var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone) ?? throw new InternalAppException(409, "Khách hàng chưa có số điện thoại hợp lệ.");
+            foreach (var old in await db.ContractAccessLinks.Where(l => l.ContractDocumentId == doc.ContractDocumentId && l.ContractVersionId == review.ContractVersionId && l.RevokedAt == null).ToListAsync(ct))
+            { old.RevokedAt = now; old.RevokedByEmployeeId = actor.Id; old.ContractAccessLinkRevocationReason = "Thay bằng link mới"; }
+            var token = await NewLink(doc.ContractDocumentId, review.ContractVersionId, phone, actor.Id, expires, now, ct);
+            review.UpdatedAt = now;
+            ReviewData.Audit(db, "RESEND_REVIEW_LINK", "CONTRACT_REVIEW_REQUEST", reviewId, "EMPLOYEE", actor.Id, now);
+            await db.SaveChangesAsync(ct);
+            return new LinkMail(reviewId, email, customer.CustomerDisplayName, doc.ContractDocumentName, token, expires, review.ContractReviewRequestMessage);
+        }, ct);
+        // After commit on purpose: a failed email leaves the review open and the sale resends from the panel.
+        var sent = await mailer.Send(mail, PortalUrl, ct);
+        var documentId = await db.ContractReviewRequests.Where(r => r.ContractReviewRequestId == reviewId).Select(r => r.ContractDocumentId).SingleAsync(ct);
+        return (await Summaries(documentId, ct)).Single(r => r.Id == reviewId) with { LinkEmailSent = sent };
+    }
+
+    /// <returns>The raw token, which exists only here and in the email. The phone is frozen with the link.</returns>
+    private async Task<string> NewLink(long documentId, long versionId, string phone, long actor, DateTime expires, DateTime now, CancellationToken ct)
+    {
+        var verify = new ContractPhoneVerify { ContractDocumentId = documentId, ContractPhoneVerifyPhoneSource = "CONTRACT", ContractPhoneVerifyPhoneNumberNormalized = phone,
+            ContractPhoneVerifyReason = "Xác nhận khách xem hợp đồng qua link email", CreatedByEmployeeid = actor, CreatedAt = now };
+        db.ContractPhoneVerifies.Add(verify);
+        await db.SaveChangesAsync(ct);
+        var token = ReviewLink.NewToken();
+        db.ContractAccessLinks.Add(new ContractAccessLink { ContractDocumentId = documentId, ContractVersionId = versionId, ContractAccessLinkVerificationPhoneId = verify.ContractPhoneVerifyId,
+            ContractAccessLinkTokenhash = ReviewLink.Hash(token), CreatedByEmployeeId = actor, CreatedAt = now, ExpiresAt = expires });
+        return token;
+    }
 
     public async Task<List<ReviewSummary>> Reviews(long documentId, InternalUser actor, CancellationToken ct)
     {
@@ -201,10 +251,11 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
             where r.ContractDocumentId == documentId orderby r.ContractReviewRequestId descending
             select new { r, v.ContractVersionVersionNo, e.EmployeeDisplayName }).ToListAsync(ct);
         var comments = await ReviewData.Comments(db, rows.Select(x => x.r.ContractReviewRequestId).ToList(), ct);
+        var links = await db.ContractAccessLinks.AsNoTracking().Where(l => l.ContractDocumentId == documentId && l.RevokedAt == null).ToDictionaryAsync(l => l.ContractVersionId, l => l.ExpiresAt, ct);
         return rows.Select(x => new ReviewSummary(x.r.ContractReviewRequestId, x.r.ContractVersionId, x.ContractVersionVersionNo, x.r.ContractReviewRequestStatus,
             x.r.SentAt, x.EmployeeDisplayName, x.r.ContractReviewRequestMessage, x.r.FirstViewedAt, x.r.ContractReviewRequestCustomerNote, x.r.RespondedAt,
             x.r.ContractReviewRequestFollowupDecision, x.r.ContractReviewRequestFollowupNote, x.r.FollowupDecidedAt, Convert.ToBase64String(x.r.Rowversion),
-            comments.GetValueOrDefault(x.r.ContractReviewRequestId) ?? [])).ToList();
+            comments.GetValueOrDefault(x.r.ContractReviewRequestId) ?? [], links.TryGetValue(x.r.ContractVersionId, out var expires) ? expires : null)).ToList();
     }
 }
 
@@ -231,6 +282,38 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
         customer.CustomerLastLoginAt = now;
         await db.SaveChangesAsync(ct);
         return new(customer.CustomerId, customer.CustomerDisplayName, customer.CustomerPersonalPhoneVerifiedAt is null);
+    }
+
+    public async Task<ReviewLinkAccess> OpenLink(string? token, CancellationToken ct)
+    {
+        var hash = ReviewLink.IsToken(token) ? ReviewLink.Hash(token!) : null;
+        // shortcut: CONTRACT_ACCESS_LINK has no index on the token hash, so this scans; add one if the table grows large.
+        var row = hash is null ? null : await (from l in db.ContractAccessLinks.AsNoTracking()
+            join p in db.ContractPhoneVerifies on l.ContractAccessLinkVerificationPhoneId equals p.ContractPhoneVerifyId
+            join r in db.ContractReviewRequests on new { l.ContractDocumentId, l.ContractVersionId } equals new { r.ContractDocumentId, r.ContractVersionId }
+            join c in db.Customers on r.CustomerId equals c.CustomerId
+            where l.ContractAccessLinkTokenhash == hash && l.RevokedAt == null && c.CustomerStatus == 1
+            select new ReviewLinkAccess(l.ContractAccessLinkId, r.ContractReviewRequestId, r.CustomerId, p.ContractPhoneVerifyPhoneNumberNormalized, l.ExpiresAt)).FirstOrDefaultAsync(ct);
+        if (row is null) throw new InternalAppException(404, "Link không hợp lệ hoặc đã được thay bằng link mới.", "LINK_INVALID");
+        if (row.ExpiresAt <= DateTime.UtcNow) throw new InternalAppException(410, "Link đã hết hạn. Liên hệ nhân viên phụ trách để nhận link mới.", "LINK_EXPIRED");
+        return row;
+    }
+
+    public Task<bool> LinkActive(long reviewId, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        return (from r in db.ContractReviewRequests
+            join l in db.ContractAccessLinks on new { r.ContractDocumentId, r.ContractVersionId } equals new { l.ContractDocumentId, l.ContractVersionId }
+            where r.ContractReviewRequestId == reviewId && l.RevokedAt == null && l.ExpiresAt > now select l).AnyAsync(ct);
+    }
+
+    public async Task RecordLinkVerified(ReviewLinkAccess link, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var row = await db.ContractAccessLinks.SingleAsync(l => l.ContractAccessLinkId == link.LinkId, ct);
+        row.ActivatedAt ??= now;
+        ReviewData.Audit(db, "REVIEW_LINK_OTP_VERIFIED", "CONTRACT_REVIEW_REQUEST", link.ReviewId, "CUSTOMER", link.CustomerId, now);
+        await db.SaveChangesAsync(ct);
     }
 
     public Task<CustomerSession?> Get(long customerId, CancellationToken ct) => db.Customers.AsNoTracking()

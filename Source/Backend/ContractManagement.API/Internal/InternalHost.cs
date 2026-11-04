@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using ContractManagement.API.Domains.Email;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Infrastructure.Persistence.Master;
 using ContractManagement.Infrastructure.Sms;
@@ -33,6 +34,10 @@ public static class InternalHost
         if (builder.Configuration.GetValue<bool>("Esms:Enabled")) builder.Services.AddHttpClient<ISmsSender, EsmsSmsSender>(h => h.Timeout = TimeSpan.FromSeconds(30));
         else builder.Services.AddSingleton<ISmsSender, FakeSmsSender>();
         builder.Services.AddHostedService<SmsOutboxWorker>();
+        builder.Services.AddOptions<SmtpEmailOptions>().Bind(builder.Configuration.GetSection(SmtpEmailOptions.SectionName));
+        builder.Services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
+        builder.Services.AddScoped<ReviewLinkMailer>();
+        builder.Services.AddScoped<ReviewLinkOtp>();
         builder.Services.AddMemoryCache();
         builder.Services.AddSingleton(new InternalTemplateStorage(builder.Configuration["InternalStorage:Root"]
             ?? Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "private-storage", "internal-templates"))));
@@ -151,6 +156,8 @@ public static class InternalHost
             Results.Ok(await r.EmployeeComment(id, input, Current(c), ct)));
         secured.MapPost("/contract-comments/{id:long}/resolve", async (long id, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
         { await r.ResolveComment(id, Current(c), ct); return Results.NoContent(); });
+        secured.MapPost("/contract-reviews/{id:long}/resend-link", async (long id, ResendLinkRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
+            Results.Ok(await r.ResendLink(id, input, Current(c), ct)));
         secured.MapPost("/customers/{id:long}/reset-temp-password", async (long id, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
         { await r.ResetTemporaryPassword(id, Current(c), ct); return Results.NoContent(); });
         CustomerPortalEndpoints.Map(app);

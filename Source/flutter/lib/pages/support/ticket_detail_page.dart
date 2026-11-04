@@ -139,7 +139,7 @@ class _TicketDetailPageState extends State<TicketDetailPage> {
                     if (_ticket.assignedEmployeeName != null) ...[
                       const SizedBox(width: 8),
                       Text(
-                        '•  Phụ trách: ${_ticket.assignedEmployeeName}',
+                        '•  Trưởng phòng: ${_ticket.departmentHeadName ?? "Đang phân công"}  •  Xử lý: ${_ticket.assignedEmployeeName}',
                         style: TextStyle(
                           fontSize: 11,
                           color: theme.colorScheme.onSurface.withValues(alpha: 0.7),

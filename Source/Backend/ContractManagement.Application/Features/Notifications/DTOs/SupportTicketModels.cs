@@ -14,6 +14,7 @@ public sealed class SupportTicketDto
     public string TicketDescription { get; set; } = string.Empty;
     public string TicketPriority { get; set; } = "Medium";
     public string TicketStatus { get; set; } = "Open";
+    public int? DepartmentId { get; set; }
     public string Department { get; set; } = "KỸ THUẬT";
     public string? Module { get; set; }
     public string? TicketResolution { get; set; }
@@ -21,9 +22,41 @@ public sealed class SupportTicketDto
     public DateTime? TicketClosedAt { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
+
+    public int? DepartmentHeadEmployeeId { get; set; }
+    public string? DepartmentHeadName { get; set; }
     public int? AssignedEmployeeId { get; set; }
     public string? AssignedEmployeeName { get; set; }
+    public DateTime? AssignedAt { get; set; }
+
+    public List<TicketEmployeeAssignmentDto> Assignments { get; set; } = [];
     public List<SupportTicketMessageDto> Messages { get; set; } = [];
+}
+
+public sealed class TicketEmployeeAssignmentDto
+{
+    public long TicketSupportEmployeeId { get; set; }
+    public long TicketSupportId { get; set; }
+    public int EmployeeId { get; set; }
+    public string EmployeeName { get; set; } = string.Empty;
+    public string? EmployeeCode { get; set; }
+    public string? EmployeeEmail { get; set; }
+    public string AssignmentRole { get; set; } = string.Empty; // "DEPARTMENT_HEAD", "ASSIGNEE"
+    public DateTime? AssignedAt { get; set; }
+    public DateTime? UnassignedAt { get; set; }
+    public int? AssignedByEmployeeId { get; set; }
+    public string? AssignedByName { get; set; }
+}
+
+public sealed class DepartmentEmployeeDto
+{
+    public int EmployeeId { get; set; }
+    public string EmployeeName { get; set; } = string.Empty;
+    public string? EmployeeCode { get; set; }
+    public string? EmployeeEmail { get; set; }
+    public int? DepartmentId { get; set; }
+    public string? DepartmentName { get; set; }
+    public bool IsManager { get; set; }
 }
 
 public sealed class SupportTicketMessageDto
@@ -68,13 +101,36 @@ public sealed class CreateSupportTicketRequestDto
     public string? Description { get; set; }
     public string? TicketPriority { get; set; }
     public string? Priority { get; set; }
+    public int? DepartmentId { get; set; }
     public string? Department { get; set; }
     public string? Module { get; set; }
+    public long? ProductId { get; set; }
+    public long? ServiceId { get; set; }
     public List<string>? AttachmentNames { get; set; }
+    public List<string>? AttachmentUrls { get; set; }
 
     public string ResolvedSubject => (TicketSubject ?? Subject ?? string.Empty).Trim();
     public string ResolvedDescription => (TicketDescription ?? Description ?? string.Empty).Trim();
     public string? ResolvedPriority => !string.IsNullOrWhiteSpace(TicketPriority) ? TicketPriority : Priority;
+}
+
+public sealed class AssignTicketToStaffRequestDto
+{
+    public int StaffEmployeeId { get; set; }
+    public string? Note { get; set; }
+}
+
+public sealed class StaffCompleteTicketRequestDto
+{
+    public string Resolution { get; set; } = string.Empty;
+    public string? Note { get; set; }
+}
+
+public sealed class HeadResolveTicketRequestDto
+{
+    public string Resolution { get; set; } = string.Empty;
+    public string? MessageToCustomer { get; set; }
+    public bool CloseTicket { get; set; } = true;
 }
 
 public sealed class CustomerReplyTicketRequestDto
@@ -82,6 +138,8 @@ public sealed class CustomerReplyTicketRequestDto
     public string? Content { get; set; }
     public string? MessageContent { get; set; }
     public string? AttachmentName { get; set; }
+    public string? AttachmentUrl { get; set; }
+    public string? AttachmentType { get; set; }
 }
 
 public sealed class AdminReplyTicketRequestDto
@@ -97,4 +155,3 @@ public sealed class UpdateTicketStatusRequestDto
     public int? AssignedEmployeeId { get; set; }
     public string? AssignedEmployeeName { get; set; }
 }
-

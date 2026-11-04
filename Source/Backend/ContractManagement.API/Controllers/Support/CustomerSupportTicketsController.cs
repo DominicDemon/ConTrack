@@ -98,6 +98,126 @@ public sealed class CustomerSupportTicketsController : ControllerBase
         return Ok(created);
     }
 
+    /// <summary>
+    /// Lấy danh sách nhân viên trong phòng ban của Ticket để Trưởng phòng chọn phân việc
+    /// </summary>
+    [HttpGet("{id:int}/staff")]
+    public async Task<IActionResult> GetDepartmentStaff(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var employee = EmployeeAuthorizationContext.GetEmployee(HttpContext);
+        var employeeId = employee?.EmployeeId ?? 0;
+
+        var staffList = await _ticketService.GetDepartmentStaffAsync(id, employeeId, cancellationToken);
+        return Ok(staffList);
+    }
+
+    /// <summary>
+    /// Nghiệp vụ: Trưởng phòng ban phân việc xử lý cho nhân viên trong phòng ban
+    /// </summary>
+    [HttpPost("{id:int}/assign")]
+    public async Task<IActionResult> AssignToStaff(
+        int id,
+        [FromBody] AssignTicketToStaffRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        if (request.StaffEmployeeId <= 0)
+        {
+            return BadRequest(new { message = "Vui lòng chọn nhân viên được phân công xử lý." });
+        }
+
+        var employee = EmployeeAuthorizationContext.GetEmployee(HttpContext);
+        var employeeId = employee?.EmployeeId ?? 0;
+        var employeeName = !string.IsNullOrWhiteSpace(employee?.FullName)
+            ? employee.FullName
+            : employee?.Account ?? "Trưởng phòng";
+
+        var updated = await _ticketService.AssignToStaffAsync(
+            id,
+            employeeId,
+            employeeName,
+            request,
+            cancellationToken);
+
+        if (updated is null)
+        {
+            return NotFound(new { message = "Không tìm thấy yêu cầu hỗ trợ." });
+        }
+
+        return Ok(updated);
+    }
+
+    /// <summary>
+    /// Nghiệp vụ: Nhân viên hoàn tất xử lý và báo cáo kết quả lại cho Trưởng phòng
+    /// </summary>
+    [HttpPost("{id:int}/staff-complete")]
+    public async Task<IActionResult> StaffComplete(
+        int id,
+        [FromBody] StaffCompleteTicketRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Resolution))
+        {
+            return BadRequest(new { message = "Vui lòng nhập phương án/kết quả xử lý." });
+        }
+
+        var employee = EmployeeAuthorizationContext.GetEmployee(HttpContext);
+        var employeeId = employee?.EmployeeId ?? 0;
+        var employeeName = !string.IsNullOrWhiteSpace(employee?.FullName)
+            ? employee.FullName
+            : employee?.Account ?? "Nhân viên xử lý";
+
+        var updated = await _ticketService.StaffCompleteAsync(
+            id,
+            employeeId,
+            employeeName,
+            request,
+            cancellationToken);
+
+        if (updated is null)
+        {
+            return NotFound(new { message = "Không tìm thấy yêu cầu hỗ trợ." });
+        }
+
+        return Ok(updated);
+    }
+
+    /// <summary>
+    /// Nghiệp vụ: Trưởng phòng kiểm tra kết quả và chính thức thông báo lại cho khách hàng
+    /// </summary>
+    [HttpPost("{id:int}/resolve")]
+    public async Task<IActionResult> HeadResolve(
+        int id,
+        [FromBody] HeadResolveTicketRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Resolution))
+        {
+            return BadRequest(new { message = "Vui lòng nhập kết quả xử lý thông báo tới khách hàng." });
+        }
+
+        var employee = EmployeeAuthorizationContext.GetEmployee(HttpContext);
+        var employeeId = employee?.EmployeeId ?? 0;
+        var employeeName = !string.IsNullOrWhiteSpace(employee?.FullName)
+            ? employee.FullName
+            : employee?.Account ?? "Trưởng phòng";
+
+        var updated = await _ticketService.HeadResolveAsync(
+            id,
+            employeeId,
+            employeeName,
+            request,
+            cancellationToken);
+
+        if (updated is null)
+        {
+            return NotFound(new { message = "Không tìm thấy yêu cầu hỗ trợ." });
+        }
+
+        return Ok(updated);
+    }
+
     [HttpPost("{id:int}/messages")]
     public async Task<IActionResult> AddMessage(
         int id,
@@ -135,4 +255,3 @@ public sealed class CustomerSupportTicketsController : ControllerBase
         return Ok(msg);
     }
 }
-

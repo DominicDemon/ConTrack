@@ -3,13 +3,15 @@ import axiosClient from "@/lib/axios-interceptor";
 export enum TicketStatus {
   Open = "Open",
   InProgress = "In_Progress",
+  PendingHeadApproval = "PendingHeadApproval",
   Resolved = "Resolved",
 }
 
-export const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
-  [TicketStatus.Open]: "Chờ tiếp nhận",
-  [TicketStatus.InProgress]: "Đang xử lý",
-  [TicketStatus.Resolved]: "Đã xử lý",
+export const TICKET_STATUS_LABELS: Record<string, string> = {
+  [TicketStatus.Open]: "Chờ Trưởng phòng tiếp nhận",
+  [TicketStatus.InProgress]: "Đang xử lý (đã phân công)",
+  [TicketStatus.PendingHeadApproval]: "Chờ Trưởng phòng duyệt kết quả",
+  [TicketStatus.Resolved]: "Đã xử lý xong",
 };
 
 export enum TicketPriority {
@@ -40,6 +42,30 @@ export interface TicketMessageDto {
   createdAt: string;
 }
 
+export interface TicketAssignmentDto {
+  ticketSupportEmployeeId: number;
+  ticketSupportId: number;
+  employeeId: number;
+  employeeName: string;
+  employeeCode?: string | null;
+  employeeEmail?: string | null;
+  assignmentRole: string; // "DEPARTMENT_HEAD", "ASSIGNEE"
+  assignedAt?: string | null;
+  unassignedAt?: string | null;
+  assignedByEmployeeId?: number | null;
+  assignedByName?: string | null;
+}
+
+export interface DepartmentStaffDto {
+  employeeId: number;
+  employeeName: string;
+  employeeCode?: string | null;
+  employeeEmail?: string | null;
+  departmentId?: number | null;
+  departmentName?: string | null;
+  isManager: boolean;
+}
+
 export interface TicketDto {
   ticketSupportId: number;
   customerId?: number | null;
@@ -52,6 +78,7 @@ export interface TicketDto {
   ticketDescription: string;
   ticketPriority: TicketPriority;
   ticketStatus: TicketStatus;
+  departmentId?: number | null;
   department: string;
   module?: string | null;
   ticketResolution?: string | null;
@@ -59,8 +86,12 @@ export interface TicketDto {
   ticketClosedAt?: string | null;
   createdAt: string;
   updatedAt?: string | null;
+  departmentHeadEmployeeId?: number | null;
+  departmentHeadName?: string | null;
   assignedEmployeeId?: number | null;
   assignedEmployeeName?: string | null;
+  assignedAt?: string | null;
+  assignments?: TicketAssignmentDto[];
   messages?: TicketMessageDto[];
 }
 
@@ -68,6 +99,7 @@ export interface CreateSupportTicketRequestDto {
   subject: string;
   description: string;
   priority: TicketPriority;
+  departmentId?: number;
   department: string;
   module?: string;
   attachmentNames?: string[];
@@ -133,5 +165,34 @@ export const customerTicketApi = {
     );
     return response;
   },
-};
 
+  getDepartmentStaff: async (ticketId: number) => {
+    return await axiosClient.get<unknown, DepartmentStaffDto[]>(
+      `/api/support/tickets/${ticketId}/staff`
+    );
+  },
+
+  assignToStaff: async (ticketId: number, payload: { staffEmployeeId: number; note?: string }) => {
+    return await axiosClient.post<unknown, TicketDto>(
+      `/api/support/tickets/${ticketId}/assign`,
+      payload
+    );
+  },
+
+  staffComplete: async (ticketId: number, payload: { resolution: string; note?: string }) => {
+    return await axiosClient.post<unknown, TicketDto>(
+      `/api/support/tickets/${ticketId}/staff-complete`,
+      payload
+    );
+  },
+
+  headResolve: async (
+    ticketId: number,
+    payload: { resolution: string; messageToCustomer?: string; closeTicket?: boolean }
+  ) => {
+    return await axiosClient.post<unknown, TicketDto>(
+      `/api/support/tickets/${ticketId}/resolve`,
+      payload
+    );
+  },
+};

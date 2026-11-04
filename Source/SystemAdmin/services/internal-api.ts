@@ -42,7 +42,7 @@ export function estimateTotals(content: DraftContent): DraftTotals {
   return { subtotal: round(subtotal), discount: round(discount), vat, total: round(subtotal - discount + vat) };
 }
 export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string };
-export type ReviewSummary = { id: string; versionId: string; versionNo: string; status: string; sentAt: string; sentByName: string; message: string | null; firstViewedAt: string | null; customerNote: string | null; respondedAt: string | null; followupDecision: string | null; followupNote: string | null; followupDecidedAt: string | null; rowVersion: string; comments: ReviewComment[] };
+export type ReviewSummary = { id: string; versionId: string; versionNo: string; status: string; sentAt: string; sentByName: string; message: string | null; firstViewedAt: string | null; customerNote: string | null; respondedAt: string | null; followupDecision: string | null; followupNote: string | null; followupDecidedAt: string | null; rowVersion: string; comments: ReviewComment[]; linkExpiresAt: string | null; linkEmailSent?: boolean | null };
 export const documentStatusLabel: Record<number, string> = { 0: "Nháp", 1: "Đang thương lượng", 2: "Chờ kiểm tra", 3: "Chờ ký", 4: "Đã ký", 5: "Hoàn tất", 6: "Đã đóng", 7: "Khách từ chối" };
 export const reviewStatusLabel: Record<string, string> = { SENT: "Đã gửi, khách chưa mở", VIEWED: "Khách đã xem", APPROVED: "Khách đồng ý", CHANGES_REQUESTED: "Khách yêu cầu sửa", REJECTED: "Khách từ chối", REVOKED: "Đã thu hồi", SUPERSEDED: "Đã thay bằng bản mới" };
 

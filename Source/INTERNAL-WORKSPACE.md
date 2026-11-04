@@ -45,7 +45,7 @@ Chưa có OTP ký, màn hành chính duyệt từng bước, thanh toán, ký ho
 ## Gửi khách xem
 
 Nhân viên làm việc ở SystemAdmin (`npm run dev` tại `Source/SystemAdmin`, http://localhost:3001, proxy `/api/internal`).
-Khách dùng cổng `/portal` của Frontend (http://localhost:3000/portal/login, proxy `/api/customer`).
+Khách dùng cổng `/portal` của Frontend (proxy `/api/customer`). Luồng đăng nhập mật khẩu dưới đây là luồng cũ; luồng đang dùng xem mục "Luồng hiện tại".
 Khu workspace cũ ở Frontend vẫn còn song song, sẽ gỡ sau.
 
 1. Nháp đủ thông tin → **Gửi khách xem**: khóa phiên bản (hash SHA-256 của `__draft.v1`), tạo CONTRACT_REVIEW_REQUEST `SENT`,
@@ -62,11 +62,28 @@ Khu workspace cũ ở Frontend vẫn còn song song, sẽ gỡ sau.
 Session khách dùng cookie riêng `.ConTrack.Customer` (chọn theo đường dẫn `/api/customer`), không dùng chung `.ConTrack.Internal`.
 Đăng nhập khách: giới hạn theo IP và 5 lần sai/15 phút theo SĐT. Mật khẩu khách tối thiểu 8 ký tự, có chữ và số.
 
+### Luồng hiện tại: link email + OTP (thay cho mật khẩu tạm)
+
+1. Sale bấm **Gửi khách xem** và chọn **Link hết hạn lúc** (mặc định 7 ngày). Hệ thống khóa phiên bản và gửi email,
+   không gửi SMS. Email nhận: trường `CUSTOMER_EMAIL` trong hợp đồng, nếu trống hoặc sai định dạng thì lấy email của khách.
+2. Link có dạng `http://localhost:3000/portal/review/<token>`. Khách nhập SĐT trùng `CUSTOMER_CONTACT_PHONE` của hợp đồng
+   (trống hoặc sai định dạng thì lấy SĐT của khách) rồi nhập OTP 6 số.
+3. Sau OTP, phiên chỉ mở được đúng lần gửi đó, để xem, góp ý, đồng ý, yêu cầu sửa hoặc từ chối. Link hết hạn thì phiên cũng hết.
+4. **Gửi lại link**: chỉ khi khách chưa phản hồi. Link cũ bị thu hồi; dùng khi email lỗi, khách mất mail hoặc link hết hạn.
+
+Giới hạn: OTP 5 phút, gửi lại sau 60 giây, tối đa 5 lần gửi/giờ, 5 lần nhập sai/mã, 5 lần sai SĐT thì khóa 15 phút.
+Dữ liệu: `CONTRACT_ACCESS_LINK` (hash token, hạn, thu hồi, `activated_at`) và `CONTRACT_PHONE_VERIFY` (SĐT đối chiếu); không đổi schema.
+OTP chỉ nằm trong bộ nhớ API, restart thì phải gửi lại mã.
+
+Test local: `CustomerPortal:ConsoleDelivery=true` trong `appsettings.Development.json` in link và OTP ra terminal của API
+(dòng `[DEV]`), không gọi eSMS. Cờ này chỉ có tác dụng ở môi trường Development; tắt cờ thì OTP gửi qua `ISmsSender`
+với mẫu `Esms:ReviewOtpTemplate`. Trang `/portal/login`, `/portal/change-password` và API cấp lại mật khẩu tạm vẫn còn nhưng không nằm trong luồng này.
+
 ### eSMS
 
 Cấu hình `Esms` trong `appsettings.json`; `ApiKey`/`SecretKey` chỉ đặt ở `appsettings.Development.json` hoặc biến môi trường
 (`Esms__ApiKey`, `Esms__SecretKey`). `Esms:Enabled=false` dùng FakeSmsSender (không gọi mạng, chỉ log SĐT đã che và độ dài).
-`Sandbox=true` gửi `Sandbox: "1"`: eSMS kiểm tra và trả 100 nhưng không gửi tới máy, không trừ tiền; gửi thật cần `Sandbox=false` cùng brandname/template đã đăng ký (xem CONTRACT-REVIEW-CHANGES.md). Template tin nhắn nằm ở `Esms:TemporaryPasswordTemplate` / `Esms:ReviewNoticeTemplate`
+`Sandbox=true` gửi `Sandbox: "1"`: eSMS kiểm tra key, brandname và trả 100 (không kiểm template) nhưng không gửi tới máy, không trừ tiền; gửi thật cần `Sandbox=false` cùng brandname/template đã đăng ký (xem Backend/docs/CONTRACT-REVIEW-CHANGES.md). Template tin nhắn nằm ở `Esms:TemporaryPasswordTemplate` / `Esms:ReviewNoticeTemplate`
 và phải khớp template CSKH đã đăng ký. `CustomerPortal:BaseUrl` là link trong SMS.
 SMS_OUTBOX mã hóa SĐT/nội dung bằng Data Protection (`ConTrack.SmsOutbox.v1`); worker gửi lại 1/5/15 phút, tối đa 5 lần,
 xóa ciphertext khi rời hàng đợi. Callback `GET /api/sms/esms/callback` chỉ nhận IP trong `AllowedCallbackIps`

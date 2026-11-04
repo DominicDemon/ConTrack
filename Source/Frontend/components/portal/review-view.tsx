@@ -11,7 +11,7 @@ import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
 import PortalHeader from "./portal-header";
 import { dateTime } from "@/services/internal-api";
-import { customerApi, customerStatusLabel, handleAuthError, isOpenReview, type CustomerReviewDetail, type ReviewComment } from "@/services/customer-api";
+import { CustomerApiError, customerApi, customerStatusLabel, handleAuthError, isOpenReview, type CustomerReviewDetail, type ReviewComment } from "@/services/customer-api";
 
 type Decision = "APPROVE" | "REQUEST_CHANGES" | "REJECT";
 const decisions: Record<Decision, { title: string; description: string; note: string; required: boolean }> = {
@@ -20,14 +20,18 @@ const decisions: Record<Decision, { title: string; description: string; note: st
   REJECT: { title: "Từ chối hợp đồng", description: "Bạn không đồng ý với hợp đồng này. Người phụ trách sẽ quyết định thương lượng tiếp hoặc đóng hồ sơ.", note: "Lý do từ chối *", required: true },
 };
 
-export default function ReviewView({ id }: { id: string }) {
+/** onAuthLost marks a session opened from an emailed link: it replaces the list links and the password-login redirects. */
+export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?: () => void }) {
   const router = useRouter();
   const [review, setReview] = useState<CustomerReviewDetail | null>(null); const [error, setError] = useState("");
   const [term, setTerm] = useState(""); const [comment, setComment] = useState(""); const [busy, setBusy] = useState(false);
   const [decision, setDecision] = useState<Decision | null>(null); const [note, setNote] = useState("");
-  const fail = useCallback((e: unknown) => { if (handleAuthError(e, router.replace)) setError((e as Error).message); }, [router]);
+  const fail = useCallback((e: unknown) => {
+    if (onAuthLost && e instanceof CustomerApiError && [401, 403, 410].includes(e.status)) { onAuthLost(); return; }
+    if (handleAuthError(e, router.replace)) setError((e as Error).message);
+  }, [router, onAuthLost]);
   useEffect(() => { void customerApi<CustomerReviewDetail>(`/reviews/${id}`).then(setReview).catch(fail); }, [id, fail]);
-  if (!review) return <><PortalHeader/><div className={s.empty}>{error ? <p role="alert">{error}</p> : "Đang tải hợp đồng…"}<Link href="/portal/contracts">Về danh sách</Link></div></>;
+  if (!review) return <><PortalHeader onLogout={onAuthLost}/><div className={s.empty}>{error ? <p role="alert">{error}</p> : "Đang tải hợp đồng…"}{!onAuthLost && <Link href="/portal/contracts">Về danh sách</Link>}</div></>;
   const open = isOpenReview(review.status);
   async function sendComment() {
     setBusy(true); setError("");
@@ -42,8 +46,8 @@ export default function ReviewView({ id }: { id: string }) {
   }
   const byTerm = (key: string | null) => review.comments.filter(c => c.termKey === key);
   const terms = review.content.terms;
-  return <><PortalHeader/><div className={s.page}>
-    <div className={s.titleRow}><div><Link href="/portal/contracts" className={s.muted} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><ArrowLeft size={16}/>Hợp đồng của bạn</Link>
+  return <><PortalHeader onLogout={onAuthLost}/><div className={s.page}>
+    <div className={s.titleRow}><div>{!onAuthLost && <Link href="/portal/contracts" className={s.muted} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><ArrowLeft size={16}/>Hợp đồng của bạn</Link>}
       <h1>{review.contractName}</h1><p className={s.muted}>Phiên bản {review.versionNo} · gửi lúc {dateTime(review.sentAt)}</p></div>
       <span className={`${s.badge} ${open ? s.warning : ""}`}>{customerStatusLabel[review.status] ?? review.status}</span></div>
     {review.message && <p className={ui.notice} style={{ marginBottom: 16 }}>Lời nhắn của nhân viên: {review.message}</p>}

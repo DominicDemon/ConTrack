@@ -65,7 +65,7 @@ export default function ReviewView({ id }: { id: string }) {
         })}
         {!review.comments.length && <p className={s.muted} style={{ marginTop: 8 }}>Chưa có góp ý.</p>}
         {open && <div style={{ display: "grid", gap: 8, marginTop: 16 }}>
-          <label className={s.label}>Góp ý cho<select className={ui.field} value={term} onChange={e => setTerm(e.target.value)}><option value="">Góp ý chung</option>{terms.map((t, i) => <option key={t.key} value={t.key}>Điều {i + 1}. {t.title}</option>)}</select></label>
+          <label className={s.label}>Góp ý cho<select className={ui.field} value={term} onChange={e => setTerm(e.target.value)}><option value="">Góp ý chung</option>{terms.filter(t => t.editable).map((t, i) => <option key={t.key} value={t.key}>Điều {i + 1}. {t.title}</option>)}</select></label>
           <label className={s.label}>Nội dung<Textarea maxLength={4000} value={comment} onChange={e => setComment(e.target.value)} placeholder="Nhập góp ý của bạn…"/></label>
           <button className={ui.secondaryButton} disabled={busy || !comment.trim()} onClick={() => void sendComment()}>Gửi góp ý</button></div>}
       </section>

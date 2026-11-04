@@ -101,9 +101,10 @@ public class ContractReviewTests
         {
             DraftContent Content(long customer)
             {
-                var c = new DraftContent { TemplateId = template.Id, CustomerId = customer, Name = "Hợp đồng gửi khách", Terms = template.Terms.Select(t => t with { Content = "Nội dung " + t.Key }).ToList(),
+                var c = new DraftContent { TemplateId = template.Id, CustomerId = customer, PartyType = "PERSON", Name = "Hợp đồng gửi khách", Terms = template.Terms.Select(t => t with { Content = "Nội dung " + t.Key }).ToList(),
                     Items = [new(null, "Dịch vụ", 1, 1000000, 0, 0)], VatPercent = 10 };
                 foreach (var f in template.Fields) c.Fields[f.Key] = "Giá trị";
+                c.Milestones = [new("PAY1", "Thanh toán toàn bộ", c.Terms[0].Key, 100)];
                 return c;
             }
             var draft = await drafts.Save(null, new(Content(customerA.Id), null, null), sale, default); docIds.Add(draft.Id);
@@ -159,6 +160,7 @@ public class ContractReviewTests
             var term = template.Terms.First().Key;
             var comment = await portal.Comment(customerA.Id, first.Id, new(term, null, "Đề nghị sửa điều khoản này"), default);
             Assert.True(comment.FromCustomer); Assert.Equal(term, comment.TermKey);
+            var unresolved = await portal.Comment(customerA.Id, first.Id, new(term, null, "Góp ý cần chuyển tiếp"), default);
             var reply = await reviews.EmployeeComment(first.Id, new(term, comment.Id, "Đã ghi nhận"), sale, default);
             Assert.Equal(comment.Id, reply.ParentId);
             await reviews.ResolveComment(comment.Id, sale, default);
@@ -173,6 +175,9 @@ public class ContractReviewTests
             var afterChanges = await drafts.Get(draft.Id, sale, default);
             var v2 = await reviews.CreateVersion(draft.Id, new(afterChanges.RowVersion, "Giảm giá"), sale, default);
             Assert.Equal(2, v2.VersionNo); Assert.True(v2.CanEdit);
+            var milestones = await db.ContractPaymentMilestones.Where(m => m.ContractDocumentId == draft.Id).ToListAsync();
+            Assert.Equal(2, milestones.Count); Assert.NotEqual(milestones[0].ContractTermId, milestones[1].ContractTermId);
+            Assert.All(milestones, m => Assert.Null(m.InvoiceId));
             await Assert.ThrowsAsync<InternalAppException>(() => reviews.CreateVersion(draft.Id, new(v2.RowVersion, null), sale, default));
             v2.Content.Items[0] = v2.Content.Items[0] with { DiscountPercent = 5 };
             var edited = await drafts.Save(draft.Id, new(v2.Content, v2.RowVersion, v2.VersionRowVersion), sale, default);
@@ -180,7 +185,9 @@ public class ContractReviewTests
             var history = await reviews.Reviews(draft.Id, office, default);
             Assert.Equal([ContractReviewStatus.Sent, ContractReviewStatus.Superseded], history.Select(r => r.Status));
             Assert.Equal(2, history[0].VersionNo);
-            Assert.Equal(2, history[1].Comments.Count);
+            Assert.Equal(3, history[1].Comments.Count);
+            Assert.Contains(history[0].Comments, c => c.Content == unresolved.Content && c.TermKey == term);
+            Assert.True(await db.ContractNegotiationComments.AnyAsync(c => c.ContractNegotiationCommentCarriedforwardfromcommentid == unresolved.Id && c.ContractVersionId == second.VersionId));
             Assert.Equal(SmsPurpose.ReviewNotice, (await db.SmsOutboxes.Where(s => s.CustomerId == customerA.Id).OrderByDescending(s => s.SmsOutboxId).FirstAsync()).SmsOutboxPurpose);
 
             // 6. Approve version 2: approval request created, document pending approval.
@@ -230,6 +237,7 @@ public class ContractReviewTests
                 await db.SmsProviderCallbacks.Where(x => x.SmsOutboxId != null && smsIds.Contains(x.SmsOutboxId.Value)).ExecuteDeleteAsync();
                 await db.SmsOutboxes.Where(x => x.ContractDocumentId == id).ExecuteDeleteAsync();
                 await db.ContractDynamicValues.Where(x => x.ContractDocumentId == id).ExecuteDeleteAsync();
+                await db.ContractPaymentMilestones.Where(x => x.ContractDocumentId == id).ExecuteDeleteAsync();
                 await db.ContractTerms.Where(x => x.ContractDocumentId == id).ExecuteDeleteAsync();
                 await db.ContractDocumentItems.Where(x => x.ContractDocumentId == id).ExecuteDeleteAsync();
                 await db.ContractVersions.Where(x => x.ContractDocumentId == id).ExecuteDeleteAsync();

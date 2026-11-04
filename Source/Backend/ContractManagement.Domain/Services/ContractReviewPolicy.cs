@@ -73,7 +73,26 @@ public static class ContractReviewPolicy
 
 public static class SnapshotHash
 {
-    public static string Compute(string draftJson) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(draftJson))).ToLowerInvariant();
+    public static string Compute(string draftJson)
+    {
+        if (!draftJson.TrimStart().StartsWith('{')) return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(draftJson))).ToLowerInvariant();
+        using var document = System.Text.Json.JsonDocument.Parse(draftJson);
+        if (document.RootElement.TryGetProperty("formatVersion", out var version) && version.GetInt32() >= 2)
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new System.Text.Json.Utf8JsonWriter(stream)) Write(document.RootElement, writer);
+            return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
+        }
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(draftJson))).ToLowerInvariant();
+    }
+    private static void Write(System.Text.Json.JsonElement value, System.Text.Json.Utf8JsonWriter writer)
+    {
+        if (value.ValueKind == System.Text.Json.JsonValueKind.Object) {
+            writer.WriteStartObject(); foreach (var p in value.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal)) { writer.WritePropertyName(p.Name); Write(p.Value, writer); } writer.WriteEndObject();
+        } else if (value.ValueKind == System.Text.Json.JsonValueKind.Array) { writer.WriteStartArray(); foreach (var item in value.EnumerateArray()) Write(item, writer); writer.WriteEndArray(); }
+        else if (value.ValueKind == System.Text.Json.JsonValueKind.Number && value.TryGetDecimal(out var number)) writer.WriteRawValue(number.ToString("G29", System.Globalization.CultureInfo.InvariantCulture));
+        else value.WriteTo(writer);
+    }
 }
 
 public static class PhoneNumber

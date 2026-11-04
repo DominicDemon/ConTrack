@@ -15,6 +15,12 @@ No SQL password is needed for this local connection.
 
 ## Source files
 
+`MasterDB-ConTrack.sql` is the supplied full schema for `ConTrackMaster`, including
+customer review and SMS tables. It contains its own CREATE DATABASE / USE statements.
+For the existing local `ContractManagement_Master` database, use the internal bootstrap
+and `002-contract-review.sql` to add that functionality while preserving drafts and accounts.
+The application connection name remains `ConnectionStrings:MasterDatabase`.
+
 `MasterDB-Optimize.original.sql` is the exact supplied SQL file.
 `Master_Database_HuongDan.docx` is the supplied reference document. Its proposed
 workflows and example statuses are guidance, not seeded database values.

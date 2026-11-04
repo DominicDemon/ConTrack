@@ -9,12 +9,16 @@ public sealed record InternalUser(long Id, string Name, string Username, string[
 }
 public sealed record CustomerOption(long Id, string Name, string Phone, Dictionary<string, string> Fields);
 public sealed record CustomerInput(string Name, string Phone, string? Email, string? Company, string? TaxCode, string? Address);
+public sealed record BusinessInput(string Name, string TaxCode, string Address, string Representative);
+public sealed record BusinessOption(long Id, string Name, string TaxCode, string Address, string Representative);
 public sealed record ProductOption(long Id, string Name, decimal Price);
 public sealed record EmployeeOption(long Id, string Name);
 public sealed record DraftSummary(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName, DateTime UpdatedAt, int MissingCount,
     int Status, string? LatestReviewStatus);
 public sealed record DraftRecord(long Id, string Code, long EmployeeId, string EmployeeName, string RowVersion, string VersionRowVersion, DateTime UpdatedAt, DraftContent Content,
-    int Status, long VersionNo, bool Locked, bool CanEdit, string CustomerName, string CustomerPhoneMasked, string? LatestReviewStatus, string? SendBlockedReason);
+    int Status, long VersionNo, bool Locked, bool CanEdit, string CustomerName, string CustomerPhoneMasked, string? LatestReviewStatus, string? SendBlockedReason,
+    List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null);
+public sealed record CarriedDraftComment(long Id, string? TermKey, string Content, long? SourceCommentId, long? SourceVersionId, bool Resolved);
 public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion);
 public sealed class InternalAppException(int status, string message, string? code = null) : Exception(message)
 {
@@ -30,6 +34,8 @@ public interface IInternalRepository
     Task<List<CustomerOption>> Customers(string? search, CancellationToken ct);
     Task<CustomerOption?> Customer(long id, CancellationToken ct);
     Task<CustomerOption> CreateCustomer(CustomerInput input, long actor, CancellationToken ct);
+    Task<List<BusinessOption>> Businesses(long customerId, CancellationToken ct);
+    Task<BusinessOption> CreateBusiness(long customerId, BusinessInput input, long actor, CancellationToken ct);
     Task<List<ProductOption>> Products(string? search, CancellationToken ct);
     Task<bool> ProductsExist(IEnumerable<long> ids, CancellationToken ct);
     Task<List<EmployeeOption>> Employees(CancellationToken ct);
@@ -76,7 +82,10 @@ public sealed class InternalDraftService(IInternalRepository repository)
             foreach (var pair in customer.Fields)
                 if (!content.Fields.ContainsKey(pair.Key)) content.Fields[pair.Key] = pair.Value;
         }
-        InternalDraftPolicy.Prepare(content, template);
+        template = DraftCompletionPolicy.UpgradeTemplate(template);
+        DraftValidation.Prepare(content, template);
+        if (content.CustomerBusinessId.HasValue && !(await repository.Businesses(content.CustomerId, ct)).Any(b => b.Id == content.CustomerBusinessId))
+            throw new ArgumentException("Pháp nhân không thuộc khách hàng đã chọn.");
         if (!await repository.ProductsExist(content.Items.Where(i => i.ProductId.HasValue).Select(i => i.ProductId!.Value), ct))
             throw new ArgumentException("Sản phẩm được chọn không còn tồn tại.");
         return await repository.Save(id, request, user, ct);

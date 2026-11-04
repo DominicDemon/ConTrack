@@ -58,18 +58,24 @@ public class InternalDraftTests
         var sale = (await repository.GetUser(saleId, default))!; var office = (await repository.GetUser(officeId, default))!;
         var template = (await repository.Templates(default)).First();
         var customer = await repository.CreateCustomer(new("TEST_" + Guid.NewGuid().ToString("N"), "0" + Random.Shared.NextInt64(100000000, 999999999), null, null, null, null), saleId, default);
+        var business1 = await repository.CreateBusiness(customer.Id,new("Pháp nhân 1","TEST" + Random.Shared.Next(100000,999999),"Địa chỉ 1","Đại diện 1"),saleId,default);
+        var business2 = await repository.CreateBusiness(customer.Id,new("Pháp nhân 2","TEST" + Random.Shared.Next(100000,999999),"Địa chỉ 2","Đại diện 2"),saleId,default);
+        Assert.Equal(2,(await repository.Businesses(customer.Id,default)).Count);
         var ids = new List<long>();
         try
         {
-            var input = new DraftContent { TemplateId = template.Id, CustomerId = customer.Id, Name = "Nháp kiểm thử", Terms = template.Terms.ToList(),
+            var input = new DraftContent { TemplateId = template.Id, CustomerId = customer.Id, PartyType = "BUSINESS", CustomerBusinessId = business2.Id, Name = "Nháp kiểm thử", Terms = template.Terms.ToList(),
                 Items = [new(null, "Hạng mục kiểm thử", 2, 100000, 10, 0)], VatPercent = 10 };
+            input.Fields["CUSTOMER_COMPANY"] = business2.Name; input.Fields["CUSTOMER_TAX_CODE"] = business2.TaxCode;
             var draft = await service.Save(null, new(input, null, null), sale, default); ids.Add(draft.Id);
             Assert.Equal(198000, draft.Content.Totals.Total);
             Assert.NotEmpty(draft.Content.MissingFields);
             Assert.Equal(1, await db.ContractVersions.CountAsync(v => v.ContractDocumentId == draft.Id));
             Assert.Equal(1, await db.ContractDocumentItems.CountAsync(v => v.ContractDocumentId == draft.Id));
             var c = await db.Customers.SingleAsync(c => c.CustomerId == customer.Id); c.CustomerDisplayName += " changed"; await db.SaveChangesAsync();
+            var businessEntity = await db.CustomerBusinesses.SingleAsync(b => b.CustomerBusinessId == business2.Id); businessEntity.CustomerBusinessLegalName="Tên mới"; await db.SaveChangesAsync();
             var reloaded = await service.Get(draft.Id, sale, default);
+            Assert.Equal(business2.Id,reloaded.Content.CustomerBusinessId); Assert.Equal(business2.Name,reloaded.Content.Fields["CUSTOMER_COMPANY"]);
             Assert.Equal(customer.Name, reloaded.Content.Fields["CUSTOMER_CONTACT_NAME"]);
             reloaded.Content.Name = "Đã cập nhật";
             var updated = await service.Save(draft.Id, new(reloaded.Content, draft.RowVersion, draft.VersionRowVersion), office, default);
@@ -80,7 +86,7 @@ public class InternalDraftTests
             Assert.Equal(403, (await Assert.ThrowsAsync<InternalAppException>(() => service.Get(officeDraft.Id, sale, default))).Status);
             var before = await db.ContractDocuments.CountAsync();
             input.Items = [new(null, "Sai", -1, 1, 0, 0)];
-            await Assert.ThrowsAsync<ArgumentException>(() => service.Save(null, new(input, null, null), sale, default));
+            await Assert.ThrowsAnyAsync<ArgumentException>(() => service.Save(null, new(input, null, null), sale, default));
             Assert.Equal(before, await db.ContractDocuments.CountAsync());
             // Force a real SQL failure after document/version insertion to verify atomic rollback.
             input.Items = [];
@@ -101,6 +107,8 @@ public class InternalDraftTests
                 await db.ContractDocuments.Where(x => x.ContractDocumentId == id).ExecuteDeleteAsync();
                 await db.AuditLogs.Where(x => x.EntityName == "CONTRACT_DOCUMENTS" && x.EntityId == id.ToString()).ExecuteDeleteAsync();
             }
+            await db.CustomerBusinesses.Where(x => x.CustomerId == customer.Id).ExecuteDeleteAsync();
+            await db.AuditLogs.Where(x => x.EntityName == "CUSTOMER_BUSINESS" && (x.EntityId == business1.Id.ToString() || x.EntityId == business2.Id.ToString())).ExecuteDeleteAsync();
             await db.Customers.Where(x => x.CustomerId == customer.Id).ExecuteDeleteAsync();
             await db.AuditLogs.Where(x => x.EntityName == "CUSTOMER" && x.EntityId == customer.Id.ToString()).ExecuteDeleteAsync();
         }

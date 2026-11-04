@@ -38,7 +38,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         {
             var file = await db.FileStorages.AsNoTracking().Where(f => f.FileStorageObjecttype == "INTERNAL_TEMPLATE" && f.FileStorageObjectid == id)
                 .OrderByDescending(f => f.FileStorageFileid).FirstOrDefaultAsync(ct);
-            if (file is not null) result.Add(await storage.Read(file, ct));
+            if (file is not null) result.Add(DraftCompletionPolicy.UpgradeTemplate(await storage.Read(file, ct)));
         }
         return result;
     }
@@ -55,13 +55,12 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     {
         var c = await db.Customers.AsNoTracking().SingleOrDefaultAsync(x => x.CustomerId == id && x.CustomerStatus == 1, ct);
         if (c is null) return null;
-        var business = await db.CustomerBusinesses.AsNoTracking().Where(b => b.CustomerId == id).OrderBy(b => b.CustomerBusinessId).FirstOrDefaultAsync(ct);
         return new(c.CustomerId, c.CustomerDisplayName, c.CustomerPersonalPhone, new()
         {
             ["CUSTOMER_CONTACT_NAME"] = c.CustomerDisplayName, ["CUSTOMER_CONTACT_PHONE"] = c.CustomerPersonalPhone,
-            ["CUSTOMER_COMPANY"] = business?.CustomerBusinessLegalName ?? c.CustomerDisplayName,
-            ["CUSTOMER_ADDRESS"] = business?.CustomerBusinessOfficeAddress ?? c.CustomerAddress ?? "",
-            ["CUSTOMER_EMAIL"] = c.CustomerEmail ?? "", ["CUSTOMER_TAX_CODE"] = business?.CustomerBusinessCompanyTaxIdentifier ?? ""
+            ["CUSTOMER_COMPANY"] = c.CustomerDisplayName,
+            ["CUSTOMER_ADDRESS"] = c.CustomerAddress ?? "",
+            ["CUSTOMER_EMAIL"] = c.CustomerEmail ?? "", ["CUSTOMER_TAX_CODE"] = ""
         });
     }
     public async Task<CustomerOption> CreateCustomer(CustomerInput input, long actor, CancellationToken ct)
@@ -97,6 +96,27 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     public Task<List<ProductOption>> Products(string? search, CancellationToken ct) => db.Products.AsNoTracking()
         .Where(p => search == null || p.ProductName.Contains(search)).OrderBy(p => p.ProductName).Take(100)
         .Select(p => new ProductOption(p.ProductId, p.ProductName, p.ProductSuggestedPrice ?? 0)).ToListAsync(ct);
+    public Task<List<BusinessOption>> Businesses(long customerId, CancellationToken ct) => db.CustomerBusinesses.AsNoTracking()
+        .Where(b => b.CustomerId == customerId).OrderBy(b => b.CustomerBusinessLegalName)
+        .Select(b => new BusinessOption(b.CustomerBusinessId, b.CustomerBusinessLegalName, b.CustomerBusinessCompanyTaxIdentifier,
+            b.CustomerBusinessOfficeAddress ?? "", b.CustomerBusinessRepresentativeName ?? "")).ToListAsync(ct);
+    public async Task<BusinessOption> CreateBusiness(long customerId, BusinessInput input, long actor, CancellationToken ct)
+    {
+        if (!await db.Customers.AnyAsync(c => c.CustomerId == customerId && c.CustomerStatus == 1, ct)) throw new ArgumentException("Khách hàng không tồn tại.");
+        var name = InternalDraftPolicy.Text(input.Name, 1000); var tax = InternalDraftPolicy.Text(input.TaxCode, 20);
+        var address = InternalDraftPolicy.Text(input.Address, 1000); var representative = InternalDraftPolicy.Text(input.Representative, 200);
+        if (name.Length == 0 || tax.Length == 0 || address.Length == 0 || representative.Length == 0) throw new ArgumentException("Nhập đủ tên pháp lý, mã số thuế, địa chỉ và đại diện.");
+        if (await db.CustomerBusinesses.AnyAsync(b => b.CustomerId == customerId && b.CustomerBusinessCompanyTaxIdentifier == tax, ct)) throw new InternalAppException(409, "Pháp nhân đã tồn tại; chọn trong danh sách.");
+        return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () => {
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            var b = new CustomerBusiness { CustomerId = customerId, CustomerBusinessLegalName = name, CustomerBusinessCompanyTaxIdentifier = tax,
+                CustomerBusinessOfficeAddress = address, CustomerBusinessRepresentativeName = representative, CreatedAt = DateTime.UtcNow, CreatedBy = actor };
+            db.CustomerBusinesses.Add(b); await db.SaveChangesAsync(ct);
+            db.AuditLogs.Add(new() { ActionType = "CREATE", EntityName = "CUSTOMER_BUSINESS", EntityId = b.CustomerBusinessId.ToString(), ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow });
+            await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+            return new BusinessOption(b.CustomerBusinessId, name, tax, address, representative);
+        });
+    }
     public async Task<bool> ProductsExist(IEnumerable<long> ids, CancellationToken ct)
     {
         var distinct = ids.Distinct().ToArray();
@@ -115,9 +135,12 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             orderby d.UpdatedDate ?? d.CreatedDate descending
             select new { d, e.EmployeeDisplayName, c.CustomerDisplayName, v.FieldValue, Latest = db.ContractReviewRequests
                 .Where(r => r.ContractDocumentId == d.ContractDocumentId).OrderByDescending(r => r.ContractReviewRequestId).Select(r => r.ContractReviewRequestStatus).FirstOrDefault() };
-        return (await query.Take(200).ToListAsync(ct)).Select(x => new DraftSummary(x.d.ContractDocumentId, x.d.ContractDocumentCode!, x.d.ContractDocumentName,
+        return (await query.Take(200).ToListAsync(ct)).Select(x => { var content = JsonSerializer.Deserialize<DraftContent>(x.FieldValue, Json)!;
+            if (x.d.ContractDocumentStatus == ContractDocumentStatus.Draft || (x.d.ContractDocumentStatus == ContractDocumentStatus.Negotiating && x.Latest is ContractReviewStatus.ChangesRequested or ContractReviewStatus.Rejected))
+                DraftValidation.Prepare(content, DraftCompletionPolicy.UpgradeTemplate(content.TemplateSnapshot!));
+            return new DraftSummary(x.d.ContractDocumentId, x.d.ContractDocumentCode!, x.d.ContractDocumentName,
             x.CustomerDisplayName, x.d.EmployeeId, x.EmployeeDisplayName, x.d.UpdatedDate ?? x.d.CreatedDate,
-            JsonSerializer.Deserialize<DraftContent>(x.FieldValue, Json)!.MissingFields.Count, x.d.ContractDocumentStatus, x.Latest)).ToList();
+            content.MissingFields.Count, x.d.ContractDocumentStatus, x.Latest); }).ToList();
     }
     public async Task<DraftRecord?> Draft(long id, CancellationToken ct)
     {
@@ -132,13 +155,20 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var latest = await db.ContractReviewRequests.AsNoTracking().Where(r => r.ContractDocumentId == id).OrderByDescending(r => r.ContractReviewRequestId)
             .Select(r => r.ContractReviewRequestStatus).FirstOrDefaultAsync(ct);
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!;
+        if (!v.ContractVersionIslocked) InternalDraftPolicy.Prepare(content, DraftCompletionPolicy.UpgradeTemplate(content.TemplateSnapshot!));
         var phone = PhoneNumber.Normalize(customer.CustomerPersonalPhone);
         var blocked = ContractReviewPolicy.CanSend(d.ContractDocumentStatus, latest, v.ContractVersionIslocked, content.MissingFields.Count)
             ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null);
+        var carried = await (from comment in db.ContractNegotiationComments.AsNoTracking()
+            join term in db.ContractTerms on (long?)comment.ContractNegotiationCommentTermid equals term.ContractTermTermid into terms
+            from term in terms.DefaultIfEmpty()
+            where comment.ContractDocumentId == id && comment.ContractVersionId == v.ContractVersionId && comment.ContractNegotiationCommentCarriedforwardfromcommentid != null
+            select new CarriedDraftComment(comment.ContractNegotiationCommentId, term == null ? null : term.ContractTermTermcode, comment.ContractNegotiationCommentContent,
+                comment.ContractNegotiationCommentCarriedforwardfromcommentid, comment.ContractNegotiationCommentCarriedforwardfromversionid, comment.ContractNegotiationCommentState == 1)).ToListAsync(ct);
         return new(id, d.ContractDocumentCode!, d.EmployeeId, name, Convert.ToBase64String(d.RowVersion), Convert.ToBase64String(v.ContractVersionRowversion),
             d.UpdatedDate ?? d.CreatedDate, content, d.ContractDocumentStatus, v.ContractVersionVersionNo, v.ContractVersionIslocked,
             ContractReviewPolicy.CanEdit(d.ContractDocumentStatus, v.ContractVersionIslocked), customer.CustomerDisplayName,
-            PhoneNumber.Mask(phone ?? customer.CustomerPersonalPhone), latest, blocked);
+            PhoneNumber.Mask(phone ?? customer.CustomerPersonalPhone), latest, blocked, DraftValidation.Missing(content), carried);
     }
     public async Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct)
     {
@@ -153,6 +183,8 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 ContractDocument document;
                 ContractVersion version;
                 string? oldData = null;
+                var commentTerms = new Dictionary<long, string>();
+                var pendingComments = new List<ContractNegotiationComment>();
                 if (id.HasValue)
                 {
                     document = await db.ContractDocuments.SingleOrDefaultAsync(d => d.ContractDocumentId == id && d.TenantId == null, ct)
@@ -166,7 +198,12 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     oldData = values.FirstOrDefault(x => x.FieldKey == SnapshotKey)?.FieldValue;
                     db.ContractDynamicValues.RemoveRange(values);
                     db.ContractDocumentItems.RemoveRange(await db.ContractDocumentItems.Where(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId).ToListAsync(ct));
-                    db.ContractTerms.RemoveRange(await db.ContractTerms.Where(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId).ToListAsync(ct));
+                    db.ContractPaymentMilestones.RemoveRange(await db.ContractPaymentMilestones.Where(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId).ToListAsync(ct));
+                    await db.SaveChangesAsync(ct);
+                    var previousTerms = await db.ContractTerms.Where(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId).ToListAsync(ct);
+                    commentTerms = previousTerms.ToDictionary(t => t.ContractTermTermid, t => t.ContractTermTermcode);
+                    pendingComments = await db.ContractNegotiationComments.Where(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId).ToListAsync(ct);
+                    db.ContractTerms.RemoveRange(previousTerms);
                 }
                 else
                 {
@@ -194,10 +231,28 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     ContractDocumentItemName = item.Name, ContractDocumentItemQuantity = item.Quantity, ContractDocumentItemUnitPrice = item.UnitPrice,
                     ContractDocumentItemLineSubtotal = InternalDraftPolicy.Round(item.Quantity * item.UnitPrice), ContractDocumentItemDiscountPercent = item.DiscountPercent,
                     ContractDocumentItemFixedDiscountAmount = item.DiscountAmount });
-                for (var i = 0; i < content.Terms.Count; i++) { var term = content.Terms[i]; db.ContractTerms.Add(new ContractTerm {
+                var termMap = new Dictionary<string, ContractTerm>();
+                for (var i = 0; i < content.Terms.Count; i++) { var term = content.Terms[i]; var entity = new ContractTerm {
                     ContractDocumentId = document.ContractDocumentId, ContractVersionId = version.ContractVersionId, ContractTermTermcode = term.Key,
                     ContractTermTermtitle = term.Title, ContractTermTermcontent = term.Content, ContractTermIsnegotiable = term.Editable,
-                    ContractTermDisplayorder = i, CreatedAt = now }); }
+                    ContractTermDisplayorder = i, CreatedAt = now }; db.ContractTerms.Add(entity); termMap[term.Key] = entity; }
+                await db.SaveChangesAsync(ct);
+                foreach (var comment in pendingComments) {
+                    if (comment.ContractNegotiationCommentTermid is { } oldTerm && commentTerms.TryGetValue(oldTerm, out var key))
+                        comment.ContractNegotiationCommentTermid = termMap.TryGetValue(key, out var mapped) ? checked((int)mapped.ContractTermTermid) : null;
+                }
+                for (var i = 0; i < content.Milestones.Count; i++) {
+                    var m = content.Milestones[i];
+                    // Incomplete rows remain in the snapshot until a payment term is selected.
+                    if (!termMap.TryGetValue(m.TermKey, out var term)) continue;
+                    db.ContractPaymentMilestones.Add(new() { ContractDocumentId = document.ContractDocumentId, ContractVersionId = version.ContractVersionId,
+                        ContractTermId = term.ContractTermTermid, ContractPaymentMilestoneCode = m.Key, ContractPaymentMilestoneTitlevi = m.Title,
+                        ContractPaymentMilestonePaymentpercent = m.Percent, ContractPaymentMilestoneAmount = m.Amount,
+                        ContractPaymentMilestoneDueanchor = m.Anchor == "DATE" ? 3 : m.Anchor == "SIGNED" ? 1 : 2,
+                        ContractPaymentMilestoneDaycountmode = 1, ContractPaymentMilestoneDueoffsetdays = m.OffsetDays,
+                        ContractPaymentMilestoneDuedate = m.DueDate, ContractPaymentMilestoneConditionvi = m.Condition,
+                        ContractPaymentMilestoneDisplayorder = i, CreatedAt = now });
+                }
                 var serialized = JsonSerializer.Serialize(content, Json);
                 foreach (var field in content.Fields.Append(new KeyValuePair<string,string>(SnapshotKey, serialized))) db.ContractDynamicValues.Add(new ContractDynamicValue {
                     ContractDocumentId = document.ContractDocumentId, ContractVersionId = version.ContractVersionId, FieldKey = field.Key, FieldValue = field.Value });

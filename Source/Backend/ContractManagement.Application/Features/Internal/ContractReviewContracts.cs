@@ -10,7 +10,7 @@ public interface ISmsSender
 }
 
 // Employee side
-public sealed record SendReviewRequest(string? Message, string? RowVersion, string? VersionRowVersion);
+public sealed record SendReviewRequest(string? Message, string? RowVersion, string? VersionRowVersion, bool ContentConfirmed = false);
 public sealed record NewVersionRequest(string? RowVersion, string? ChangeNote);
 public sealed record FollowupRequest(string? Decision, string? Note, string? RowVersion);
 public sealed record CommentInput(string? TermKey, long? ParentCommentId, string? Content);

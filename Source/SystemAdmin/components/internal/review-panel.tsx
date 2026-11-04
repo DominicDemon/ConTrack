@@ -1,10 +1,13 @@
 "use client";
+import { focusIssue } from "../../../Shared/draft-validation";
+import DraftPreview from "./draft-preview";
+
 import { useCallback, useEffect, useState } from "react";
 import { Check, CopyPlus, KeyRound, MessageSquare, Send, XCircle, Handshake } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { internalApi, dateTime, documentStatusLabel, reviewStatusLabel, type DraftRecord, type ReviewSummary, type ReviewComment } from "@/services/internal-api";
+import { internalApi, dateTime, documentStatusLabel, reviewStatusLabel, InternalApiError, type DraftRecord, type ReviewSummary, type ReviewComment } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import s from "./workspace.module.css";
 
@@ -12,6 +15,7 @@ type Confirm = { title: string; description: string; action: string; note?: { la
 
 /** Customer review actions and history for a saved draft. All state transitions are re-checked by the API. */
 export default function ReviewPanel({ record, dirty, onChanged }: { record: DraftRecord; dirty: boolean; onChanged: () => void }) {
+  const [confirmed, setConfirmed] = useState(false);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<Confirm | null>(null); const [note, setNote] = useState(""); const [busy, setBusy] = useState(false);
@@ -22,11 +26,11 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
   const canCreateVersion = record.status === 1 && record.locked && (latest?.status === "CHANGES_REQUESTED" || (latest?.status === "REJECTED" && latest.followupDecision === "NEGOTIATE"));
   const awaitingDecision = record.status === 7 && latest?.status === "REJECTED" && !latest.followupDecision;
 
-  function ask(c: Confirm) { setConfirm(c); setNote(""); setError(""); setNotice(""); }
+  function ask(c: Confirm) { setConfirmed(false); setConfirm(c); setNote(""); setError(""); setNotice(""); }
   async function run() {
     if (!confirm) return; setBusy(true); setError("");
     try { await confirm.run(note.trim()); setConfirm(null); await load(); onChanged(); }
-    catch (e) { setError((e as Error).message); setConfirm(null); } finally { setBusy(false); }
+    catch (e) { setError((e as Error).message); setConfirm(null); if(e instanceof InternalApiError && e.issues.length) focusIssue(e.issues[0].path); } finally { setBusy(false); }
   }
   async function act(action: () => Promise<unknown>, done?: string) {
     setBusy(true); setError(""); setNotice("");
@@ -36,7 +40,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
   const send = () => ask({ title: "Gửi khách xem", action: "Gửi khách xem",
     description: `Gửi phiên bản ${record.versionNo} cho ${record.customerName} (${record.customerPhoneMasked}). Phiên bản sẽ bị khóa; khách nhận SMS để đăng nhập và phản hồi.`,
     note: { label: "Lời nhắn cho khách (tùy chọn)", max: 1000 },
-    run: n => internalApi(`/contract-drafts/${record.id}/send-review`, "POST", { message: n || null, rowVersion: record.rowVersion, versionRowVersion: record.versionRowVersion }) });
+    run: n => internalApi(`/contract-drafts/${record.id}/send-review`, "POST", { message: n || null, rowVersion: record.rowVersion, versionRowVersion: record.versionRowVersion, contentConfirmed: true }) });
   const newVersion = () => ask({ title: "Tạo phiên bản mới", action: "Tạo phiên bản", description: `Sao chép phiên bản ${record.versionNo} đã gửi thành phiên bản mới để chỉnh sửa và gửi lại.`,
     note: { label: "Ghi chú thay đổi (tùy chọn)", max: 1000 },
     run: n => internalApi(`/contract-drafts/${record.id}/versions`, "POST", { rowVersion: record.rowVersion, changeNote: n || null }) });
@@ -54,7 +58,8 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
         {record.locked && <span className={s.muted}>Đã khóa — chỉ xem</span>}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        {!record.sendBlockedReason && <button className={ui.primaryButton} disabled={busy || dirty} title={dirty ? "Lưu nháp trước khi gửi" : undefined} onClick={send}><Send size={16}/>Gửi khách xem</button>}
+        <button type="button" className={ui.primaryButton} disabled={busy || dirty || !!record.sendBlockedReason}
+          aria-describedby="review-send-guidance" title={dirty ? "Lưu nháp trước khi gửi" : record.sendBlockedReason || undefined} onClick={send}><Send size={16}/>Gửi khách xem</button>
         {canCreateVersion && <button className={ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới</button>}
         {awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
           <button className={ui.secondaryButton} disabled={busy} onClick={() => followup("CLOSE")}><XCircle size={16}/>Đóng draft</button></>}
@@ -62,8 +67,14 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
           onClick={() => void act(() => internalApi(`/customers/${record.content.customerId}/reset-temp-password`, "POST"), "Đã xếp SMS mật khẩu tạm mới cho khách.")}><KeyRound size={16}/>Cấp lại mật khẩu tạm</button>}
       </div>
     </div>
-    {record.sendBlockedReason && !canCreateVersion && !awaitingDecision && <p className={s.muted} style={{ marginTop: 8 }}>Chưa thể gửi khách: {record.sendBlockedReason}</p>}
-    {dirty && !record.sendBlockedReason && <p className={s.muted} style={{ marginTop: 8 }}>Lưu nháp trước khi gửi khách.</p>}
+    <div id="review-send-guidance" className={s.muted} style={{ marginTop: 8 }} aria-live="polite">
+      {dirty ? <p>Lưu nháp để cập nhật thông tin và kiểm tra điều kiện gửi khách.</p> : record.sendBlockedReason ? <>
+        <p>Chưa thể gửi khách: {record.sendBlockedReason}</p>
+        {!!record.content.missingFields.length && <p>Cần bổ sung: {record.content.missingFields.join(", ")}.</p>}
+      </> : <p>Nháp đã đủ thông tin. Bạn có thể gửi phiên bản này cho khách xem và phản hồi.</p>}
+    </div>
+    {(record.issues ?? []).some(i => i.path.startsWith("milestones")) && <button type="button" className={ui.secondaryButton} onClick={() => focusIssue("milestones")}>Đi tới lịch thanh toán</button>}
+    {(record.carriedComments?.length ?? 0) > 0 && <section className={ui.notice}><strong>Góp ý chuyển tiếp sang phiên bản này</strong>{record.carriedComments?.map(c => <div key={c.id}><p>{c.content} · chuyển từ bản trước · {c.resolved ? "Đã xử lý" : "Chưa xử lý"}</p>{!c.resolved && <button type="button" disabled={busy} className={ui.secondaryButton} onClick={() => void act(async () => { await internalApi(`/contract-comments/${c.id}/resolve`,"POST"); onChanged(); })}>Đánh dấu đã xử lý</button>}</div>)}</section>}
     {error && <p role="alert" className={ui.error} style={{ marginTop: 10 }}>{error}</p>}
     {notice && <p role="status" className={ui.notice} style={{ marginTop: 10 }}>{notice}</p>}
 
@@ -92,11 +103,11 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       </div>)}
     </details>}
 
-    <Dialog open={!!confirm} onOpenChange={v => { if (!busy && !v) setConfirm(null); }}><DialogContent>
+    <Dialog open={!!confirm} onOpenChange={v => { if (!busy && !v) setConfirm(null); }}><DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
       <DialogHeader><DialogTitle>{confirm?.title}</DialogTitle><DialogDescription>{confirm?.description}</DialogDescription></DialogHeader>
-      {confirm?.note && <label className="grid gap-2 text-sm font-medium">{confirm.note.label}<Textarea maxLength={confirm.note.max} value={note} disabled={busy} onChange={e => setNote(e.target.value)}/></label>}
+      {confirm?.action === "Gửi khách xem" && <><DraftPreview content={record.content} code={record.code}/><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>Tôi đã kiểm tra bên giao dịch, số tiền, lịch thanh toán và các nội dung viết cố định trong mẫu.</label></>}{confirm?.note && <label className="grid gap-2 text-sm font-medium">{confirm.note.label}<Textarea maxLength={confirm.note.max} value={note} disabled={busy} onChange={e => setNote(e.target.value)}/></label>}
       <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setConfirm(null)}>Hủy</Button>
-        <Button type="button" disabled={busy || (!!confirm?.note?.required && !note.trim())} onClick={() => void run()}>{busy ? "Đang xử lý…" : confirm?.action}</Button></DialogFooter>
+        <Button type="button" disabled={busy || (confirm?.action === "Gửi khách xem" && !confirmed) || (!!confirm?.note?.required && !note.trim())} onClick={() => void run()}>{busy ? "Đang xử lý…" : confirm?.action}</Button></DialogFooter>
     </DialogContent></Dialog>
   </section>;
 }

@@ -24,6 +24,13 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
         var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleAsync(x => x.ContractDocumentId == documentId
             && x.ContractVersionId == version.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
+        if (!version.ContractVersionIslocked) {
+            if (content.FormatVersion < 2) throw new InternalAppException(422, "Mở nháp, bổ sung pháp nhân/lịch thanh toán và lưu lại trước khi gửi.");
+            DraftValidation.Prepare(content, content.TemplateSnapshot ?? throw new InternalAppException(409, "Thiếu bản chụp mẫu."));
+            if (content.MissingFields.Count > 0) throw new DraftValidationException(DraftValidation.Missing(content));
+            if (content.CustomerBusinessId is { } business && !await db.CustomerBusinesses.AnyAsync(b => b.CustomerId == doc.CustomerId && b.CustomerBusinessId == business, ct)) throw new InternalAppException(422, "Pháp nhân không thuộc khách hàng.");
+            if (content.TemplateSnapshot.IsImported && !request.ContentConfirmed) throw new InternalAppException(422, "Cần xác nhận đã kiểm tra nội dung mẫu tải lên.");
+        }
         if (ContractReviewPolicy.CanSend(doc.ContractDocumentStatus, latest?.ContractReviewRequestStatus, version.ContractVersionIslocked, content.MissingFields.Count) is { } error)
             throw new InternalAppException(409, error);
         var customer = await db.Customers.SingleOrDefaultAsync(c => c.CustomerId == doc.CustomerId && c.CustomerStatus == 1, ct)
@@ -46,6 +53,8 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
         if (customer.CustomerPersonalPhoneVerifiedAt is null) IssueTemporaryPassword(customer, phone, doc.ContractDocumentId, actor.Id, now);
         else sms.Enqueue(db, SmsPurpose.ReviewNotice, customer.CustomerId, doc.ContractDocumentId, phone, sms.ReviewNoticeMessage(PortalUrl, doc.ContractDocumentCode ?? ""), now);
         await db.SaveChangesAsync(ct);
+        foreach (var comment in await db.ContractNegotiationComments.Where(c => c.ContractDocumentId == documentId && c.ContractVersionId == version.ContractVersionId && c.ContractReviewRequestId == null).ToListAsync(ct))
+            comment.ContractReviewRequestId = review.ContractReviewRequestId;
         ReviewData.Audit(db, "SEND_REVIEW", "CONTRACT_REVIEW_REQUEST", review.ContractReviewRequestId, "EMPLOYEE", actor.Id, now);
         await db.SaveChangesAsync(ct);
         return (await Summaries(documentId, ct)).First();
@@ -84,8 +93,25 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
             var from = current.ContractVersionId;
             foreach (var x in await db.ContractDocumentItems.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from).ToListAsync(ct))
             { x.ContractDocumentItemId = 0; x.ContractVersionId = next.ContractVersionId; db.ContractDocumentItems.Add(x); }
+            var termMap = new Dictionary<long, ContractTerm>();
             foreach (var x in await db.ContractTerms.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from).ToListAsync(ct))
-            { x.ContractTermTermid = 0; x.ContractVersionId = next.ContractVersionId; x.CreatedAt = now; x.UpdatedAt = null; db.ContractTerms.Add(x); }
+            { var oldId = x.ContractTermTermid; x.ContractTermTermid = 0; x.ContractVersionId = next.ContractVersionId; x.CreatedAt = now; x.UpdatedAt = null; db.ContractTerms.Add(x); termMap[oldId] = x; }
+            await db.SaveChangesAsync(ct);
+            foreach (var x in await db.ContractPaymentMilestones.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from).ToListAsync(ct))
+            {
+                x.ContractPaymentMilestoneId = 0; x.ContractVersionId = next.ContractVersionId; x.ContractTermId = termMap[x.ContractTermId].ContractTermTermid;
+                x.InvoiceId = null; x.ContractPaymentMilestonePaymentstatus = 0; x.ContractPaymentMilestonePaidat = null; x.ContractPaymentMilestonePaidbyemployeeid = null;
+                x.ContractPaymentMilestoneAnchordate = null; if (x.ContractPaymentMilestoneDueanchor != 3) x.ContractPaymentMilestoneDuedate = null;
+                x.CreatedAt = now; x.UpdatedAt = null; db.ContractPaymentMilestones.Add(x);
+            }
+            foreach (var x in await db.ContractNegotiationComments.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from && x.ContractNegotiationCommentState == 0).ToListAsync(ct))
+            {
+                db.ContractNegotiationComments.Add(new() { ContractDocumentId = documentId, ContractVersionId = next.ContractVersionId,
+                    ContractNegotiationCommentTermid = x.ContractNegotiationCommentTermid is { } oldTerm && termMap.TryGetValue(oldTerm, out var mapped) ? checked((int)mapped.ContractTermTermid) : null,
+                    ContractNegotiationCommentCarriedforwardfromcommentid = checked((int)x.ContractNegotiationCommentId), ContractNegotiationCommentCarriedforwardfromversionid = checked((int)from),
+                    ContractNegotiationCommentSource = x.ContractNegotiationCommentSource, ContractNegotiationCommentContent = x.ContractNegotiationCommentContent,
+                    AuthorCustomerId = x.AuthorCustomerId, RecordedByEmployeeId = x.RecordedByEmployeeId, CreatedAt = now });
+            }
             foreach (var x in await db.ContractDynamicValues.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from).ToListAsync(ct))
             { x.ContractDynamicValueId = 0; x.ContractVersionId = next.ContractVersionId; db.ContractDynamicValues.Add(x); }
             doc.ContractDocumentCurrentVersionId = next.ContractVersionId; doc.UpdatedDate = now;
@@ -359,7 +385,7 @@ internal static class ReviewData
         int? termId = null, parentId = null;
         if (!string.IsNullOrWhiteSpace(input.TermKey))
             termId = checked((int)(await db.ContractTerms.Where(t => t.ContractDocumentId == review.ContractDocumentId && t.ContractVersionId == review.ContractVersionId
-                && t.ContractTermTermcode == input.TermKey).Select(t => (long?)t.ContractTermTermid).FirstOrDefaultAsync(ct) ?? throw new ArgumentException("Điều khoản không thuộc phiên bản này.")));
+                && t.ContractTermTermcode == input.TermKey && t.ContractTermIsnegotiable).Select(t => (long?)t.ContractTermTermid).FirstOrDefaultAsync(ct) ?? throw new ArgumentException("Điều khoản không thuộc phiên bản này hoặc không cho phép thương lượng.")));
         if (input.ParentCommentId is { } parent)
         {
             if (!await db.ContractNegotiationComments.AnyAsync(c => c.ContractNegotiationCommentId == parent && c.ContractReviewRequestId == review.ContractReviewRequestId, ct))

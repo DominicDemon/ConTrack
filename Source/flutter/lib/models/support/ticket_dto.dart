@@ -114,6 +114,7 @@ class TicketModel {
   final DateTime? ticketClosedAt;
   final DateTime createdAt;
   final DateTime? updatedAt;
+  final String? departmentHeadName;
   final String? assignedEmployeeName;
   final List<TicketMessageModel> messages;
 
@@ -132,6 +133,7 @@ class TicketModel {
     this.ticketClosedAt,
     required this.createdAt,
     this.updatedAt,
+    this.departmentHeadName,
     this.assignedEmployeeName,
     this.messages = const [],
   });
@@ -187,6 +189,7 @@ class TicketModel {
       updatedAt: json['updatedAt'] != null
           ? DateTime.tryParse(json['updatedAt'].toString())
           : null,
+      departmentHeadName: json['departmentHeadName'] ?? json['department_head_name'],
       assignedEmployeeName: json['assignedEmployeeName'],
       messages: (json['messages'] as List<dynamic>?)
               ?.map((e) => TicketMessageModel.fromJson(e as Map<String, dynamic>))

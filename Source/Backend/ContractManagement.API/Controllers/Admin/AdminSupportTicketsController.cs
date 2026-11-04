@@ -51,6 +51,64 @@ public sealed class AdminSupportTicketsController : ControllerBase
         return Ok(ticket);
     }
 
+    [HttpGet("{id:int}/staff")]
+    public async Task<IActionResult> GetDepartmentStaff(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 1;
+        var staffList = await _ticketService.GetDepartmentStaffAsync(id, systemAdminId, cancellationToken);
+        return Ok(staffList);
+    }
+
+    [HttpPost("{id:int}/assign")]
+    public async Task<IActionResult> AssignToStaff(
+        int id,
+        [FromBody] AssignTicketToStaffRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 1;
+        var adminName = HttpContext.Session.GetString(AccountSessionKeys.SystemAdminName) ?? "System Administrator";
+
+        var updated = await _ticketService.AssignToStaffAsync(
+            id,
+            systemAdminId,
+            adminName,
+            request,
+            cancellationToken);
+
+        if (updated is null)
+        {
+            return NotFound(new { message = "Không tìm thấy ticket hỗ trợ." });
+        }
+
+        return Ok(updated);
+    }
+
+    [HttpPost("{id:int}/resolve")]
+    public async Task<IActionResult> HeadResolve(
+        int id,
+        [FromBody] HeadResolveTicketRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 1;
+        var adminName = HttpContext.Session.GetString(AccountSessionKeys.SystemAdminName) ?? "System Administrator";
+
+        var updated = await _ticketService.HeadResolveAsync(
+            id,
+            systemAdminId,
+            adminName,
+            request,
+            cancellationToken);
+
+        if (updated is null)
+        {
+            return NotFound(new { message = "Không tìm thấy ticket hỗ trợ." });
+        }
+
+        return Ok(updated);
+    }
+
     [HttpPost("{id:int}/messages")]
     public async Task<IActionResult> ReplyMessage(
         int id,
@@ -104,4 +162,3 @@ public sealed class AdminSupportTicketsController : ControllerBase
         return Ok(updated);
     }
 }
-

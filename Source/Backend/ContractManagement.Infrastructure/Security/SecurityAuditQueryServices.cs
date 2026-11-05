@@ -6,6 +6,7 @@ using ContractManagement.API.Domains.DTOs.Responses.Security;
 using ContractManagement.API.Domains.Interfaces.Security;
 using ContractManagement.Infrastructure.MultiTenancy.Interfaces;
 using ContractManagement.Infrastructure.Persistence.Application;
+using ContractManagement.Infrastructure.Persistence.Application.Models;
 using ContractManagement.Infrastructure.Persistence.Central;
 using Microsoft.EntityFrameworkCore;
 

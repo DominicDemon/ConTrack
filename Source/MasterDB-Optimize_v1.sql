@@ -1,16 +1,9 @@
--- BỎ CÁC BẢNG: CONTRACT, CONTRACTAPPENDIX.
--- SỬA ĐỔI TÊN TOÀN BỘ CÁC BẢNG + TRƯỜNG THÔNG TIN THÀNH DƯỚI DẠNG "_".
--- THÊM CÁC BẢNG: CONTRACT_TEMPLATE_FIELDS, CONTRACT_DOCUMENTS, CONTRACT_DOCUMENT_RELATION, CONTRACT_DYNAMIC_VALUES,
---				  CONTRACT_DOCUMENT_FILES, APPROVAL_WORKFLOW_STEP.
--- * CHUYỂN ĐỔI TOÀN BỘ CÁC TÀI LIỆU HỢP ĐỒNG, PHỤ LỤC, BIÊN BẢN BÀN GIAO,... 
--- SANG QUẢN LÝ TỐI ƯU DÙNG CHUNG TRONG CONTRACT_DOCUMENTS (KHÔNG QUẢN LÝ THÀNH TỪNG BẢNG RIÊNG LẺ NỮA).
--- THIẾT KẾ MÔ HÌNH (FIELD_KEY + FIELD_VALUE) CỰC LINH ĐỘNG TRONG CÁCH LƯU TRỮ THÔNG TIN RIÊNG LẺ CỦA TỪNG LOẠI TÀI LIỆU, MẪU.
--- FIELD_KEY + FIELD_VALUE LINH ĐỘNG TRONG VIỆC KHÔNG CẦN PHẢI THÊM CÁC BẢNG HAY TRƯỜNG MỖI KHI LOẠI TÀI LIỆU CẦN THÊM THÔNG TIN MỚI, KHÁC.
+﻿  
 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CUSTOMER_INTERACTION')
 BEGIN
     CREATE TABLE CUSTOMER_INTERACTION (
-        customer_interaction_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CUSTOMER_INTERACTION PRIMARY KEY,
+        customer_interaction_id BIGINT IDENTITY(1,1) ,
         customerid BIGINT NOT NULL,
         employeeid BIGINT NOT NULL,
         customer_interaction_interaction_at DATETIME NOT NULL DEFAULT GETDATE(),
@@ -29,7 +22,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CATEGORIES')
 BEGIN
     CREATE TABLE CATEGORIES (
-        category_id INT IDENTITY(1,1) NOT NULL CONSTRAINT CATEGORIES PRIMARY KEY,
+        category_id INT IDENTITY(1,1)  PRIMARY KEY,
         category_name NVARCHAR(500) NOT NULL,
         category_short_desc NVARCHAR(1000) NULL,
         category_desc NVARCHAR(MAX) NULL,
@@ -43,7 +36,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PRODUCTS')
 BEGIN
     CREATE TABLE PRODUCTS (
-        product_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PRODUCTS PRIMARY KEY,
+        product_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
         product_code VARCHAR(20) NULL,
         product_name NVARCHAR(500) NOT NULL,
         product_nameen NVARCHAR(500) NULL,
@@ -52,6 +45,7 @@ BEGIN
         product_unitnameen NVARCHAR(100) NULL,
         product_slogan NVARCHAR(400) NULL,
         product_shortdesc NVARCHAR(2000) NULL,
+        product_details NVARCHAR(MAX) NULL,
         product_largeimage VARCHAR(500) NULL,
         product_smallimage VARCHAR(500) NULL,
         product_iconclass VARCHAR(50) NULL,
@@ -79,7 +73,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'SERVICE_TYPES')
 BEGIN
     CREATE TABLE SERVICE_TYPES (
-        servicetype_id INT IDENTITY(1,1) NOT NULL CONSTRAINT SERVICE_TYPES PRIMARY KEY,
+        servicetype_id INT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
         servicetype_name NVARCHAR(200) NOT NULL
     );
 END;
@@ -88,7 +82,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'SERVICES')
 BEGIN
     CREATE TABLE SERVICES (
-        service_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT SERVICES PRIMARY KEY,
+        service_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
         service_name NVARCHAR(2000) NOT NULL,
         service_nameen NVARCHAR(500) NULL,
         service_unitname NVARCHAR(100) NULL,
@@ -99,14 +93,14 @@ BEGIN
         service_imageicon VARCHAR(50) NULL,
         service_fptaccounts bigint NULL,
         service_mysql INT NULL,
-        service_haschild BIT NOT NULL CONSTRAINT DF_tbl_Services_HasChild DEFAULT 0,
+        service_haschild BIT NOT NULL  DEFAULT 0,
         service_rewrite VARCHAR(300) NULL,
         service_titlebrowser NVARCHAR(500) NULL,
         service_metadescription NVARCHAR(2000) NULL,
         service_metakeyword NVARCHAR(2000) NULL,
         service_others NVARCHAR(4000) NULL,
-        service_status INT NOT NULL CONSTRAINT DF_tbl_Services_Status DEFAULT 0,
-        service_datecreated DATETIME NULL CONSTRAINT DF_tbl_Services_DateCreated DEFAULT GETDATE(),
+        service_status INT NOT NULL   DEFAULT 0,
+        service_datecreated DATETIME NULL  DEFAULT GETDATE(),
         service_datemodified DATETIME NULL
     );
 END;
@@ -119,7 +113,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'FILE_STORAGE')
 BEGIN
     CREATE TABLE FILE_STORAGE (
-        file_storage_fileid BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT FILE_STORAGE PRIMARY KEY,
+        file_storage_fileid BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
         file_storage_tenantcode VARCHAR(100) NULL,
 		file_storage_objectid BIGINT NULL,
         file_storage_objecttype VARCHAR(50) NOT NULL,
@@ -132,28 +126,26 @@ BEGIN
         file_storage_sha256 CHAR(64) NOT NULL,
         file_storage_uploadedbyemployeeid BIGINT NULL,
 		file_storage_uploadedbycustomerid BIGINT NULL,
-        file_storage_uploadeddate DATETIME NOT NULL CONSTRAINT DF_FileStorage_UploadedDate DEFAULT SYSUTCDATETIME()
+        file_storage_uploadeddate DATETIME NOT NULL   DEFAULT SYSUTCDATETIME()
     );
 	CREATE INDEX IX_FileStorage_Object ON FILE_STORAGE(file_storage_objecttype, file_storage_objectid);
 END;
 GO
+-- -------
+-- HỢP ĐỒNG
+-- -------
 
--- ----------------------------------------------------------------------------------------------------
--- MẪU HỢP ĐỒNG 
--- ----------------------------------------------------------------------------------------------------
-
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_TEMPLATE')
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_TYPES')
 BEGIN
-    CREATE TABLE CONTRACT_TEMPLATE (
-        contract_template_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_TEMPLATE PRIMARY KEY,
-        contract_template_code VARCHAR(50) NOT NULL UNIQUE,
-        contract_template_name NVARCHAR(500) NOT NULL,
-        contract_template_nameen NVARCHAR(500) NULL,
-        contract_template_description NVARCHAR(2000) NULL,
-        contract_template_document_type INT NOT NULL, -- 1: Hợp đồng, 2: Phụ lục, 3: Biên bản bàn giao, 4: Biên lai...
-        contract_template_language_mode INT NOT NULL DEFAULT 1,
-        is_active BIT NOT NULL CONSTRAINT DF_ContractTemplate_IsActive DEFAULT 1,
-        created_date DATETIME2 NOT NULL CONSTRAINT DF_ContractTemplate_CreatedDate DEFAULT SYSUTCDATETIME(),
+    CREATE TABLE CONTRACT_TYPES (
+        contract_type_id INT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
+        contract_type_code VARCHAR(50) NOT NULL UNIQUE,
+        contract_type_name NVARCHAR(500) NOT NULL,
+        contract_type_nameen NVARCHAR(500) NULL,
+        contract_type_description NVARCHAR(2000) NULL,
+        contract_status NVARCHAR(200) NULL,
+        default_duration_months int null, 
+        created_date DATETIME2 NOT NULL  DEFAULT SYSUTCDATETIME(),
         updated_date DATETIME2 NULL,
         created_employee_id INT NULL,
         modified_employee_id INT NULL
@@ -161,18 +153,66 @@ BEGIN
 END;
 GO
 
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_TEMPLATE_FIELDS')
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACTS')
 BEGIN
-    CREATE TABLE CONTRACT_TEMPLATE_FIELDS (
-        contract_template_field_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_TEMPLATE_FIELDS PRIMARY KEY,
-        contract_template_id BIGINT NOT NULL, 
-        contract_template_field_key VARCHAR(100) NOT NULL,
-        contract_template_field_label NVARCHAR(255) NOT NULL,
-        contract_template_field_data_type VARCHAR(50) NOT NULL DEFAULT 'TEXT',
-        is_required BIT NOT NULL DEFAULT 1,
-        extra_options NVARCHAR(MAX) NULL
+    CREATE TABLE CONTRACTS (
+        contract_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
+        contract_type_id INT,
+        contract_code VARCHAR(50) NOT NULL UNIQUE,
+        [contract_name] NVARCHAR(500) NOT NULL,
+        contract_nameen NVARCHAR(500) NULL,
+        partner_id bigint null,
+        employee_id bigint null,
+        department_id int null,
+        source_type VARCHAR (10) NULL,--ONLINE/SCANNED 
+        contract_status NVARCHAR(200) NULL, -- vòng đời hợp đồng.
+        approval_status NVARCHAR(200) NULL,
+        signed_date datetime null,       
+        effective_date datetime null,
+        expiration_date datetime null,
+        currency varchar(10) null,
+        contract_value float,
+        payment_terms nvarchar(max) null,
+        contract_description NVARCHAR(2000) NULL,
+        file_storage_fileid BIGINT, 
+        default_duration_months int null, 
+        created_date DATETIME2 NOT NULL  DEFAULT SYSUTCDATETIME(),
+        updated_date DATETIME2 NULL,
+        created_employee_id INT NULL,
+        modified_employee_id INT NULL
     );
-    CREATE INDEX IX_TemplateFields_TemplateId ON CONTRACT_TEMPLATE_FIELDS(contract_template_id);
+END;
+GO
+-- ----------------------------------------------------------------------------------------------------
+-- CÁC LOẠI BIÊN BẢN THEO HỢP ĐỒNG: BB BÀN GIAO, BB NGHIỆM THU
+-- ----------------------------------------------------------------------------------------------------
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_HANDOVER_RECORD')
+BEGIN
+    CREATE TABLE CONTRACT_HANDOVER_RECORD (
+        contract_handover_record_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
+        contract_document_id BIGINT NOT NULL,
+        contract_version_id BIGINT NOT NULL,
+        contract_template_id BIGINT NOT NULL,
+        contract_handover_record_handovercode NVARCHAR(100) NOT NULL,
+        contract_handover_record_handover_at DATE NOT NULL,
+        contract_handover_record_contractsigndate DATE NOT NULL,
+        contract_handover_record_location NVARCHAR(500) NOT NULL,
+        contract_handover_record_locationen NVARCHAR(500) NULL,
+        contract_handover_record_status INT NOT NULL DEFAULT 0,
+        contract_handover_record_snapshothash VARCHAR(64) NULL,
+        created_employee_id BIGINT NOT NULL,
+        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+        updated_employee_id BIGINT NULL,
+        updated_at DATETIME2 NULL,
+        finalized_by_employee_id BIGINT NULL,
+        finalized_at DATETIME2 NULL,
+        signed_by_employee_id BIGINT NULL,
+        signed_at DATETIME2 NULL,
+        cancelled_by_employee_id BIGINT NULL,
+        cancelled_at DATETIME2 NULL,
+        contract_handover_record_cancellationreason NVARCHAR(1000) NULL,
+        rowversion ROWVERSION NOT NULL
+    );
 END;
 GO
 
@@ -180,31 +220,50 @@ GO
 -- HỢP ĐỒNG VÀ CÁC LOẠI TÀI LIỆU KHÁC LIÊN QUAN ĐẾN HỢP ĐỒNG
 -- ----------------------------------------------------------------------------------------------------
 
+
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_DOCUMENTS')
 BEGIN
     CREATE TABLE CONTRACT_DOCUMENTS (
-        contract_document_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_CONTRACT_DOCUMENTS PRIMARY KEY,
+        contract_document_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
 		contract_document_current_version_id INT NULL,
-        tenant_id VARCHAR(100) NULL,
         customer_id BIGINT NOT NULL,
         employee_id BIGINT NOT NULL,
+        tenant_id VARCHAR(100) NULL,
         contract_template_id BIGINT NOT NULL, 
         contract_document_code VARCHAR(50) NULL,
         contract_document_name NVARCHAR(1000) NOT NULL,
         contract_document_type INT NOT NULL DEFAULT 1, 
-        contract_document_status INT NOT NULL CONSTRAINT DF_Doc_Status DEFAULT 0,
-        created_date DATETIME2 NOT NULL CONSTRAINT DF_Doc_CreatedDate DEFAULT SYSUTCDATETIME(),
+        contract_document_status INT NOT NULL   DEFAULT 0,
+        created_date DATETIME2 NOT NULL   DEFAULT SYSUTCDATETIME(),
         updated_date DATETIME2 NULL,
         row_version ROWVERSION NOT NULL
     );
     CREATE INDEX IX_ContractDocuments_TemplateId ON CONTRACT_DOCUMENTS(contract_template_id);
 END;
 GO
+-- ----------------------------------------------------------------------------------------------------
+-- LOẠI HỢP ĐỒNG 
+-- ----------------------------------------------------------------------------------------------------
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'DOCUMENT_TYPES')
+BEGIN
+    CREATE TABLE DOCUMENT_TYPES (
+        document_type_id INT IDENTITY(1,1) NOT NULL   PRIMARY KEY, 
+        employee_id BIGINT NOT NULL, 
+        document_type_name NVARCHAR(1000) NOT NULL, 
+        document_type_name_en NVARCHAR(1000) NOT NULL, 
+        document_type_status INT NOT NULL   DEFAULT 0,
+     
+        created_date DATETIME2 NOT NULL   DEFAULT SYSUTCDATETIME(),
+        updated_date DATETIME2 NULL,
+        row_version ROWVERSION NOT NULL
+    ); 
+END;
+GO
 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_VERSION')
 BEGIN
     CREATE TABLE CONTRACT_VERSION (
-        contract_version_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_VERSION PRIMARY KEY,
+        contract_version_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
         contract_document_id BIGINT NOT NULL,
         contract_version_version_no BIGINT NOT NULL,
         contract_template_id BIGINT NOT NULL,
@@ -213,74 +272,98 @@ BEGIN
         contract_version_totaldiscount DECIMAL(18,2) NOT NULL DEFAULT 0,
         contract_version_totalvat DECIMAL(18,2) NOT NULL DEFAULT 0,
         contract_version_totalamount DECIMAL(18,2) NOT NULL DEFAULT 0,
-        contract_version_currencycode CHAR(3) NOT NULL CONSTRAINT DF_ContractVersion_CurrencyCode DEFAULT 'VND',
-        contract_version_islocked BIT NOT NULL CONSTRAINT DF_ContractVersion_IsLocked DEFAULT 0,
+        contract_version_currencycode CHAR(3) NOT NULL   DEFAULT 'VND',
+        contract_version_islocked BIT NOT NULL   DEFAULT 0,
         contract_version_lockeddate DATETIME2 NULL,
         contract_version_lockedbyemployeeid INT NULL,
         contract_version_snapshothash CHAR(64) NULL,
 		contract_version_signdate DATETIME2 NULL,
 		contract_version_effective_date DATETIME2 NULL,
 		contract_version_expire_date DATETIME2 NULL,
-        contract_version_created_date DATETIME2 NOT NULL CONSTRAINT DF_ContractVersion_CreatedDate DEFAULT SYSUTCDATETIME(),
+        contract_version_created_date DATETIME2 NOT NULL  DEFAULT SYSUTCDATETIME(),
         contract_version_rowversion ROWVERSION NOT NULL
     );
 	CREATE UNIQUE INDEX UX_ContractVersion_Document_VersionNo ON CONTRACT_VERSION (contract_document_id, contract_version_version_no);
 END;
 GO
 
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_DOCUMENT_ITEMS')
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_APPENDICES')
 BEGIN
-    CREATE TABLE CONTRACT_DOCUMENT_ITEMS (
-        contract_document_item_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_CONTRACT_DOCUMENT_ITEMS PRIMARY KEY,
-        contract_document_id BIGINT NOT NULL, 
-		contract_version_id BIGINT NOT NULL,
-        product_id BIGINT NULL,  
-        contract_document_item_code VARCHAR(100) NULL,
-        contract_document_item_name NVARCHAR(500) NOT NULL,
-        contract_document_item_quantity DECIMAL(18,4) NOT NULL DEFAULT 1,
-        contract_document_item_unit_price DECIMAL(18,2) NOT NULL,
-        contract_document_item_line_subtotal DECIMAL(18,2) NOT NULL,
-        contract_document_item_discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0,
-        contract_document_item_fixed_discount_amount DECIMAL(18,2) NOT NULL DEFAULT 0
+CREATE TABLE CONTRACT_APPENDICES (
+        contract_appendix_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
+        contract_appendix_code VARCHAR(50) NULL,
+        contract_appendix_name NVARCHAR (500) NULL, 
+        contract_id BIGINT NOT NULL, 
+        contract_template_id BIGINT NOT NULL,
+        contract_appendix_description NVARCHAR(2000) NULL, 
+		contract_appendix_signdate DATETIME2 NULL,
+		contract_appendix_effective_date DATETIME2 NULL,
+		contract_appendix_expire_date DATETIME2 NULL,
+        empolyee_id BIGINT,
+        contract_appendix_created_date DATETIME2 NOT NULL   DEFAULT SYSUTCDATETIME(),
+        contract_version_rowversion ROWVERSION NOT NULL
     );
-    CREATE INDEX IX_DocumentItems_DocumentId ON CONTRACT_DOCUMENT_ITEMS(contract_document_id);
-    CREATE INDEX IX_DocumentItems_ProductId ON CONTRACT_DOCUMENT_ITEMS(product_id);
 END;
 GO
 
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_RENEWALS')
+BEGIN
+CREATE TABLE CONTRACT_RENEWALS (
+        contract_renewal_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
+        contract_id BIGINT NOT NULL,   
+		renewal_request_date DATETIME2 NULL,
+		old_expiration_date DATETIME2 NULL,
+		new_expiration_date DATETIME2 NULL,
+        approved_by BIGINT,
+        contract_renewal VARCHAR(20) NULL,
+        approved_at_date DATETIME2 NOT NULL  DEFAULT SYSUTCDATETIME(),
+        contract_version_rowversion ROWVERSION NOT NULL
+    );
+END;
+GO
+
+
+-- ----------------------------------------------------------------------------------------------------
+-- MẪU HỢP ĐỒNG 
+-- ----------------------------------------------------------------------------------------------------
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_TEMPLATE')
+BEGIN
+    CREATE TABLE CONTRACT_TEMPLATE (
+        contract_template_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
+        contract_template_code VARCHAR(50) NOT NULL UNIQUE,
+        contract_template_name NVARCHAR(500) NOT NULL,
+        contract_template_nameen NVARCHAR(500) NULL,
+        contract_template_description NVARCHAR(2000) NULL,
+        contract_template_document_type INT NOT NULL, -- 1: Hợp đồng, 2: Phụ lục, 3: Biên bản bàn giao, 4: Biên lai...
+        contract_template_language_mode INT NOT NULL DEFAULT 1,
+        is_active BIT NOT NULL  DEFAULT 1,
+        created_date DATETIME2 NOT NULL  DEFAULT SYSUTCDATETIME(),
+        updated_date DATETIME2 NULL,
+        created_employee_id INT NULL,
+        modified_employee_id INT NULL
+    );
+END;
+GO 
+ 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_DOCUMENT_RELATION')
 BEGIN
     CREATE TABLE CONTRACT_DOCUMENT_RELATION (
-        contract_document_relation_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_CONTRACT_DOCUMENT_RELATION PRIMARY KEY,
+        contract_document_relation_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
         parent_document_id BIGINT NOT NULL,
         child_document_id BIGINT NOT NULL,
         contract_document_relation_type VARCHAR(50) NOT NULL, 
         created_date DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
     );
-    ALTER TABLE CONTRACT_DOCUMENT_RELATION ADD CONSTRAINT UQ_Parent_Child UNIQUE(parent_document_id, child_document_id);
-	ALTER TABLE CONTRACT_DOCUMENT_RELATION ADD CONSTRAINT CK_ContractDocumentRelation_NotSelf CHECK (parent_document_id <> child_document_id);
+     
 END;
 GO
-
-
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_DYNAMIC_VALUES')
-BEGIN
-    CREATE TABLE CONTRACT_DYNAMIC_VALUES (
-        contract_dynamic_value_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_CONTRACT_DYNAMIC_VALUES PRIMARY KEY,
-        contract_document_id BIGINT NOT NULL, 
-		contract_version_id BIGINT NOT NULL,
-        field_key VARCHAR(100) NOT NULL,
-        field_value NVARCHAR(MAX) NOT NULL
-    );
-    CREATE INDEX IX_Dynamic_Values_Key_Doc ON CONTRACT_DYNAMIC_VALUES(field_key, contract_document_id);
-    CREATE INDEX IX_Dynamic_Values_DocumentId ON CONTRACT_DYNAMIC_VALUES(contract_document_id);
-END;
-GO
+ 
 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_TERM')
 BEGIN
     CREATE TABLE CONTRACT_TERM (
-        contract_term_termid BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_TERM PRIMARY KEY,
+        contract_term_termid BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
         contract_document_id BIGINT NOT NULL, 
 		contract_version_id BIGINT NOT NULL,
         contract_term_sourcetemplatetermid BIGINT NULL,
@@ -289,11 +372,11 @@ BEGIN
         contract_term_termtitleen NVARCHAR(500) NULL,
         contract_term_termcontent NVARCHAR(MAX) NULL,
         contract_term_termcontenten NVARCHAR(MAX) NULL,
-        contract_term_isnegotiable BIT NOT NULL CONSTRAINT DF_ContractTerm_IsNegotiable DEFAULT 0,
-        contract_term_termkind INT NOT NULL CONSTRAINT DF_ContractTerm_TermKind DEFAULT 0,
+        contract_term_isnegotiable BIT NOT NULL  DEFAULT 0,
+        contract_term_termkind INT NOT NULL  DEFAULT 0,
         contract_term_bilingualcontentmode INT NOT NULL DEFAULT 1,
-        contract_term_displayorder BIGINT NOT NULL CONSTRAINT DF_ContractTerm_DisplayOrder DEFAULT 0,
-        created_at DATETIME2 NOT NULL CONSTRAINT DF_ContractTerm_CreatedDate DEFAULT SYSUTCDATETIME(),
+        contract_term_displayorder BIGINT NOT NULL   DEFAULT 0,
+        created_at DATETIME2 NOT NULL   DEFAULT SYSUTCDATETIME(),
         updated_at DATETIME2 NULL,
         rowversion ROWVERSION NOT NULL
     );
@@ -303,13 +386,14 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_DOCUMENT_FILES')
 BEGIN
     CREATE TABLE CONTRACT_DOCUMENT_FILES (
-		contract_document_file_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT PK_CONTRACT_DOCUMENT_FILES PRIMARY KEY,
+		contract_document_file_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
+        contract_id BIGINT,
 		contract_document_id BIGINT NOT NULL,
         contract_version_id BIGINT NULL,
         file_storage_fileid BIGINT NOT NULL,
         contract_document_file_role INT NOT NULL,
-        is_primary BIT NOT NULL CONSTRAINT DF_ContractDocumentFiles_IsPrimary DEFAULT 0,
-		created_date DATETIME2 NOT NULL CONSTRAINT DF_ContractDocumentFiles_CreatedDate DEFAULT SYSUTCDATETIME(),
+        is_primary BIT NOT NULL   DEFAULT 0,
+		created_date DATETIME2 NOT NULL   DEFAULT SYSUTCDATETIME(),
 		created_employee_id BIGINT NULL,
         CONSTRAINT CK_ContractDocumentFiles_FileRole CHECK (contract_document_file_role BETWEEN 1 AND 5)
     );
@@ -319,7 +403,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_PAYMENT_MILESTONE')
 BEGIN
     CREATE TABLE CONTRACT_PAYMENT_MILESTONE (
-        contract_payment_milestone_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_PAYMENT_MILESTONE PRIMARY KEY,
+        contract_payment_milestone_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
         contract_document_id BIGINT NOT NULL, 
         contract_version_id BIGINT NOT NULL,
         contract_term_id BIGINT NOT NULL,
@@ -334,13 +418,13 @@ BEGIN
         contract_payment_milestone_daycountmode INT NOT NULL DEFAULT 1,
         contract_payment_milestone_anchordate DATE NULL,
         contract_payment_milestone_duedate DATE NULL,
-        contract_payment_milestone_paymentstatus INT NOT NULL CONSTRAINT DF_ContractPaymentMilestone_Status DEFAULT 0,
+        contract_payment_milestone_paymentstatus INT NOT NULL   DEFAULT 0,
         contract_payment_milestone_paidat DATETIME2 NULL,
         contract_payment_milestone_paidbyemployeeid INT NULL,
         contract_payment_milestone_conditionvi NVARCHAR(2000) NULL,
         contract_payment_milestone_conditionen NVARCHAR(2000) NULL,
         contract_payment_milestone_displayorder BIGINT NOT NULL DEFAULT 0,
-        created_at DATETIME2 NOT NULL CONSTRAINT DF_ContractPaymentMilestone_CreatedDate DEFAULT SYSUTCDATETIME(),
+        created_at DATETIME2 NOT NULL   DEFAULT SYSUTCDATETIME(),
         updated_at DATETIME2 NULL,
         rowversion ROWVERSION NOT NULL
     );
@@ -351,7 +435,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_SIGNED_EVIDENCE')
 BEGIN
     CREATE TABLE CONTRACT_SIGNED_EVIDENCE (
-        contract_signed_evidence_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_SIGNED_EVIDENCE PRIMARY KEY,
+        contract_signed_evidence_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
         contract_document_file_id BIGINT NOT NULL,
         contract_signed_evidence_status INT NOT NULL DEFAULT 1,
         contract_signed_evidence_signdate DATE NOT NULL,
@@ -367,13 +451,51 @@ END;
 GO
 
 -- ----------------------------------------------------------------------------------------------------
+-- QUẢN LÝ QUÉT & TRÍCH XUẤT DỮ LIỆU OCR
+-- ----------------------------------------------------------------------------------------------------
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'OCR_BATCH')
+BEGIN
+    CREATE TABLE OCR_BATCH(
+        ocr_patch_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
+        uploaded_by_employee_id BIGINT NOT NULL,
+        total_files INT NOT NULL,
+        batch_status VARCHAR(30) NOT NULL DEFAULT 'PENDING', -- PENDING, PROCESSING, COMPLETED, FAILED
+        created_at DATETIME2 NOT NULL,
+        updated_by_employee_id BIGINT,
+        updated_at DATETIME
+    );
+END;
+GO
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'OCR_JOB')
+BEGIN
+    CREATE TABLE OCR_JOB (
+        ocr_job_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
+        ocr_batch_id BIGINT NOT NULL,
+        file_storage_fileid BIGINT NOT NULL, 
+        contract_document_id BIGINT NULL,    
+        ocr_job_avg_confidence_score DECIMAL(5,2) NULL,              -- Độ chính xác trung bình (%)
+        ocr_job_processing_status VARCHAR(30) NOT NULL DEFAULT 'QUEUED', -- QUEUED, PROCESSING, SUCCESS, FAILED, NEED_REVIEW
+        ocr_text NVARCHAR(MAX),
+        page_count INT NULL,
+        scan_quality NVARCHAR(100),
+        error_message NVARCHAR(MAX) NULL,
+        scanned_employee_id BIGINT,
+        scanned_at DATETIME2 NOT NULL   DEFAULT SYSUTCDATETIME(),
+        completed_at DATETIME2 NULL
+    );
+END;
+GO
+
+-- ----------------------------------------------------------------------------------------------------
 -- PHÊ DUYỆT NỘI BỘ, ĐÀM PHÁN & CỔNG KHÁCH HÀNG OTP (CUSTOMER PORTAL)
 -- ----------------------------------------------------------------------------------------------------
 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'APPROVAL_WORKFLOW')
 BEGIN
     CREATE TABLE APPROVAL_WORKFLOW (
-        approval_workflow_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT APPROVAL_WORKFLOW PRIMARY KEY,
+        approval_workflow_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
         approval_workflow_code VARCHAR(50) NOT NULL UNIQUE,
         approval_workflow_name NVARCHAR(200) NOT NULL,
         approval_workflow_description NVARCHAR(1000) NULL,
@@ -390,14 +512,12 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'APPROVAL_WORKFLOW_STEP')
 BEGIN
     CREATE TABLE APPROVAL_WORKFLOW_STEP (
-        approval_workflow_step_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT APPROVAL_WORKFLOW_STEP PRIMARY KEY,
+        approval_workflow_step_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
         approval_workflow_id BIGINT NOT NULL,
         approval_workflow_step_order BIGINT NOT NULL,
         approval_workflow_step_name NVARCHAR(200) NOT NULL,
         system_role_id BIGINT NOT NULL,
-        approval_workflow_step_isrequired BIT NOT NULL DEFAULT 1,
-        CONSTRAINT UQ_ApprovalWorkflowStep_Order UNIQUE (approval_workflow_id, approval_workflow_step_order),
-        CONSTRAINT CK_ApprovalWorkflowStep_Order CHECK (approval_workflow_step_order > 0)
+        approval_workflow_step_isrequired BIT NOT NULL DEFAULT 1 
     );
 END;
 GO
@@ -405,13 +525,13 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_APPROVAL_REQUEST')
 BEGIN
     CREATE TABLE CONTRACT_APPROVAL_REQUEST (
-        contract_approval_request_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_APPROVAL_REQUEST PRIMARY KEY,
+        contract_approval_request_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
         contract_document_id BIGINT NOT NULL,
         contract_version_id BIGINT NOT NULL,
         approval_workflow_id BIGINT NOT NULL,
         submitted_by_employee_id BIGINT NOT NULL,
-        submitted_at DATETIME2 NOT NULL CONSTRAINT DF_ContractApprovalRequest_SubmittedDate DEFAULT SYSUTCDATETIME(),
-        contract_approval_request_status INT NOT NULL CONSTRAINT DF_ContractApprovalRequest_Status DEFAULT 0,
+        submitted_at DATETIME2 NOT NULL   DEFAULT SYSUTCDATETIME(),
+        contract_approval_request_status INT NOT NULL   DEFAULT 0,
         contract_approval_request_resolved_at DATETIME2 NULL,
         resolved_by_employee_id BIGINT NULL,
         contract_approval_request_decisioncomment NVARCHAR(1000) NULL,
@@ -423,7 +543,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_PHONE_VERIFY')
 BEGIN
     CREATE TABLE CONTRACT_PHONE_VERIFY (
-        contract_phone_verify_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_PHONE_VERIFY PRIMARY KEY,
+        contract_phone_verify_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
         contract_document_id BIGINT NOT NULL,
         contract_phone_verify_phone_source VARCHAR(32) NOT NULL,
         contract_phone_verify_phone_number_normalized VARCHAR(32) NOT NULL,
@@ -438,7 +558,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_ACCESS_LINK')
 BEGIN
     CREATE TABLE CONTRACT_ACCESS_LINK (
-        contract_access_link_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_ACCESS_LINK PRIMARY KEY,
+        contract_access_link_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
         tenant_id BIGINT NULL,
         contract_document_id BIGINT NOT NULL,
         contract_version_id BIGINT NOT NULL,
@@ -466,7 +586,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_ELECTRONIC_SIGNATURE')
 BEGIN
     CREATE TABLE CONTRACT_ELECTRONIC_SIGNATURE (
-        contract_electronic_signature_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_ELECTRONIC_SIGNATURE PRIMARY KEY,
+        contract_electronic_signature_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
         contract_document_id BIGINT NOT NULL,                        -- Hợp đồng ký
         contract_version_id BIGINT NOT NULL,                         -- Phiên bản hợp đồng ký
         contract_electronic_partytype INT NOT NULL,                     -- 1 = Bên A (Doanh nghiệp nội bộ), 2 = Bên B (Khách hàng/Đối tác)
@@ -476,10 +596,10 @@ BEGIN
         contract_electronic_signertitle NVARCHAR(100) NULL,                 -- Chức vụ / Đại diện
         contract_electronic_signerphone VARCHAR(30) NOT NULL,               -- Số điện thoại nhận OTP
         contract_electronic_signeremail VARCHAR(200) NULL,                  -- Email nhận thông báo
-        contract_electronic_signaturetype VARCHAR(30) NOT NULL CONSTRAINT DF_CES_Type DEFAULT 'DRAWN', -- 'DRAWN' (vẽ tay canvas), 'TYPED' (gõ tên), 'UPLOADED' (ảnh chữ ký), 'OTP_ACK' (xác nhận OTP)
+        contract_electronic_signaturetype VARCHAR(30) NOT NULL  DEFAULT 'DRAWN', -- 'DRAWN' (vẽ tay canvas), 'TYPED' (gõ tên), 'UPLOADED' (ảnh chữ ký), 'OTP_ACK' (xác nhận OTP)
         contract_electronic_signatureimagestoragekey NVARCHAR(500) NULL,    -- Đường dẫn file ảnh chữ ký nền trong suốt (PNG)
         contract_electronic_customerotpchallengeid INT NULL,                        -- FK sang CONTRACTCUSTOMEROTPCHALLENGE (Bằng chứng OTP đã xác thực)
-        contract_electronic_status INT NOT NULL CONSTRAINT DF_CES_Status DEFAULT 0, -- 0 = Chờ ký (Pending), 1 = Đã ký thành công (Signed), 2 = Từ chối ký (Declined)
+        contract_electronic_status INT NOT NULL   DEFAULT 0, -- 0 = Chờ ký (Pending), 1 = Đã ký thành công (Signed), 2 = Từ chối ký (Declined)
         contract_electronic_signedat DATETIME2 NULL,                        -- Thời điểm bấm xác nhận ký
         contract_electronic_ipaddress VARCHAR(45) NULL,                     -- Địa chỉ IP người ký (Audit trail pháp lý)
         contract_electronic_useragent NVARCHAR(1000) NULL,                  -- Trình duyệt & Thiết bị người ký
@@ -490,7 +610,7 @@ BEGIN
         contract_electronic_width DECIMAL(9,2) NULL,                        -- Kích thước khung ký
         contract_electronic_height DECIMAL(9,2) NULL,
         contract_electronic_reject_reason NVARCHAR(1000) NULL,               -- Lý do từ chối nếu không đồng ý ký
-        created_at DATETIME2 NOT NULL CONSTRAINT DF_CES_CreatedDate DEFAULT SYSUTCDATETIME(),
+        created_at DATETIME2 NOT NULL   DEFAULT SYSUTCDATETIME(),
         rowversion ROWVERSION NOT NULL
     );
 END;
@@ -499,7 +619,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_NEGOTIATION_COMMENT')
 BEGIN
     CREATE TABLE CONTRACT_NEGOTIATION_COMMENT (
-        contract_negotiation_comment_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_NEGOTIATION_COMMENT PRIMARY KEY,
+        contract_negotiation_comment_id BIGINT IDENTITY(1,1) NOT NULL   PRIMARY KEY,
         contract_document_id BIGINT NOT NULL,
         contract_version_id BIGINT NOT NULL,
         contract_negotiation_comment_termid INT NULL,
@@ -518,42 +638,14 @@ BEGIN
 END;
 GO
 
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CONTRACT_HANDOVER_RECORD')
-BEGIN
-    CREATE TABLE CONTRACT_HANDOVER_RECORD (
-        contract_handover_record_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT CONTRACT_HANDOVER_RECORD PRIMARY KEY,
-        contract_document_id BIGINT NOT NULL,
-        contract_version_id BIGINT NOT NULL,
-        contract_template_id BIGINT NOT NULL,
-        contract_handover_record_handovercode NVARCHAR(100) NOT NULL,
-        contract_handover_record_handover_at DATE NOT NULL,
-        contract_handover_record_contractsigndate DATE NOT NULL,
-        contract_handover_record_location NVARCHAR(500) NOT NULL,
-        contract_handover_record_locationen NVARCHAR(500) NULL,
-        contract_handover_record_status INT NOT NULL DEFAULT 0,
-        contract_handover_record_snapshothash VARCHAR(64) NULL,
-        created_employee_id BIGINT NOT NULL,
-        created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-        updated_employee_id BIGINT NULL,
-        updated_at DATETIME2 NULL,
-        finalized_by_employee_id BIGINT NULL,
-        finalized_at DATETIME2 NULL,
-        signed_by_employee_id BIGINT NULL,
-        signed_at DATETIME2 NULL,
-        cancelled_by_employee_id BIGINT NULL,
-        cancelled_at DATETIME2 NULL,
-        contract_handover_record_cancellationreason NVARCHAR(1000) NULL,
-        rowversion ROWVERSION NOT NULL
-    );
-END;
-GO
+
 
     
 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'NOTIFICATION')
 BEGIN
     CREATE TABLE NOTIFICATION (
-        notification_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT NOTIFICATION PRIMARY KEY,
+        notification_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
         notification_eventkey VARCHAR(200) NOT NULL,
         notification_modulecode VARCHAR(50) NOT NULL,
         notification_eventcode VARCHAR(80) NOT NULL,
@@ -571,7 +663,7 @@ GO
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'NOTIFICATION_RECIPIENT')
 BEGIN
     CREATE TABLE NOTIFICATION_RECIPIENT (
-        notification_recipient_id BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT NOTIFICATION_RECIPIENT PRIMARY KEY,
+        notification_recipient_id BIGINT IDENTITY(1,1) NOT NULL  PRIMARY KEY,
         notification_id BIGINT NOT NULL,
         employee_id BIGINT NOT NULL,
         notification_recipient_createdatutc DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
@@ -759,6 +851,7 @@ CREATE TABLE [SAAS_TYPE] (
 )
 GO
 
+
 CREATE TABLE [SAAS_PERMISSION_GROUP] (
   [permission_group_id] bigint PRIMARY KEY IDENTITY(1, 1),
   [saas_type_id] bigint NOT NULL,
@@ -866,8 +959,10 @@ CREATE TABLE [TENANT] (
   [tenant_subdomain] varchar(100) UNIQUE NOT NULL,
   [tenant_status] varchar(20) NOT NULL DEFAULT 'PENDING',
   [tenant_expired_at] datetime2,
+  [activated_at] datetime,
   [created_at] datetime2 NOT NULL DEFAULT (SYSUTCDATETIME()),
-  [updated_at] datetime2
+  [updated_at] datetime2,
+  [suspended_at] datetime
 )
 GO
 
@@ -880,6 +975,7 @@ CREATE TABLE [TENANT_DATABASE] (
   [tenant_database_db_name] varchar(255) NOT NULL,
   [tenant_database_user] varchar(255) NOT NULL,
   [tenant_database_password_encrypted] varchar(1000),
+  [tenant_schema_version] varchar(100),
   [tenant_database_provisioning_status] varchar(30) NOT NULL DEFAULT 'FRESH',
   [created_at] datetime2 NOT NULL DEFAULT (SYSUTCDATETIME()),
   [updated_at] datetime2
@@ -1002,11 +1098,17 @@ CREATE TABLE [AUDIT_LOG] (
 )
 GO
 
+CREATE TABLE [TICKET_TYPES] (
+  [ticket_type_id] bigint PRIMARY KEY IDENTITY(1, 1),
+  [ticket_name] nvarchar(500) null 
+)
+GO
+
 CREATE TABLE [TICKET_SUPPORT] (
   [ticket_support_id] bigint PRIMARY KEY IDENTITY(1, 1),
   [customer_id] bigint,
+  [department_id] bigint,
   [tenant_id] bigint,
-  [department_id] bigint null,
   [product_id] bigint null,
   [service_id] bigint null,
   [ticket_code] varchar(30),
@@ -1029,10 +1131,32 @@ CREATE TABLE [TICKET_MESSAGE] (
   [ticket_message_sender_employee_id] bigint,
   [ticket_message_content] nvarchar(max),
   [ticket_message_type] varchar(20),
-  [ticket_message_attachment_url] varchar(1000) null,
-  [ticket_message_attachment_name] nvarchar(1000) null,
-  [ticket_message_attachment_type] varchar(100) null,
   [created_at] datetime
+)
+GO
+
+CREATE TABLE [TICKET_ATTACHMENTS] (
+  ticket_attachment_id bigint PRIMARY KEY IDENTITY(1, 1),
+  ticket_message_id bigint, 
+  file_name_1 varchar(1000) NULL,
+  file_name_2 varchar(1000) NULL,
+  file_name_3 varchar(1000) NULL,
+  file_size int,
+  mime_type varchar(20), 
+  uploaded_at  datetime
+)
+GO
+
+CREATE TABLE [TICKET_HISTORY] (
+  ticket_history_id bigint PRIMARY KEY IDENTITY(1, 1),
+  ticket_support_id bigint,  
+  employee_id_start int,
+  employee_id_finished int,
+  changed_by_user_id int,
+  notes nvarchar(500) null,
+  old_status varchar(20), 
+  new_status varchar(20), 
+  changed_at  datetime
 )
 GO
 

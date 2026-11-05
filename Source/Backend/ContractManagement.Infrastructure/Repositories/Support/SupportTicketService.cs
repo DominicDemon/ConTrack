@@ -188,13 +188,21 @@ public sealed class SupportTicketService : ISupportTicketService
         try
         {
             const string sql = @"
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_TYPES')
+BEGIN
+    CREATE TABLE [TICKET_TYPES] (
+        [ticket_type_id] bigint PRIMARY KEY IDENTITY(1, 1),
+        [ticket_name] nvarchar(500) NULL
+    );
+END;
+
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_SUPPORT')
 BEGIN
     CREATE TABLE [TICKET_SUPPORT] (
         [ticket_support_id] bigint PRIMARY KEY IDENTITY(1, 1),
         [customer_id] bigint NULL,
-        [tenant_id] bigint NULL,
         [department_id] bigint NULL,
+        [tenant_id] bigint NULL,
         [product_id] bigint NULL,
         [service_id] bigint NULL,
         [ticket_code] varchar(30) NULL,
@@ -219,10 +227,36 @@ BEGIN
         [ticket_message_sender_employee_id] bigint NULL,
         [ticket_message_content] nvarchar(max) NULL,
         [ticket_message_type] varchar(20) NULL,
-        [ticket_message_attachment_url] varchar(1000) NULL,
-        [ticket_message_attachment_name] nvarchar(1000) NULL,
-        [ticket_message_attachment_type] varchar(100) NULL,
         [created_at] datetime NULL
+    );
+END;
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_ATTACHMENTS')
+BEGIN
+    CREATE TABLE [TICKET_ATTACHMENTS] (
+        [ticket_attachment_id] bigint PRIMARY KEY IDENTITY(1, 1),
+        [ticket_message_id] bigint NULL,
+        [file_name_1] varchar(1000) NULL,
+        [file_name_2] varchar(1000) NULL,
+        [file_name_3] varchar(1000) NULL,
+        [file_size] int NULL,
+        [mime_type] varchar(20) NULL,
+        [uploaded_at] datetime NULL
+    );
+END;
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_HISTORY')
+BEGIN
+    CREATE TABLE [TICKET_HISTORY] (
+        [ticket_history_id] bigint PRIMARY KEY IDENTITY(1, 1),
+        [ticket_support_id] bigint NULL,
+        [employee_id_start] int NULL,
+        [employee_id_finished] int NULL,
+        [changed_by_user_id] int NULL,
+        [notes] nvarchar(500) NULL,
+        [old_status] varchar(20) NULL,
+        [new_status] varchar(20) NULL,
+        [changed_at] datetime NULL
     );
 END;
 
@@ -445,50 +479,73 @@ END;
                     // 3. Lưu vào Database Table TICKET_SUPPORT
                     try
                     {
-                        var entity = new TblTicketSupport
+                        var entity = new TICKET_SUPPORT
                         {
-                            CustomerId = employeeId > 0 ? employeeId : 1,
-                            TenantId = tenantId > 0 ? tenantId : 1,
-                            DepartmentId = dept?.DepartmentId,
-                            ProductId = request.ProductId,
-                            ServiceId = request.ServiceId,
-                            TicketCode = ticketCode,
-                            TicketTitle = request.ResolvedSubject,
-                            TicketDescription = request.ResolvedDescription,
-                            TicketPriority = NormalizePriority(request.ResolvedPriority),
-                            TicketStatus = "Open",
-                            CreatedAt = DateTime.UtcNow
+                            customer_id = employeeId > 0 ? employeeId : 1,
+                            tenant_id = tenantId > 0 ? tenantId : 1,
+                            department_id = dept?.DepartmentId,
+                            product_id = request.ProductId,
+                            service_id = request.ServiceId,
+                            ticket_code = ticketCode,
+                            ticket_title = request.ResolvedSubject,
+                            ticket_description = request.ResolvedDescription,
+                            ticket_priority = NormalizePriority(request.ResolvedPriority),
+                            ticket_status = "Open",
+                            created_at = DateTime.UtcNow
                         };
 
-                        db.TblTicketSupports.Add(entity);
+                        db.TICKET_SUPPORT.Add(entity);
                         await db.SaveChangesAsync(cancellationToken);
 
                         // 4. Lưu vào TICKET_SUPPORT_EMPLOYEE với role = DEPARTMENT_HEAD
                         if (head != null)
                         {
-                            var headAssignment = new TblTicketSupportEmployee
+                            var headAssignment = new TICKET_SUPPORT_EMPLOYEE
                             {
-                                TicketSupportId = entity.TicketSupportId,
-                                EmployeeId = head.EmployeeId,
-                                TicketSupportEmployeeAssignmentRole = "DEPARTMENT_HEAD",
-                                TicketSupportEmployeeAssignedAt = DateTime.UtcNow,
-                                TicketSupportEmployeeAssignedByEmployeeId = null // Tự động gán cho Trưởng phòng
+                                ticket_support_id = entity.ticket_support_id,
+                                employee_id = head.EmployeeId,
+                                ticket_support_employee_assignment_role = "DEPARTMENT_HEAD",
+                                ticket_support_employee_assigned_at = DateTime.UtcNow,
+                                ticket_support_employee_assigned_by_employee_id = null // Tự động gán cho Trưởng phòng
                             };
-                            db.TblTicketSupportEmployees.Add(headAssignment);
+                            db.TICKET_SUPPORT_EMPLOYEE.Add(headAssignment);
                         }
 
                         // 5. Lưu tin nhắn mở đầu vào TICKET_MESSAGE
-                        var initMsg = new TblTicketMessage
+                        var initMsg = new TICKET_MESSAGE
                         {
-                            TicketSupportId = entity.TicketSupportId,
-                            TicketMessageSenderCustomerId = employeeId > 0 ? employeeId : 1,
-                            TicketMessageContent = request.ResolvedDescription,
-                            TicketMessageType = "INITIAL",
-                            TicketMessageAttachmentName = request.AttachmentNames?.FirstOrDefault(),
-                            TicketMessageAttachmentUrl = request.AttachmentUrls?.FirstOrDefault(),
-                            CreatedAt = DateTime.UtcNow
+                            ticket_support_id = entity.ticket_support_id,
+                            ticket_message_sender_customer_id = employeeId > 0 ? employeeId : 1,
+                            ticket_message_content = request.ResolvedDescription,
+                            ticket_message_type = "INITIAL",
+                            created_at = DateTime.UtcNow
                         };
-                        db.TblTicketMessages.Add(initMsg);
+                        db.TICKET_MESSAGE.Add(initMsg);
+                        await db.SaveChangesAsync(cancellationToken);
+
+                        if (!string.IsNullOrWhiteSpace(request.AttachmentUrls?.FirstOrDefault()))
+                        {
+                            var initAtt = new TICKET_ATTACHMENTS
+                            {
+                                ticket_message_id = initMsg.ticket_message_id,
+                                file_name_1 = request.AttachmentUrls?.FirstOrDefault(),
+                                file_name_2 = request.AttachmentNames?.FirstOrDefault(),
+                                uploaded_at = DateTime.UtcNow
+                            };
+                            db.TICKET_ATTACHMENTS.Add(initAtt);
+                        }
+
+                        // 6. Ghi nhật ký vào TICKET_HISTORY
+                        var initHistory = new TICKET_HISTORY
+                        {
+                            ticket_support_id = entity.ticket_support_id,
+                            employee_id_start = head != null ? (int)head.EmployeeId : null,
+                            old_status = null,
+                            new_status = "Open",
+                            notes = $"Khởi tạo phiếu hỗ trợ bởi {senderName}.",
+                            changed_at = DateTime.UtcNow
+                        };
+                        db.TICKET_HISTORY.Add(initHistory);
 
                         await db.SaveChangesAsync(cancellationToken);
                         _logger.LogInformation("Đã lưu Ticket {TicketCode} vào database thành công với Trưởng phòng nhận {HeadName}.",
@@ -597,10 +654,10 @@ END;
 
         // Tìm ticket để lấy DepartmentId
         int? deptId = null;
-        var ticket = await db.TblTicketSupports.AsNoTracking().FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, cancellationToken);
+        var ticket = await db.TICKET_SUPPORT.AsNoTracking().FirstOrDefaultAsync(t => t.ticket_support_id == ticketId, cancellationToken);
         if (ticket != null)
         {
-            deptId = (int?)ticket.DepartmentId;
+            deptId = (int?)ticket.department_id;
         }
 
         if (!deptId.HasValue)
@@ -646,34 +703,48 @@ END;
             if (db != null)
             {
                 staff = await db.TblEmployees.AsNoTracking().FirstOrDefaultAsync(e => e.EmployeeId == request.StaffEmployeeId, cancellationToken);
-                var ticketEntity = await db.TblTicketSupports.FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, cancellationToken);
+                var ticketEntity = await db.TICKET_SUPPORT.FirstOrDefaultAsync(t => t.ticket_support_id == ticketId, cancellationToken);
 
                 if (ticketEntity != null && staff != null)
                 {
-                    ticketEntity.TicketStatus = "In_Progress";
-                    ticketEntity.UpdatedAt = DateTime.UtcNow;
+                    ticketEntity.ticket_status = "In_Progress";
+                    ticketEntity.updated_at = DateTime.UtcNow;
 
                     // Thêm bản ghi phân công TICKET_SUPPORT_EMPLOYEE
-                    var assignment = new TblTicketSupportEmployee
+                    var assignment = new TICKET_SUPPORT_EMPLOYEE
                     {
-                        TicketSupportId = ticketId,
-                        EmployeeId = staff.EmployeeId,
-                        TicketSupportEmployeeAssignmentRole = "ASSIGNEE",
-                        TicketSupportEmployeeAssignedAt = DateTime.UtcNow,
-                        TicketSupportEmployeeAssignedByEmployeeId = currentEmployeeId
+                        ticket_support_id = ticketId,
+                        employee_id = staff.EmployeeId,
+                        ticket_support_employee_assignment_role = "ASSIGNEE",
+                        ticket_support_employee_assigned_at = DateTime.UtcNow,
+                        ticket_support_employee_assigned_by_employee_id = currentEmployeeId
                     };
-                    db.TblTicketSupportEmployees.Add(assignment);
+                    db.TICKET_SUPPORT_EMPLOYEE.Add(assignment);
+
+                    // Thêm bản ghi lịch sử TICKET_HISTORY
+                    var assignHistory = new TICKET_HISTORY
+                    {
+                        ticket_support_id = ticketId,
+                        employee_id_start = currentEmployeeId,
+                        employee_id_finished = (int)staff.EmployeeId,
+                        changed_by_user_id = currentEmployeeId,
+                        old_status = "Open",
+                        new_status = "In_Progress",
+                        notes = $"Trưởng phòng {currentEmployeeName} phân công cho nhân viên {staff.EmployeeFullName}. Ghi chú: {request.Note}",
+                        changed_at = DateTime.UtcNow
+                    };
+                    db.TICKET_HISTORY.Add(assignHistory);
 
                     // Thêm tin nhắn hệ thống ghi nhận phân công
-                    var msg = new TblTicketMessage
+                    var msg = new TICKET_MESSAGE
                     {
-                        TicketSupportId = ticketId,
-                        TicketMessageSenderEmployeeId = currentEmployeeId,
-                        TicketMessageType = "ASSIGNMENT",
-                        TicketMessageContent = $"[Phân công việc] Trưởng phòng {currentEmployeeName} đã phân công xử lý cho nhân viên {staff.EmployeeFullName}. Ghi chú: {request.Note}",
-                        CreatedAt = DateTime.UtcNow
+                        ticket_support_id = ticketId,
+                        ticket_message_sender_employee_id = currentEmployeeId,
+                        ticket_message_type = "ASSIGNMENT",
+                        ticket_message_content = $"[Phân công việc] Trưởng phòng {currentEmployeeName} đã phân công xử lý cho nhân viên {staff.EmployeeFullName}. Ghi chú: {request.Note}",
+                        created_at = DateTime.UtcNow
                     };
-                    db.TblTicketMessages.Add(msg);
+                    db.TICKET_MESSAGE.Add(msg);
 
                     await db.SaveChangesAsync(cancellationToken);
                 }
@@ -748,22 +819,34 @@ END;
 
             if (db != null)
             {
-                var ticketEntity = await db.TblTicketSupports.FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, cancellationToken);
+                var ticketEntity = await db.TICKET_SUPPORT.FirstOrDefaultAsync(t => t.ticket_support_id == ticketId, cancellationToken);
                 if (ticketEntity != null)
                 {
-                    ticketEntity.TicketResolution = request.Resolution;
-                    ticketEntity.TicketStatus = "PendingHeadApproval";
-                    ticketEntity.UpdatedAt = DateTime.UtcNow;
+                    ticketEntity.ticket_resolution = request.Resolution;
+                    ticketEntity.ticket_status = "PendingHeadApproval";
+                    ticketEntity.updated_at = DateTime.UtcNow;
 
-                    var msg = new TblTicketMessage
+                    var msg = new TICKET_MESSAGE
                     {
-                        TicketSupportId = ticketId,
-                        TicketMessageSenderEmployeeId = currentEmployeeId,
-                        TicketMessageType = "STAFF_COMPLETION",
-                        TicketMessageContent = $"[Hoàn tất xử lý] Nhân viên {currentEmployeeName} đã xử lý xong: {request.Resolution}. Báo cáo Trưởng phòng kiểm tra và phản hồi kết quả cho khách hàng.",
-                        CreatedAt = DateTime.UtcNow
+                        ticket_support_id = ticketId,
+                        ticket_message_sender_employee_id = currentEmployeeId,
+                        ticket_message_type = "STAFF_COMPLETION",
+                        ticket_message_content = $"[Hoàn tất xử lý] Nhân viên {currentEmployeeName} đã xử lý xong: {request.Resolution}. Báo cáo Trưởng phòng kiểm tra và phản hồi kết quả cho khách hàng.",
+                        created_at = DateTime.UtcNow
                     };
-                    db.TblTicketMessages.Add(msg);
+                    db.TICKET_MESSAGE.Add(msg);
+
+                    var staffHistory = new TICKET_HISTORY
+                    {
+                        ticket_support_id = ticketId,
+                        employee_id_start = currentEmployeeId,
+                        changed_by_user_id = currentEmployeeId,
+                        old_status = "In_Progress",
+                        new_status = "PendingHeadApproval",
+                        notes = $"Nhân viên {currentEmployeeName} báo cáo hoàn tất: {request.Resolution}",
+                        changed_at = DateTime.UtcNow
+                    };
+                    db.TICKET_HISTORY.Add(staffHistory);
 
                     await db.SaveChangesAsync(cancellationToken);
                 }
@@ -821,24 +904,36 @@ END;
 
             if (db != null)
             {
-                var ticketEntity = await db.TblTicketSupports.FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, cancellationToken);
+                var ticketEntity = await db.TICKET_SUPPORT.FirstOrDefaultAsync(t => t.ticket_support_id == ticketId, cancellationToken);
                 if (ticketEntity != null)
                 {
-                    ticketEntity.TicketResolution = resolutionText;
-                    ticketEntity.TicketStatus = targetStatus;
-                    ticketEntity.TicketResolvedAt = DateTime.UtcNow;
-                    if (request.CloseTicket) ticketEntity.TicketClosedAt = DateTime.UtcNow;
-                    ticketEntity.UpdatedAt = DateTime.UtcNow;
+                    ticketEntity.ticket_resolution = resolutionText;
+                    ticketEntity.ticket_status = targetStatus;
+                    ticketEntity.ticket_resolved_at = DateTime.UtcNow;
+                    if (request.CloseTicket) ticketEntity.ticket_closed_at = DateTime.UtcNow;
+                    ticketEntity.updated_at = DateTime.UtcNow;
 
-                    var msg = new TblTicketMessage
+                    var msg = new TICKET_MESSAGE
                     {
-                        TicketSupportId = ticketId,
-                        TicketMessageSenderEmployeeId = currentEmployeeId,
-                        TicketMessageType = "RESOLUTION",
-                        TicketMessageContent = customerNotice,
-                        CreatedAt = DateTime.UtcNow
+                        ticket_support_id = ticketId,
+                        ticket_message_sender_employee_id = currentEmployeeId,
+                        ticket_message_type = "RESOLUTION",
+                        ticket_message_content = customerNotice,
+                        created_at = DateTime.UtcNow
                     };
-                    db.TblTicketMessages.Add(msg);
+                    db.TICKET_MESSAGE.Add(msg);
+
+                    var headHistory = new TICKET_HISTORY
+                    {
+                        ticket_support_id = ticketId,
+                        employee_id_start = currentEmployeeId,
+                        changed_by_user_id = currentEmployeeId,
+                        old_status = "PendingHeadApproval",
+                        new_status = targetStatus,
+                        notes = $"Trưởng phòng {currentEmployeeName} thông báo kết quả: {customerNotice}",
+                        changed_at = DateTime.UtcNow
+                    };
+                    db.TICKET_HISTORY.Add(headHistory);
 
                     await db.SaveChangesAsync(cancellationToken);
                 }
@@ -901,18 +996,29 @@ END;
                 var db = scope.ServiceProvider.GetService<DbDtctechContext>();
                 if (db != null)
                 {
-                    var entity = new TblTicketMessage
+                    var entity = new TICKET_MESSAGE
                     {
-                        TicketSupportId = ticketId,
-                        TicketMessageSenderCustomerId = employeeId > 0 ? employeeId : 1,
-                        TicketMessageContent = content,
-                        TicketMessageType = "CUSTOMER_REPLY",
-                        TicketMessageAttachmentName = request.AttachmentName,
-                        TicketMessageAttachmentUrl = request.AttachmentUrl,
-                        CreatedAt = DateTime.UtcNow
+                        ticket_support_id = ticketId,
+                        ticket_message_sender_customer_id = employeeId > 0 ? employeeId : 1,
+                        ticket_message_content = content,
+                        ticket_message_type = "CUSTOMER_REPLY",
+                        created_at = DateTime.UtcNow
                     };
-                    db.TblTicketMessages.Add(entity);
+                    db.TICKET_MESSAGE.Add(entity);
                     await db.SaveChangesAsync(cancellationToken);
+
+                    if (!string.IsNullOrWhiteSpace(request.AttachmentUrl))
+                    {
+                        var att = new TICKET_ATTACHMENTS
+                        {
+                            ticket_message_id = entity.ticket_message_id,
+                            file_name_1 = request.AttachmentUrl,
+                            file_name_2 = request.AttachmentName,
+                            uploaded_at = DateTime.UtcNow
+                        };
+                        db.TICKET_ATTACHMENTS.Add(att);
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
                 }
             }
 
@@ -968,18 +1074,29 @@ END;
                 var db = scope.ServiceProvider.GetService<DbDtctechContext>();
                 if (db != null)
                 {
-                    var entity = new TblTicketMessage
+                    var entity = new TICKET_MESSAGE
                     {
-                        TicketSupportId = ticketId,
-                        TicketMessageSenderEmployeeId = employeeId,
-                        TicketMessageContent = content,
-                        TicketMessageType = isInternalNote ? "INTERNAL_NOTE" : "STAFF_REPLY",
-                        TicketMessageAttachmentName = attachmentName,
-                        TicketMessageAttachmentUrl = attachmentUrl,
-                        CreatedAt = DateTime.UtcNow
+                        ticket_support_id = ticketId,
+                        ticket_message_sender_employee_id = employeeId,
+                        ticket_message_content = content,
+                        ticket_message_type = isInternalNote ? "INTERNAL_NOTE" : "STAFF_REPLY",
+                        created_at = DateTime.UtcNow
                     };
-                    db.TblTicketMessages.Add(entity);
+                    db.TICKET_MESSAGE.Add(entity);
                     await db.SaveChangesAsync(cancellationToken);
+
+                    if (!string.IsNullOrWhiteSpace(attachmentUrl))
+                    {
+                        var att = new TICKET_ATTACHMENTS
+                        {
+                            ticket_message_id = entity.ticket_message_id,
+                            file_name_1 = attachmentUrl,
+                            file_name_2 = attachmentName,
+                            uploaded_at = DateTime.UtcNow
+                        };
+                        db.TICKET_ATTACHMENTS.Add(att);
+                        await db.SaveChangesAsync(cancellationToken);
+                    }
                 }
             }
 
@@ -1048,17 +1165,29 @@ END;
                 var db = scope.ServiceProvider.GetService<DbDtctechContext>();
                 if (db != null)
                 {
-                    var entity = await db.TblTicketSupports.FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, cancellationToken);
+                    var entity = await db.TICKET_SUPPORT.FirstOrDefaultAsync(t => t.ticket_support_id == ticketId, cancellationToken);
                     if (entity != null)
                     {
-                        entity.TicketStatus = normalizedStatus;
-                        if (!string.IsNullOrWhiteSpace(request.Resolution)) entity.TicketResolution = request.Resolution;
+                        var oldStatus = entity.ticket_status;
+                        entity.ticket_status = normalizedStatus;
+                        if (!string.IsNullOrWhiteSpace(request.Resolution)) entity.ticket_resolution = request.Resolution;
                         if (normalizedStatus == "Resolved")
                         {
-                            entity.TicketResolvedAt = DateTime.UtcNow;
-                            entity.TicketClosedAt = DateTime.UtcNow;
+                            entity.ticket_resolved_at = DateTime.UtcNow;
+                            entity.ticket_closed_at = DateTime.UtcNow;
                         }
-                        entity.UpdatedAt = DateTime.UtcNow;
+                        entity.updated_at = DateTime.UtcNow;
+
+                        var history = new TICKET_HISTORY
+                        {
+                            ticket_support_id = ticketId,
+                            old_status = oldStatus,
+                            new_status = normalizedStatus,
+                            notes = request.Resolution,
+                            changed_at = DateTime.UtcNow
+                        };
+                        db.TICKET_HISTORY.Add(history);
+
                         await db.SaveChangesAsync(cancellationToken);
                     }
                 }
@@ -1185,18 +1314,41 @@ END;
 
             await EnsureDatabaseTablesAsync(db, ct);
 
-            var entities = await db.TblTicketSupports
+            var ticketEntities = await db.TICKET_SUPPORT
                 .AsNoTracking()
-                .Include(t => t.Messages)
-                .Include(t => t.AssignedEmployees)
-                .OrderByDescending(t => t.CreatedAt)
+                .OrderByDescending(t => t.created_at)
                 .Take(100)
+                .ToListAsync(ct);
+
+            if (ticketEntities.Count == 0) return [];
+
+            var ticketIds = ticketEntities.Select(t => t.ticket_support_id).ToList();
+            var messages = await db.TICKET_MESSAGE
+                .AsNoTracking()
+                .Where(m => m.ticket_support_id.HasValue && ticketIds.Contains(m.ticket_support_id.Value))
+                .ToListAsync(ct);
+
+            var messageIds = messages.Select(m => m.ticket_message_id).ToList();
+            var attachments = await db.TICKET_ATTACHMENTS
+                .AsNoTracking()
+                .Where(a => a.ticket_message_id.HasValue && messageIds.Contains(a.ticket_message_id.Value))
+                .ToListAsync(ct);
+
+            var assignments = await db.TICKET_SUPPORT_EMPLOYEE
+                .AsNoTracking()
+                .Where(a => a.ticket_support_id.HasValue && ticketIds.Contains(a.ticket_support_id.Value))
                 .ToListAsync(ct);
 
             var departments = await db.TblDepartments.AsNoTracking().ToDictionaryAsync(d => (long)d.DepartmentId, d => d.DepartmentName, ct);
             var employees = await db.TblEmployees.AsNoTracking().ToDictionaryAsync(e => (long)e.EmployeeId, ct);
 
-            return entities.Select(e => MapEntityToDto(e, departments, employees)).ToList();
+            return ticketEntities.Select(e => MapEntityToDto(
+                e,
+                messages.Where(m => m.ticket_support_id == e.ticket_support_id).ToList(),
+                attachments,
+                assignments.Where(a => a.ticket_support_id == e.ticket_support_id).ToList(),
+                departments,
+                employees)).ToList();
         }
         catch (Exception ex)
         {
@@ -1215,18 +1367,32 @@ END;
 
             await EnsureDatabaseTablesAsync(db, ct);
 
-            var entity = await db.TblTicketSupports
+            var entity = await db.TICKET_SUPPORT
                 .AsNoTracking()
-                .Include(t => t.Messages)
-                .Include(t => t.AssignedEmployees)
-                .FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, ct);
+                .FirstOrDefaultAsync(t => t.ticket_support_id == ticketId, ct);
 
             if (entity == null) return null;
+
+            var messages = await db.TICKET_MESSAGE
+                .AsNoTracking()
+                .Where(m => m.ticket_support_id == ticketId)
+                .ToListAsync(ct);
+
+            var messageIds = messages.Select(m => m.ticket_message_id).ToList();
+            var attachments = await db.TICKET_ATTACHMENTS
+                .AsNoTracking()
+                .Where(a => a.ticket_message_id.HasValue && messageIds.Contains(a.ticket_message_id.Value))
+                .ToListAsync(ct);
+
+            var assignments = await db.TICKET_SUPPORT_EMPLOYEE
+                .AsNoTracking()
+                .Where(a => a.ticket_support_id == ticketId)
+                .ToListAsync(ct);
 
             var departments = await db.TblDepartments.AsNoTracking().ToDictionaryAsync(d => (long)d.DepartmentId, d => d.DepartmentName, ct);
             var employees = await db.TblEmployees.AsNoTracking().ToDictionaryAsync(e => (long)e.EmployeeId, ct);
 
-            return MapEntityToDto(entity, departments, employees);
+            return MapEntityToDto(entity, messages, attachments, assignments, departments, employees);
         }
         catch (Exception ex)
         {
@@ -1236,78 +1402,91 @@ END;
     }
 
     private static SupportTicketDto MapEntityToDto(
-        TblTicketSupport e,
+        TICKET_SUPPORT e,
+        IReadOnlyList<TICKET_MESSAGE> messages,
+        IReadOnlyList<TICKET_ATTACHMENTS> attachments,
+        IReadOnlyList<TICKET_SUPPORT_EMPLOYEE> assignments,
         Dictionary<long, string> departments,
         Dictionary<long, TblEmployee> employees)
     {
-        var deptName = e.DepartmentId.HasValue && departments.TryGetValue(e.DepartmentId.Value, out var dn)
+        var deptName = e.department_id.HasValue && departments.TryGetValue(e.department_id.Value, out var dn)
             ? dn : "KỸ THUẬT";
 
-        var headAssignment = e.AssignedEmployees.FirstOrDefault(a => a.TicketSupportEmployeeAssignmentRole == "DEPARTMENT_HEAD");
-        var staffAssignment = e.AssignedEmployees.FirstOrDefault(a => a.TicketSupportEmployeeAssignmentRole == "ASSIGNEE");
+        var headAssignment = assignments.FirstOrDefault(a => a.ticket_support_employee_assignment_role == "DEPARTMENT_HEAD");
+        var staffAssignment = assignments.FirstOrDefault(a => a.ticket_support_employee_assignment_role == "ASSIGNEE");
 
-        TblEmployee? headEmp = headAssignment != null && employees.TryGetValue(headAssignment.EmployeeId, out var h) ? h : null;
-        TblEmployee? staffEmp = staffAssignment != null && employees.TryGetValue(staffAssignment.EmployeeId, out var s) ? s : null;
+        TblEmployee? headEmp = headAssignment?.employee_id != null && employees.TryGetValue(headAssignment.employee_id.Value, out var h) ? h : null;
+        TblEmployee? staffEmp = staffAssignment?.employee_id != null && employees.TryGetValue(staffAssignment.employee_id.Value, out var s) ? s : null;
+
+        var attachmentDict = attachments
+            .Where(a => a.ticket_message_id.HasValue)
+            .GroupBy(a => a.ticket_message_id!.Value)
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         return new SupportTicketDto
         {
-            TicketSupportId = (int)e.TicketSupportId,
-            CustomerId = (int?)e.CustomerId,
-            TenantId = (int?)e.TenantId,
-            DepartmentId = (int?)e.DepartmentId,
+            TicketSupportId = (int)e.ticket_support_id,
+            CustomerId = (int?)e.customer_id,
+            TenantId = (int?)e.tenant_id,
+            DepartmentId = (int?)e.department_id,
             Department = deptName,
-            TicketCode = e.TicketCode ?? $"TK-{e.TicketSupportId}",
-            TicketSubject = e.TicketTitle ?? string.Empty,
-            TicketDescription = e.TicketDescription ?? string.Empty,
-            TicketPriority = NormalizePriority(e.TicketPriority),
-            TicketStatus = NormalizeStatus(e.TicketStatus),
-            TicketResolution = e.TicketResolution,
-            TicketResolvedAt = e.TicketResolvedAt,
-            TicketClosedAt = e.TicketClosedAt,
-            CreatedAt = e.CreatedAt,
-            UpdatedAt = e.UpdatedAt,
+            TicketCode = e.ticket_code ?? $"TK-{e.ticket_support_id}",
+            TicketSubject = e.ticket_title ?? string.Empty,
+            TicketDescription = e.ticket_description ?? string.Empty,
+            TicketPriority = NormalizePriority(e.ticket_priority),
+            TicketStatus = NormalizeStatus(e.ticket_status),
+            TicketResolution = e.ticket_resolution,
+            TicketResolvedAt = e.ticket_resolved_at,
+            TicketClosedAt = e.ticket_closed_at,
+            CreatedAt = e.created_at,
+            UpdatedAt = e.updated_at,
             DepartmentHeadEmployeeId = headEmp != null ? headEmp.EmployeeId : null,
             DepartmentHeadName = headEmp != null ? (headEmp.EmployeeFullName ?? headEmp.EmployeeAccount) : null,
             AssignedEmployeeId = staffEmp != null ? staffEmp.EmployeeId : null,
             AssignedEmployeeName = staffEmp != null ? (staffEmp.EmployeeFullName ?? staffEmp.EmployeeAccount) : null,
-            AssignedAt = staffAssignment?.TicketSupportEmployeeAssignedAt,
-            Assignments = e.AssignedEmployees.Select(a =>
+            AssignedAt = staffAssignment?.ticket_support_employee_assigned_at,
+            Assignments = assignments.Select(a =>
             {
-                var emp = employees.GetValueOrDefault(a.EmployeeId);
-                var assigner = a.TicketSupportEmployeeAssignedByEmployeeId.HasValue
-                    ? employees.GetValueOrDefault(a.TicketSupportEmployeeAssignedByEmployeeId.Value) : null;
+                var emp = a.employee_id.HasValue ? employees.GetValueOrDefault(a.employee_id.Value) : null;
+                var assigner = a.ticket_support_employee_assigned_by_employee_id.HasValue
+                    ? employees.GetValueOrDefault(a.ticket_support_employee_assigned_by_employee_id.Value) : null;
                 return new TicketEmployeeAssignmentDto
                 {
-                    TicketSupportEmployeeId = a.TicketSupportEmployeeId,
-                    TicketSupportId = a.TicketSupportId,
-                    EmployeeId = (int)a.EmployeeId,
-                    EmployeeName = emp?.EmployeeFullName ?? emp?.EmployeeAccount ?? $"NV #{a.EmployeeId}",
+                    TicketSupportEmployeeId = a.ticket_support_employee_id,
+                    TicketSupportId = a.ticket_support_id ?? e.ticket_support_id,
+                    EmployeeId = a.employee_id.HasValue ? (int)a.employee_id.Value : 0,
+                    EmployeeName = emp?.EmployeeFullName ?? emp?.EmployeeAccount ?? $"NV #{a.employee_id}",
                     EmployeeCode = emp?.EmployeeCode,
                     EmployeeEmail = emp?.EmployeeEmail,
-                    AssignmentRole = a.TicketSupportEmployeeAssignmentRole ?? string.Empty,
-                    AssignedAt = a.TicketSupportEmployeeAssignedAt,
-                    UnassignedAt = a.TicketSupportEmployeeUnassignedAt,
-                    AssignedByEmployeeId = (int?)a.TicketSupportEmployeeAssignedByEmployeeId,
+                    AssignmentRole = a.ticket_support_employee_assignment_role ?? string.Empty,
+                    AssignedAt = a.ticket_support_employee_assigned_at,
+                    UnassignedAt = a.ticket_support_employee_unassigned_at,
+                    AssignedByEmployeeId = (int?)a.ticket_support_employee_assigned_by_employee_id,
                     AssignedByName = assigner?.EmployeeFullName ?? assigner?.EmployeeAccount
                 };
             }).ToList(),
-            Messages = e.Messages.OrderBy(m => m.CreatedAt).Select(m => new SupportTicketMessageDto
+            Messages = messages.OrderBy(m => m.created_at).Select(m =>
             {
-                TicketMessageId = (int)m.TicketMessageId,
-                TicketSupportId = (int)m.TicketSupportId,
-                SenderCustomerId = (int?)m.TicketMessageSenderCustomerId,
-                SenderEmployeeId = (int?)m.TicketMessageSenderEmployeeId,
-                SenderName = m.TicketMessageSenderCustomerId.HasValue
-                    ? "Khách hàng"
-                    : (m.TicketMessageSenderEmployeeId.HasValue && employees.TryGetValue(m.TicketMessageSenderEmployeeId.Value, out var se)
-                        ? (se.EmployeeFullName ?? se.EmployeeAccount ?? "Nhân viên hỗ trợ")
-                        : "Hệ thống hỗ trợ"),
-                IsFromEmployee = m.TicketMessageSenderEmployeeId.HasValue,
-                TicketMessageContent = m.TicketMessageContent ?? string.Empty,
-                TicketMessageType = m.TicketMessageType ?? "TEXT",
-                TicketMessageAttachmentUrl = m.TicketMessageAttachmentUrl,
-                TicketMessageAttachmentName = m.TicketMessageAttachmentName,
-                CreatedAt = m.CreatedAt ?? DateTime.UtcNow
+                var msgAtts = attachmentDict.GetValueOrDefault(m.ticket_message_id);
+                var firstAtt = msgAtts?.FirstOrDefault();
+                return new SupportTicketMessageDto
+                {
+                    TicketMessageId = (int)m.ticket_message_id,
+                    TicketSupportId = (int)(m.ticket_support_id ?? e.ticket_support_id),
+                    SenderCustomerId = (int?)m.ticket_message_sender_customer_id,
+                    SenderEmployeeId = (int?)m.ticket_message_sender_employee_id,
+                    SenderName = m.ticket_message_sender_customer_id.HasValue
+                        ? "Khách hàng"
+                        : (m.ticket_message_sender_employee_id.HasValue && employees.TryGetValue(m.ticket_message_sender_employee_id.Value, out var se)
+                            ? (se.EmployeeFullName ?? se.EmployeeAccount ?? "Nhân viên hỗ trợ")
+                            : "Hệ thống hỗ trợ"),
+                    IsFromEmployee = m.ticket_message_sender_employee_id.HasValue,
+                    TicketMessageContent = m.ticket_message_content ?? string.Empty,
+                    TicketMessageType = m.ticket_message_type ?? "TEXT",
+                    TicketMessageAttachmentUrl = firstAtt?.file_name_1,
+                    TicketMessageAttachmentName = firstAtt?.file_name_2,
+                    CreatedAt = m.created_at ?? DateTime.UtcNow
+                };
             }).ToList()
         };
     }

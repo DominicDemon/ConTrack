@@ -45,6 +45,10 @@ public sealed class CustomerOtpDeliveryOutboxWorker : BackgroundService
             {
                 break;
             }
+            catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 208)
+            {
+                // Outbox table not provisioned in MasterDB; skip quietly.
+            }
             catch (Exception exception)
             {
                 _logger.LogError(exception, "Customer OTP outbox worker cycle failed.");
@@ -59,16 +63,17 @@ public sealed class CustomerOtpDeliveryOutboxWorker : BackgroundService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var central = scope.ServiceProvider.GetRequiredService<CentralDbContext>();
-        return await central.Tenants.AsNoTracking()
+        var activeTenants = await central.Tenants.AsNoTracking()
             .Where(x => x.Status == TenantStatus.Active)
-            .Include(x => x.TenantDatabase)
+            .ToListAsync(cancellationToken);
+        return activeTenants
             .Select(x => new ResolvedTenant(
                 x.TenantId,
                 x.TenantCode,
                 x.TenantName,
                 x.TenantDatabase.Mode,
                 x.TenantDatabase.ConnectionString))
-            .ToListAsync(cancellationToken);
+            .ToList();
     }
 
     private async Task ProcessTenantAsync(

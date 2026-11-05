@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace ContractManagement.Infrastructure.Persistence.Application.Models;
@@ -43,7 +43,7 @@ public partial class EMPLOYEE
 
     public DateTime? HireDate { get; set; }
 
-    public byte? Status { get; set; }
+    public byte? Status { get; set; } = 1;
 
     public int? DepartmentId { get; set; }
 
@@ -53,7 +53,7 @@ public partial class EMPLOYEE
 
     public string? EmployeeImageIcon { get; set; }
 
-    public byte? EmployeeType { get; set; }
+    public byte? EmployeeType { get; set; } = 6;
 
     public string? UserRoles { get; set; }
 
@@ -85,6 +85,6 @@ public partial class EMPLOYEE
 
     public DateTime? CoverUpdatedAt { get; set; }
 
-    public byte[] RowVersion { get; set; } = null!;
+    public byte[] RowVersion { get; set; } = [0, 0, 0, 0, 0, 0, 0, 1];
 }
 

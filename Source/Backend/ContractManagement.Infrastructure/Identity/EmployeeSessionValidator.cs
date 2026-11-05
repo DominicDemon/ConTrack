@@ -23,12 +23,24 @@ public static class EmployeeSessionValidator
             ClearSession(httpContext, employeeId.Value);
             throw Deny(401, AuthorizationErrorCodes.AuthenticationRequired, "Employee session is not valid for the current tenant.");
         }
-        var employee = await dbContext.TblEmployees.AsNoTracking()
-            .Where(x => x.EmployeeId == employeeId.Value)
-            .Select(x => new { x.EmployeeId, Account = x.EmployeeAccount, FullName = x.EmployeeFullName,
-                x.EmployeeType, x.Status, x.MustChangePassword, x.SessionVersion,
-                x.PasswordChangedAt, x.DefaultPage, x.AvatarStorageKey, x.AvatarUpdatedAt })
-            .FirstOrDefaultAsync(httpContext.RequestAborted);
+        var employeeEntity = await dbContext.TblEmployees.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.EmployeeId == employeeId.Value, httpContext.RequestAborted);
+        var employee = employeeEntity is null
+            ? null
+            : new
+            {
+                employeeEntity.EmployeeId,
+                Account = employeeEntity.EmployeeAccount,
+                FullName = employeeEntity.EmployeeFullName,
+                employeeEntity.EmployeeType,
+                employeeEntity.Status,
+                employeeEntity.MustChangePassword,
+                employeeEntity.SessionVersion,
+                employeeEntity.PasswordChangedAt,
+                employeeEntity.DefaultPage,
+                employeeEntity.AvatarStorageKey,
+                employeeEntity.AvatarUpdatedAt
+            };
         if (employee is null)
         {
             ClearSession(httpContext, employeeId.Value);

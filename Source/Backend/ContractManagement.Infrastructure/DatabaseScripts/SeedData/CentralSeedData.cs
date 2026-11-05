@@ -1,4 +1,4 @@
-﻿using ContractManagement.Infrastructure.Persistence.Central;
+using ContractManagement.Infrastructure.Persistence.Central;
 using ContractManagement.Infrastructure.Persistence.Central.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -37,43 +37,55 @@ public sealed class CentralSeedData : ICentralSeedData
         var normalizedUsername = _options.Username.Trim();
         if (!ContractManagement.Infrastructure.Security.PasswordRules.IsValid(_options.Password))
             throw new InvalidOperationException(ContractManagement.Infrastructure.Security.PasswordRules.ValidationMessage);
-        bool systemAdminExists =
-            await _centralDbContext.SystemAdmins
-                .AnyAsync(
-                    admin => admin.Username == normalizedUsername,
-                    cancellationToken);
 
-        if (systemAdminExists)
+        try
         {
-            _logger.LogInformation(
-                "System Admin bootstrap skipped because account {Username} already exists.",
+            bool systemAdminExists =
+                await _centralDbContext.SystemAdmins
+                    .AnyAsync(
+                        admin => admin.Username == normalizedUsername,
+                        cancellationToken);
+
+            if (systemAdminExists)
+            {
+                _logger.LogInformation(
+                    "System Admin bootstrap skipped because account {Username} already exists.",
+                    normalizedUsername);
+                return;
+            }
+
+            var systemAdmin = new SystemAdmin
+            {
+                Username = normalizedUsername,
+                FullName = _options.FullName.Trim(),
+                Email = _options.Email.Trim(),
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                MustChangePassword = false,
+                SessionVersion = 1
+            };
+
+            systemAdmin.PasswordHash =
+                _passwordHasher.HashPassword(
+                    systemAdmin,
+                    _options.Password);
+
+            _centralDbContext.SystemAdmins.Add(systemAdmin);
+            _centralDbContext.Entry(systemAdmin).Property("EmployeeCode").CurrentValue = "ADM-SYSADMIN";
+
+            await _centralDbContext.SaveChangesAsync(
+                cancellationToken);
+
+            _logger.LogWarning(
+                "System Admin bootstrap created account {Username}. Disable SystemAdminBootstrap immediately.",
                 normalizedUsername);
-            return;
         }
-
-        var systemAdmin = new SystemAdmin
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Username = normalizedUsername,
-            FullName = _options.FullName.Trim(),
-            Email = _options.Email.Trim(),
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow,
-            MustChangePassword = true,
-            SessionVersion = 1
-        };
-
-        systemAdmin.PasswordHash =
-            _passwordHasher.HashPassword(
-                systemAdmin,
-                _options.Password);
-
-        _centralDbContext.SystemAdmins.Add(systemAdmin);
-
-        await _centralDbContext.SaveChangesAsync(
-            cancellationToken);
-
-        _logger.LogWarning(
-            "System Admin bootstrap created account {Username}. Disable SystemAdminBootstrap immediately.",
-            normalizedUsername);
+            _logger.LogWarning(
+                ex,
+                "System Admin bootstrap skipped due to database schema/seed constraint on {Username}.",
+                normalizedUsername);
+        }
     }
 }

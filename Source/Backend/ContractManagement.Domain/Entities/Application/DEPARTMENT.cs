@@ -13,7 +13,7 @@ public partial class DEPARTMENT
 
     public DateTime? ModifiedDate { get; set; }
 
-    public byte? Stutus { get; set; }
+    public byte? Stutus { get; set; } = 1;
 
     public int? LangId { get; set; }
 }

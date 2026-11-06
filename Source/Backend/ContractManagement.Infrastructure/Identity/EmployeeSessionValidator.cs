@@ -23,8 +23,33 @@ public static class EmployeeSessionValidator
             ClearSession(httpContext, employeeId.Value);
             throw Deny(401, AuthorizationErrorCodes.AuthenticationRequired, "Employee session is not valid for the current tenant.");
         }
-        var employeeEntity = await dbContext.TblEmployees.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.EmployeeId == employeeId.Value, httpContext.RequestAborted);
+        var actorKind = session.GetString("ActorKind");
+        TblEmployee? employeeEntity = null;
+        if (string.Equals(actorKind, "Customer", StringComparison.OrdinalIgnoreCase) || employeeId.Value < 0)
+        {
+            var custId = Math.Abs(employeeId.Value);
+            var customerEntity = await dbContext.TblCustomers.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.CustomerId == custId, httpContext.RequestAborted);
+            if (customerEntity is not null)
+            {
+                var mappedAcct = customerEntity.CustomerEmail ?? customerEntity.CustomerPhone ?? $"cust.{customerEntity.CustomerId}";
+                employeeEntity = new TblEmployee
+                {
+                    EmployeeId = customerEntity.CustomerId,
+                    EmployeeAccount = mappedAcct,
+                    EmployeeFullName = customerEntity.CustomerFullName ?? mappedAcct,
+                    EmployeeType = 6,
+                    Status = customerEntity.Status == 0 ? (byte)0 : (byte)1,
+                    MustChangePassword = false,
+                    SessionVersion = sessionVersion.Value
+                };
+            }
+        }
+        else
+        {
+            employeeEntity = await dbContext.TblEmployees.AsNoTracking()
+                .FirstOrDefaultAsync(x => x.EmployeeId == employeeId.Value, httpContext.RequestAborted);
+        }
         var employee = employeeEntity is null
             ? null
             : new

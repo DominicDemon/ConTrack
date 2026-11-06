@@ -56,27 +56,31 @@ const SUPPORT_MODULES = [
 
 const DEPARTMENTS = [
   {
-    code: "KỸ THUẬT",
-    title: "Phòng Kỹ thuật - Triển khai",
+    id: 2,
+    code: "Phòng Kỹ Thuật & Hỗ Trợ",
+    title: "Phòng Kỹ Thuật & Hỗ Trợ",
     desc: "Xử lý lỗi phần mềm, ký số điện tử, tích hợp hệ thống",
     icon: Wrench,
   },
   {
-    code: "KẾ TOÁN - HÀNH CHÍNH",
-    title: "Phòng Kế toán - Hành chính",
+    id: 4,
+    code: "Phòng Kế Toán - Tài Chính",
+    title: "Phòng Kế Toán - Tài Chính",
     desc: "Đối soát thanh toán, công nợ, xuất hóa đơn VAT điện tử",
     icon: CreditCard,
   },
   {
-    code: "BÁN HÀNG",
-    title: "Phòng Kinh doanh & CSKH",
-    desc: "Tư vấn nâng cấp gói cước, mua thêm tài khoản nhân viên",
+    id: 3,
+    code: "Phòng Kinh Doanh",
+    title: "Phòng Kinh Doanh",
+    desc: "Tư vấn nâng cấp gói cước, hợp đồng và dịch vụ khách hàng",
     icon: ShoppingBag,
   },
   {
-    code: "GÓP Ý",
-    title: "Hòm thư Góp ý dịch vụ",
-    desc: "Đề xuất tính năng mới, phản ánh chất lượng phục vụ",
+    id: 5,
+    code: "Phòng Hành Chính - Pháp Chế",
+    title: "Phòng Hành Chính - Pháp Chế",
+    desc: "Tư vấn pháp lý hợp đồng, góp ý dịch vụ và quy trình",
     icon: HelpCircle,
   },
 ];
@@ -109,7 +113,9 @@ export default function CreateSupportTicketPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [selectedModule, setSelectedModule] = useState(SUPPORT_MODULES[0]);
-  const [selectedDepartment, setSelectedDepartment] = useState("KỸ THUẬT");
+  const [selectedDepartment, setSelectedDepartment] = useState(
+    DEPARTMENTS[0].code,
+  );
   const [selectedPriority, setSelectedPriority] = useState<TicketPriority>(
     TicketPriority.Medium,
   );
@@ -137,13 +143,17 @@ export default function CreateSupportTicketPage() {
       return;
     }
 
+    const deptObj =
+      DEPARTMENTS.find((d) => d.code === selectedDepartment) ?? DEPARTMENTS[0];
+
     setSubmitting(true);
     try {
       const created = await customerTicketApi.create({
         subject: subject.trim(),
         description: description.trim(),
         priority: selectedPriority,
-        department: selectedDepartment,
+        departmentId: deptObj.id,
+        department: deptObj.code,
         module: selectedModule,
         attachmentNames,
       });
@@ -367,6 +377,7 @@ export default function CreateSupportTicketPage() {
                   </Label>
                   <Input
                     id="ticket-subject"
+                    maxLength={200}
                     value={subject}
                     onChange={(e) => setSubject(e.target.value)}
                     placeholder="Ví dụ: Không xuất được file PDF hợp đồng sau khi ký số..."
@@ -384,17 +395,17 @@ export default function CreateSupportTicketPage() {
                       <span className="text-destructive">*</span>
                     </Label>
                     <span className="text-[11px] font-mono text-muted-foreground">
-                      {description.length}/2000
+                      {description.length}/3000
                     </span>
                   </div>
                   <Textarea
                     id="ticket-description"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    rows={5}
-                    maxLength={2000}
-                    placeholder="Mô tả rõ mã hợp đồng, bước thao tác gặp lỗi hoặc yêu cầu cụ thể để chuyên viên hỗ trợ xử lý nhanh nhất..."
-                    className="resize-y text-sm"
+                    rows={7}
+                    maxLength={3000}
+                    placeholder="Mô tả rõ mã hợp đồng, bước thao tác gặp lỗi hoặc yêu cầu cụ thể để Trưởng phòng và nhân viên chuyên môn xử lý nhanh nhất..."
+                    className="min-h-[180px] resize-y text-sm leading-relaxed"
                   />
                 </div>
 

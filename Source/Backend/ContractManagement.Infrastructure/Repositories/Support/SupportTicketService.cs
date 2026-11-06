@@ -13,6 +13,7 @@ namespace ContractManagement.API.Domains.Support;
 public interface ISupportTicketService
 {
     Task<IReadOnlyList<SupportTicketDto>> GetAllForAdminAsync(
+        int currentEmployeeId,
         string? status,
         string? priority,
         string? department,
@@ -30,6 +31,7 @@ public interface ISupportTicketService
 
     Task<SupportTicketDto?> GetByIdAsync(
         int ticketId,
+        int currentEmployeeId = 0,
         CancellationToken cancellationToken = default);
 
     Task<SupportTicketDto?> GetByIdForCustomerAsync(
@@ -109,18 +111,26 @@ public interface ISupportTicketService
         CancellationToken cancellationToken = default);
 
     Task<(IReadOnlyList<AdminNotificationDto> Items, int UnreadCount)> GetAdminNotificationsAsync(
+        int currentEmployeeId,
         string? status,
         int limit,
         CancellationToken cancellationToken = default);
 
     Task<int> GetAdminUnreadNotificationCountAsync(
+        int currentEmployeeId,
         CancellationToken cancellationToken = default);
 
     Task<bool> MarkAdminNotificationReadAsync(
+        int currentEmployeeId,
         int notificationId,
         CancellationToken cancellationToken = default);
 
     Task<int> MarkAllAdminNotificationsReadAsync(
+        int currentEmployeeId,
+        CancellationToken cancellationToken = default);
+
+    Task<(string Role, int? DepartmentId, string? DepartmentName)> ResolveEmployeeRoleInfoAsync(
+        int employeeId,
         CancellationToken cancellationToken = default);
 }
 
@@ -283,6 +293,7 @@ END;
     }
 
     public async Task<IReadOnlyList<SupportTicketDto>> GetAllForAdminAsync(
+        int currentEmployeeId,
         string? status,
         string? priority,
         string? department,
@@ -292,15 +303,24 @@ END;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
-            // Thử đọc từ Database EF Core trước
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+
+            // System Admin không nhận và không xem yêu cầu hỗ trợ khách hàng
+            if (string.Equals(roleInfo.Role, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase))
+            {
+                return [];
+            }
+
             var dbTickets = await LoadTicketsFromDbAsync(cancellationToken);
             var state = await EnsureStateLoadedAsync(cancellationToken);
 
             var combined = MergeTickets(dbTickets, state.Tickets);
-            IEnumerable<SupportTicketDto> query = combined.OrderByDescending(t => t.CreatedAt);
+            IEnumerable<SupportTicketDto> query = combined
+                .Where(t => CanEmployeeViewTicket(t, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId))
+                .OrderByDescending(t => t.CreatedAt);
 
             query = ApplyFilters(query, status, priority, department, keyword);
-            return query.Select(CloneTicket).ToList();
+            return query.Select(t => CloneTicketWithViewer(t, roleInfo.Role, currentEmployeeId, roleInfo.DepartmentId)).ToList();
         }
         finally
         {
@@ -324,29 +344,12 @@ END;
             var state = await EnsureStateLoadedAsync(cancellationToken);
             var combined = MergeTickets(dbTickets, state.Tickets);
 
-            // Xác định vai trò của employeeId hiện tại
-            var isHead = false;
-            int? employeeDeptId = null;
-            using (var scope = _scopeFactory.CreateScope())
-            {
-                var db = scope.ServiceProvider.GetService<DbDtctechContext>();
-                if (db != null && employeeId > 0)
-                {
-                    var emp = await db.TblEmployees.AsNoTracking().FirstOrDefaultAsync(e => e.EmployeeId == employeeId, cancellationToken);
-                    if (emp != null)
-                    {
-                        employeeDeptId = emp.DepartmentId;
-                        isHead = emp.EmployeeType == (byte)EmployeeType.Manager;
-                    }
-                }
-            }
-
             IEnumerable<SupportTicketDto> query = combined
-                .Where(t => BelongsToViewer(t, tenantId, tenantCode, employeeId, isHead, employeeDeptId))
+                .Where(t => BelongsToCustomerTenant(t, tenantId, tenantCode, employeeId))
                 .OrderByDescending(t => t.CreatedAt);
 
             query = ApplyFilters(query, status, priority, null, keyword);
-            return query.Select(CloneTicket).ToList();
+            return query.Select(t => CloneTicketWithViewer(t, "CUSTOMER", employeeId, null)).ToList();
         }
         finally
         {
@@ -356,17 +359,32 @@ END;
 
     public async Task<SupportTicketDto?> GetByIdAsync(
         int ticketId,
+        int currentEmployeeId = 0,
         CancellationToken cancellationToken = default)
     {
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
-            var fromDb = await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
-            if (fromDb != null) return CloneTicket(fromDb);
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            if (string.Equals(roleInfo.Role, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
 
-            var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
-            return ticket is null ? null : CloneTicket(ticket);
+            var ticket = await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+            if (ticket == null)
+            {
+                var state = await EnsureStateLoadedAsync(cancellationToken);
+                ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+            }
+
+            if (ticket is null) return null;
+            if (!CanEmployeeViewTicket(ticket, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId))
+            {
+                return null;
+            }
+
+            return CloneTicketWithViewer(ticket, roleInfo.Role, currentEmployeeId, roleInfo.DepartmentId);
         }
         finally
         {
@@ -393,28 +411,12 @@ END;
 
             if (ticket is null) return null;
 
-            var isHead = false;
-            int? employeeDeptId = null;
-            using (var scope = _scopeFactory.CreateScope())
-            {
-                var db = scope.ServiceProvider.GetService<DbDtctechContext>();
-                if (db != null && employeeId > 0)
-                {
-                    var emp = await db.TblEmployees.AsNoTracking().FirstOrDefaultAsync(e => e.EmployeeId == employeeId, cancellationToken);
-                    if (emp != null)
-                    {
-                        employeeDeptId = emp.DepartmentId;
-                        isHead = emp.EmployeeType == (byte)EmployeeType.Manager;
-                    }
-                }
-            }
-
-            if (!BelongsToViewer(ticket, tenantId, tenantCode, employeeId, isHead, employeeDeptId))
+            if (!BelongsToCustomerTenant(ticket, tenantId, tenantCode, employeeId))
             {
                 return null;
             }
 
-            return CloneTicket(ticket);
+            return CloneTicketWithViewer(ticket, "CUSTOMER", employeeId, null);
         }
         finally
         {
@@ -436,9 +438,12 @@ END;
         {
             var state = await EnsureStateLoadedAsync(cancellationToken);
 
+            var resolvedDeptId = ResolveDepartmentIdFromInput(request.DepartmentId, request.Department);
+            var departmentDisplayName = GetDepartmentDisplayName(resolvedDeptId, request.Department);
             TblDepartment? dept = null;
             TblEmployee? head = null;
             var ticketCode = $"TK-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
+            int? persistedTicketId = null;
 
             using (var scope = _scopeFactory.CreateScope())
             {
@@ -447,43 +452,23 @@ END;
                 {
                     await EnsureDatabaseTablesAsync(db, cancellationToken);
 
-                    // 1. Tìm phòng ban theo ID hoặc tên/mã
-                    if (request.DepartmentId.HasValue && request.DepartmentId.Value > 0)
+                    dept = await db.TblDepartments.AsNoTracking()
+                        .FirstOrDefaultAsync(d => d.DepartmentId == resolvedDeptId, cancellationToken);
+                    if (dept != null && !string.IsNullOrWhiteSpace(dept.DepartmentName))
                     {
-                        dept = await db.TblDepartments.AsNoTracking()
-                            .FirstOrDefaultAsync(d => d.DepartmentId == request.DepartmentId.Value, cancellationToken);
-                    }
-                    if (dept == null && !string.IsNullOrWhiteSpace(request.Department))
-                    {
-                        var deptName = request.Department.Trim();
-                        dept = await db.TblDepartments.AsNoTracking()
-                            .FirstOrDefaultAsync(d => d.DepartmentName == deptName || d.DepartmentCode == deptName, cancellationToken);
+                        departmentDisplayName = dept.DepartmentName;
                     }
 
-                    // 2. NGHIỆP VỤ: Bên nhận ban đầu là NGƯỜI ĐỨNG ĐẦU CỦA PHÒNG BAN ĐÓ (Manager / Trưởng phòng)
-                    if (dept != null)
-                    {
-                        // Tìm Manager của phòng ban
-                        head = await db.TblEmployees.AsNoTracking()
-                            .FirstOrDefaultAsync(e => e.DepartmentId == dept.DepartmentId && e.EmployeeType == (byte)EmployeeType.Manager && e.Status == 1, cancellationToken);
+                    // NGHIỆP VỤ: Tìm đúng TRƯỞNG PHÒNG của phòng ban mà khách hàng gửi yêu cầu (KHÔNG gửi cho sysadmin hay phòng ban khác)
+                    head = await FindDepartmentHeadAsync(db, resolvedDeptId, cancellationToken);
 
-                        // Nếu chưa set Manager cụ thể, lấy nhân viên đầu tiên thuộc phòng ban đó
-                        head ??= await db.TblEmployees.AsNoTracking()
-                            .FirstOrDefaultAsync(e => e.DepartmentId == dept.DepartmentId && e.Status == 1, cancellationToken);
-                    }
-
-                    // Fallback nếu không có nhân viên nào trong phòng ban: lấy bất kỳ Manager nào của hệ thống
-                    head ??= await db.TblEmployees.AsNoTracking()
-                        .FirstOrDefaultAsync(e => e.EmployeeType == (byte)EmployeeType.Manager && e.Status == 1, cancellationToken);
-
-                    // 3. Lưu vào Database Table TICKET_SUPPORT
                     try
                     {
                         var entity = new TICKET_SUPPORT
                         {
                             customer_id = employeeId > 0 ? employeeId : 1,
                             tenant_id = tenantId > 0 ? tenantId : 1,
-                            department_id = dept?.DepartmentId,
+                            department_id = resolvedDeptId,
                             product_id = request.ProductId,
                             service_id = request.ServiceId,
                             ticket_code = ticketCode,
@@ -496,8 +481,9 @@ END;
 
                         db.TICKET_SUPPORT.Add(entity);
                         await db.SaveChangesAsync(cancellationToken);
+                        persistedTicketId = (int)entity.ticket_support_id;
 
-                        // 4. Lưu vào TICKET_SUPPORT_EMPLOYEE với role = DEPARTMENT_HEAD
+                        // Lưu vào TICKET_SUPPORT_EMPLOYEE với role = DEPARTMENT_HEAD (chỉ Trưởng phòng của phòng ban này)
                         if (head != null)
                         {
                             var headAssignment = new TICKET_SUPPORT_EMPLOYEE
@@ -506,12 +492,11 @@ END;
                                 employee_id = head.EmployeeId,
                                 ticket_support_employee_assignment_role = "DEPARTMENT_HEAD",
                                 ticket_support_employee_assigned_at = DateTime.UtcNow,
-                                ticket_support_employee_assigned_by_employee_id = null // Tự động gán cho Trưởng phòng
+                                ticket_support_employee_assigned_by_employee_id = null
                             };
                             db.TICKET_SUPPORT_EMPLOYEE.Add(headAssignment);
                         }
 
-                        // 5. Lưu tin nhắn mở đầu vào TICKET_MESSAGE
                         var initMsg = new TICKET_MESSAGE
                         {
                             ticket_support_id = entity.ticket_support_id,
@@ -523,33 +508,33 @@ END;
                         db.TICKET_MESSAGE.Add(initMsg);
                         await db.SaveChangesAsync(cancellationToken);
 
-                        if (!string.IsNullOrWhiteSpace(request.AttachmentUrls?.FirstOrDefault()))
+                        if (!string.IsNullOrWhiteSpace(request.AttachmentUrls?.FirstOrDefault())
+                            || !string.IsNullOrWhiteSpace(request.AttachmentNames?.FirstOrDefault()))
                         {
                             var initAtt = new TICKET_ATTACHMENTS
                             {
                                 ticket_message_id = initMsg.ticket_message_id,
-                                file_name_1 = request.AttachmentUrls?.FirstOrDefault(),
+                                file_name_1 = request.AttachmentUrls?.FirstOrDefault() ?? request.AttachmentNames?.FirstOrDefault(),
                                 file_name_2 = request.AttachmentNames?.FirstOrDefault(),
                                 uploaded_at = DateTime.UtcNow
                             };
                             db.TICKET_ATTACHMENTS.Add(initAtt);
                         }
 
-                        // 6. Ghi nhật ký vào TICKET_HISTORY
                         var initHistory = new TICKET_HISTORY
                         {
                             ticket_support_id = entity.ticket_support_id,
                             employee_id_start = head != null ? (int)head.EmployeeId : null,
                             old_status = null,
                             new_status = "Open",
-                            notes = $"Khởi tạo phiếu hỗ trợ bởi {senderName}.",
+                            notes = $"Khởi tạo phiếu hỗ trợ bởi {senderName} gửi tới {departmentDisplayName}.",
                             changed_at = DateTime.UtcNow
                         };
                         db.TICKET_HISTORY.Add(initHistory);
 
                         await db.SaveChangesAsync(cancellationToken);
-                        _logger.LogInformation("Đã lưu Ticket {TicketCode} vào database thành công với Trưởng phòng nhận {HeadName}.",
-                            ticketCode, head?.EmployeeFullName ?? "Chưa xác định");
+                        _logger.LogInformation("Đã lưu Ticket {TicketCode} cho phòng ban #{DeptId} ({DeptName}), Trưởng phòng nhận: {HeadName}.",
+                            ticketCode, resolvedDeptId, departmentDisplayName, head?.EmployeeFullName ?? "Chưa xác định");
                     }
                     catch (Exception ex)
                     {
@@ -558,8 +543,11 @@ END;
                 }
             }
 
-            var ticketId = state.NextTicketId++;
-            var departmentDisplayName = dept?.DepartmentName ?? request.Department ?? "KỸ THUẬT";
+            var ticketId = persistedTicketId ?? state.NextTicketId++;
+            if (state.NextTicketId <= ticketId)
+            {
+                state.NextTicketId = ticketId + 1;
+            }
 
             var ticket = new SupportTicketDto
             {
@@ -575,12 +563,13 @@ END;
                 TicketDescription = request.ResolvedDescription,
                 TicketPriority = NormalizePriority(request.ResolvedPriority),
                 TicketStatus = "Open",
-                DepartmentId = dept?.DepartmentId,
+                DepartmentId = resolvedDeptId,
                 Department = departmentDisplayName,
                 Module = request.Module ?? "Chung",
                 CreatedAt = DateTime.UtcNow,
                 DepartmentHeadEmployeeId = head?.EmployeeId,
                 DepartmentHeadName = head?.EmployeeFullName ?? head?.EmployeeAccount,
+                ViewerRole = "CUSTOMER",
                 Assignments = head != null ? [
                     new TicketEmployeeAssignmentDto
                     {
@@ -610,9 +599,10 @@ END;
                 ]
             };
 
+            state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId || string.Equals(t.TicketCode, ticketCode, StringComparison.OrdinalIgnoreCase));
             state.Tickets.Insert(0, ticket);
 
-            // Thêm Notification cho Trưởng phòng / Quản trị viên
+            // Chỉ tạo Notification cho đúng Trưởng phòng của phòng ban nhận yêu cầu (TargetEmployeeId = head.EmployeeId, DepartmentId = resolvedDeptId)
             var notification = new AdminNotificationDto
             {
                 NotificationId = state.NextNotificationId++,
@@ -624,7 +614,9 @@ END;
                 TenantName = tenantName,
                 TenantCode = tenantCode,
                 Priority = ticket.TicketPriority,
+                DepartmentId = resolvedDeptId,
                 Department = ticket.Department,
+                TargetEmployeeId = head?.EmployeeId,
                 ActionKey = "new-ticket",
                 CreatedAtUtc = DateTime.UtcNow
             };
@@ -632,10 +624,10 @@ END;
 
             await SaveStateAsync(state, cancellationToken);
 
-            // Gửi email thông báo cho Trưởng phòng nhận việc
+            // Gửi email thông báo CHỈ cho Trưởng phòng của phòng ban đó
             _ = SendNewTicketNotificationAsync(ticket, senderName, head);
 
-            return CloneTicket(ticket);
+            return CloneTicketWithViewer(ticket, "CUSTOMER", employeeId, null);
         }
         finally
         {
@@ -652,38 +644,66 @@ END;
         var db = scope.ServiceProvider.GetService<DbDtctechContext>();
         if (db == null) return [];
 
-        // Tìm ticket để lấy DepartmentId
         int? deptId = null;
         var ticket = await db.TICKET_SUPPORT.AsNoTracking().FirstOrDefaultAsync(t => t.ticket_support_id == ticketId, cancellationToken);
-        if (ticket != null)
+        if (ticket?.department_id != null)
         {
-            deptId = (int?)ticket.department_id;
+            deptId = (int)ticket.department_id.Value;
+        }
+        else
+        {
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var memTicket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+            if (memTicket != null)
+            {
+                deptId = ResolveDepartmentIdFromInput(memTicket.DepartmentId, memTicket.Department);
+            }
         }
 
         if (!deptId.HasValue)
         {
-            var emp = await db.TblEmployees.AsNoTracking().FirstOrDefaultAsync(e => e.EmployeeId == currentEmployeeId, cancellationToken);
-            deptId = emp?.DepartmentId;
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            deptId = roleInfo.DepartmentId ?? 2;
         }
 
-        if (!deptId.HasValue) return [];
+        var dept = await db.TblDepartments.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.DepartmentId == deptId.Value, cancellationToken);
+        var deptName = dept?.DepartmentName ?? GetDepartmentDisplayName(deptId.Value, null);
 
-        var dept = await db.TblDepartments.AsNoTracking().FirstOrDefaultAsync(d => d.DepartmentId == deptId.Value, cancellationToken);
-        var staffList = await db.TblEmployees.AsNoTracking()
-            .Where(e => e.DepartmentId == deptId.Value && e.Status == 1)
+        var allActiveEmployees = await db.TblEmployees.AsNoTracking()
+            .Where(e => e.Status == 1)
             .OrderBy(e => e.EmployeeFullName)
             .ToListAsync(cancellationToken);
 
-        return staffList.Select(e => new DepartmentEmployeeDto
+        var empDeptMap = await LoadEmployeeDepartmentMapAsync(db, cancellationToken);
+
+        // CHỈ trả về các NHÂN VIÊN (STAFF) thuộc đúng phòng ban đó (loại bỏ sysadmin và loại bỏ Trưởng phòng / phòng ban khác)
+        var filteredStaff = new List<DepartmentEmployeeDto>();
+        foreach (var emp in allActiveEmployees)
         {
-            EmployeeId = e.EmployeeId,
-            EmployeeName = !string.IsNullOrWhiteSpace(e.EmployeeFullName) ? e.EmployeeFullName : (e.EmployeeAccount ?? $"NV #{e.EmployeeId}"),
-            EmployeeCode = e.EmployeeCode,
-            EmployeeEmail = e.EmployeeEmail,
-            DepartmentId = e.DepartmentId,
-            DepartmentName = dept?.DepartmentName,
-            IsManager = e.EmployeeType == (byte)EmployeeType.Manager
-        }).ToList();
+            var (role, empDeptId) = ClassifyEmployee(emp, empDeptMap);
+            if (!string.Equals(role, "STAFF", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            if (empDeptId != deptId.Value)
+            {
+                continue;
+            }
+
+            filteredStaff.Add(new DepartmentEmployeeDto
+            {
+                EmployeeId = emp.EmployeeId,
+                EmployeeName = !string.IsNullOrWhiteSpace(emp.EmployeeFullName) ? emp.EmployeeFullName : (emp.EmployeeAccount ?? $"NV #{emp.EmployeeId}"),
+                EmployeeCode = emp.EmployeeCode,
+                EmployeeEmail = emp.EmployeeEmail,
+                DepartmentId = deptId.Value,
+                DepartmentName = deptName,
+                IsManager = false
+            });
+        }
+
+        return filteredStaff;
     }
 
     public async Task<SupportTicketDto?> AssignToStaffAsync(
@@ -696,6 +716,7 @@ END;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetService<DbDtctechContext>();
 
@@ -710,7 +731,6 @@ END;
                     ticketEntity.ticket_status = "In_Progress";
                     ticketEntity.updated_at = DateTime.UtcNow;
 
-                    // Thêm bản ghi phân công TICKET_SUPPORT_EMPLOYEE
                     var assignment = new TICKET_SUPPORT_EMPLOYEE
                     {
                         ticket_support_id = ticketId,
@@ -721,7 +741,7 @@ END;
                     };
                     db.TICKET_SUPPORT_EMPLOYEE.Add(assignment);
 
-                    // Thêm bản ghi lịch sử TICKET_HISTORY
+                    var noteText = string.IsNullOrWhiteSpace(request.Note) ? "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng." : request.Note.Trim();
                     var assignHistory = new TICKET_HISTORY
                     {
                         ticket_support_id = ticketId,
@@ -730,18 +750,17 @@ END;
                         changed_by_user_id = currentEmployeeId,
                         old_status = "Open",
                         new_status = "In_Progress",
-                        notes = $"Trưởng phòng {currentEmployeeName} phân công cho nhân viên {staff.EmployeeFullName}. Ghi chú: {request.Note}",
+                        notes = $"Trưởng phòng {currentEmployeeName} phân công cho nhân viên {staff.EmployeeFullName}. Nội dung chỉ đạo: {noteText}",
                         changed_at = DateTime.UtcNow
                     };
                     db.TICKET_HISTORY.Add(assignHistory);
 
-                    // Thêm tin nhắn hệ thống ghi nhận phân công
                     var msg = new TICKET_MESSAGE
                     {
                         ticket_support_id = ticketId,
                         ticket_message_sender_employee_id = currentEmployeeId,
                         ticket_message_type = "ASSIGNMENT",
-                        ticket_message_content = $"[Phân công việc] Trưởng phòng {currentEmployeeName} đã phân công xử lý cho nhân viên {staff.EmployeeFullName}. Ghi chú: {request.Note}",
+                        ticket_message_content = $"[Phân công xử lý] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho nhân viên {staff.EmployeeFullName}.\nNội dung chỉ đạo: {noteText}",
                         created_at = DateTime.UtcNow
                     };
                     db.TICKET_MESSAGE.Add(msg);
@@ -750,18 +769,22 @@ END;
                 }
             }
 
-            // Đồng bộ bộ nhớ / JSON file
             var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
+                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+
             if (ticket != null)
             {
                 var staffName = staff?.EmployeeFullName ?? $"Nhân viên #{request.StaffEmployeeId}";
+                var noteText = string.IsNullOrWhiteSpace(request.Note) ? "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng." : request.Note.Trim();
+
                 ticket.TicketStatus = "In_Progress";
                 ticket.AssignedEmployeeId = request.StaffEmployeeId;
                 ticket.AssignedEmployeeName = staffName;
                 ticket.AssignedAt = DateTime.UtcNow;
                 ticket.UpdatedAt = DateTime.UtcNow;
 
+                ticket.Assignments.RemoveAll(a => !string.Equals(a.AssignmentRole, "DEPARTMENT_HEAD", StringComparison.OrdinalIgnoreCase));
                 ticket.Assignments.Add(new TicketEmployeeAssignmentDto
                 {
                     TicketSupportEmployeeId = ticket.Assignments.Count + 1,
@@ -782,21 +805,42 @@ END;
                     SenderEmployeeId = currentEmployeeId,
                     SenderName = currentEmployeeName,
                     IsFromEmployee = true,
-                    TicketMessageContent = $"[Phân công việc] Trưởng phòng {currentEmployeeName} đã phân công xử lý cho nhân viên {staffName}. Ghi chú: {request.Note}",
+                    TicketMessageContent = $"[Phân công xử lý] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho nhân viên {staffName}.\nNội dung chỉ đạo: {noteText}",
                     TicketMessageType = "ASSIGNMENT",
                     CreatedAt = DateTime.UtcNow
+                });
+
+                state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
+                state.Tickets.Insert(0, ticket);
+
+                // Tạo thông báo riêng cho NHÂN VIÊN ĐƯỢC PHÂN CÔNG
+                state.AdminNotifications.Insert(0, new AdminNotificationDto
+                {
+                    NotificationId = state.NextNotificationId++,
+                    Title = $"Bạn được phân công xử lý Ticket [{ticket.TicketCode}]",
+                    Body = $"Trưởng phòng {currentEmployeeName} đã giao việc cho bạn: {ticket.TicketSubject}",
+                    SubjectType = "SupportTicket",
+                    SubjectId = ticket.TicketSupportId,
+                    TicketCode = ticket.TicketCode,
+                    TenantName = ticket.TenantName,
+                    TenantCode = ticket.TenantCode,
+                    Priority = ticket.TicketPriority,
+                    DepartmentId = ticket.DepartmentId,
+                    Department = ticket.Department,
+                    TargetEmployeeId = request.StaffEmployeeId,
+                    ActionKey = "assigned-ticket",
+                    CreatedAtUtc = DateTime.UtcNow
                 });
 
                 await SaveStateAsync(state, cancellationToken);
             }
 
-            // Gửi email thông báo cho nhân viên được giao việc
             if (staff != null && ticket != null)
             {
                 _ = SendStaffAssignmentNotificationAsync(ticket, staff, currentEmployeeName, request.Note);
             }
 
-            return ticket is null ? null : CloneTicket(ticket);
+            return ticket is null ? null : CloneTicketWithViewer(ticket, roleInfo.Role, currentEmployeeId, roleInfo.DepartmentId);
         }
         finally
         {
@@ -814,6 +858,9 @@ END;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            if (roleInfo.Role == "SYSADMIN") return null;
+
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetService<DbDtctechContext>();
 
@@ -831,7 +878,7 @@ END;
                         ticket_support_id = ticketId,
                         ticket_message_sender_employee_id = currentEmployeeId,
                         ticket_message_type = "STAFF_COMPLETION",
-                        ticket_message_content = $"[Hoàn tất xử lý] Nhân viên {currentEmployeeName} đã xử lý xong: {request.Resolution}. Báo cáo Trưởng phòng kiểm tra và phản hồi kết quả cho khách hàng.",
+                        ticket_message_content = $"[Báo cáo Trưởng phòng] Nhân viên {currentEmployeeName} đã xử lý xong và gửi kết quả lên Trưởng phòng:\n{request.Resolution}",
                         created_at = DateTime.UtcNow
                     };
                     db.TICKET_MESSAGE.Add(msg);
@@ -843,7 +890,7 @@ END;
                         changed_by_user_id = currentEmployeeId,
                         old_status = "In_Progress",
                         new_status = "PendingHeadApproval",
-                        notes = $"Nhân viên {currentEmployeeName} báo cáo hoàn tất: {request.Resolution}",
+                        notes = $"Nhân viên {currentEmployeeName} gửi kết quả lên Trưởng phòng: {request.Resolution}",
                         changed_at = DateTime.UtcNow
                     };
                     db.TICKET_HISTORY.Add(staffHistory);
@@ -856,6 +903,11 @@ END;
             var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
             if (ticket != null)
             {
+                if (!CanEmployeeViewTicket(ticket, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId))
+                {
+                    return null;
+                }
+
                 ticket.TicketResolution = request.Resolution;
                 ticket.TicketStatus = "PendingHeadApproval";
                 ticket.UpdatedAt = DateTime.UtcNow;
@@ -867,15 +919,33 @@ END;
                     SenderEmployeeId = currentEmployeeId,
                     SenderName = currentEmployeeName,
                     IsFromEmployee = true,
-                    TicketMessageContent = $"[Hoàn tất xử lý] Nhân viên {currentEmployeeName} đã xử lý xong: {request.Resolution}. Báo cáo Trưởng phòng kiểm tra và phản hồi kết quả cho khách hàng.",
+                    TicketMessageContent = $"[Báo cáo Trưởng phòng] Nhân viên {currentEmployeeName} đã xử lý xong và gửi kết quả lên Trưởng phòng:\n{request.Resolution}",
                     TicketMessageType = "STAFF_COMPLETION",
                     CreatedAt = DateTime.UtcNow
+                });
+
+                state.AdminNotifications.Insert(0, new AdminNotificationDto
+                {
+                    NotificationId = state.NextNotificationId++,
+                    SubjectType = "SupportTicket",
+                    SubjectId = ticket.TicketSupportId,
+                    TicketCode = ticket.TicketCode,
+                    TenantName = ticket.TenantName,
+                    TenantCode = ticket.TenantCode,
+                    Title = $"[{ticket.Department}] NV {currentEmployeeName} báo cáo hoàn tất {ticket.TicketCode}",
+                    Body = $"Nhân viên {currentEmployeeName} đã gửi kết quả xử lý ticket '{ticket.TicketSubject}' lên Trưởng phòng.",
+                    Priority = ticket.TicketPriority,
+                    DepartmentId = ticket.DepartmentId,
+                    Department = ticket.Department,
+                    TargetEmployeeId = ticket.DepartmentHeadEmployeeId,
+                    ActionKey = "staff-completed-ticket",
+                    CreatedAtUtc = DateTime.UtcNow
                 });
 
                 await SaveStateAsync(state, cancellationToken);
             }
 
-            return ticket is null ? null : CloneTicket(ticket);
+            return ticket is null ? null : CloneTicketWithViewer(ticket, roleInfo.Role, currentEmployeeId, roleInfo.DepartmentId);
         }
         finally
         {
@@ -893,11 +963,15 @@ END;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            if (roleInfo.Role == "SYSADMIN") return null;
+
+            var roleLabel = roleInfo.Role == "DEPARTMENT_HEAD" ? "Trưởng phòng" : "Nhân viên phụ trách";
             var targetStatus = request.CloseTicket ? "Resolved" : "In_Progress";
             var resolutionText = request.Resolution;
             var customerNotice = !string.IsNullOrWhiteSpace(request.MessageToCustomer)
                 ? request.MessageToCustomer
-                : $"[Kết quả giải quyết từ Trưởng phòng {currentEmployeeName}]: {resolutionText}";
+                : $"[Kết quả xử lý từ {roleLabel} {currentEmployeeName}]:\n{resolutionText}";
 
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetService<DbDtctechContext>();
@@ -907,6 +981,7 @@ END;
                 var ticketEntity = await db.TICKET_SUPPORT.FirstOrDefaultAsync(t => t.ticket_support_id == ticketId, cancellationToken);
                 if (ticketEntity != null)
                 {
+                    var oldStatus = ticketEntity.ticket_status ?? "In_Progress";
                     ticketEntity.ticket_resolution = resolutionText;
                     ticketEntity.ticket_status = targetStatus;
                     ticketEntity.ticket_resolved_at = DateTime.UtcNow;
@@ -928,9 +1003,9 @@ END;
                         ticket_support_id = ticketId,
                         employee_id_start = currentEmployeeId,
                         changed_by_user_id = currentEmployeeId,
-                        old_status = "PendingHeadApproval",
+                        old_status = oldStatus,
                         new_status = targetStatus,
-                        notes = $"Trưởng phòng {currentEmployeeName} thông báo kết quả: {customerNotice}",
+                        notes = $"{roleLabel} {currentEmployeeName} gửi kết quả cho khách hàng: {customerNotice}",
                         changed_at = DateTime.UtcNow
                     };
                     db.TICKET_HISTORY.Add(headHistory);
@@ -943,6 +1018,11 @@ END;
             var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
             if (ticket != null)
             {
+                if (!CanEmployeeViewTicket(ticket, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId))
+                {
+                    return null;
+                }
+
                 ticket.TicketResolution = resolutionText;
                 ticket.TicketStatus = targetStatus;
                 ticket.TicketResolvedAt = DateTime.UtcNow;
@@ -967,7 +1047,7 @@ END;
                 _ = SendResolutionNoticeToCustomerAsync(ticket, customerNotice);
             }
 
-            return ticket is null ? null : CloneTicket(ticket);
+            return ticket is null ? null : CloneTicketWithViewer(ticket, roleInfo.Role, currentEmployeeId, roleInfo.DepartmentId);
         }
         finally
         {
@@ -1043,6 +1123,26 @@ END;
             ticket.Messages.Add(msg);
             ticket.UpdatedAt = DateTime.UtcNow;
 
+            // Tạo thông báo cho nhân viên được phân công (nếu đã phân công) hoặc Trưởng phòng của phòng ban đó
+            var targetEmpId = ticket.AssignedEmployeeId ?? ticket.DepartmentHeadEmployeeId;
+            state.AdminNotifications.Insert(0, new AdminNotificationDto
+            {
+                NotificationId = state.NextNotificationId++,
+                SubjectType = "SupportTicket",
+                SubjectId = ticket.TicketSupportId,
+                TicketCode = ticket.TicketCode,
+                TenantName = ticket.TenantName,
+                TenantCode = ticket.TenantCode,
+                Title = $"[{ticket.Department}] Khách hàng phản hồi {ticket.TicketCode}",
+                Body = $"{senderName}: {content}",
+                Priority = ticket.TicketPriority,
+                DepartmentId = ticket.DepartmentId,
+                Department = ticket.Department,
+                TargetEmployeeId = targetEmpId,
+                ActionKey = "customer-replied-ticket",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+
             await SaveStateAsync(state, cancellationToken);
             _ = SendCustomerReplyEmailsSafeAsync(ticket, msg);
 
@@ -1068,6 +1168,18 @@ END;
         try
         {
             if (string.IsNullOrWhiteSpace(content)) return null;
+
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(employeeId, cancellationToken);
+            if (roleInfo.Role == "SYSADMIN") return null;
+
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+            if (ticket is null) return null;
+
+            if (!CanEmployeeViewTicket(ticket, employeeId, roleInfo.Role, roleInfo.DepartmentId))
+            {
+                return null;
+            }
 
             using (var scope = _scopeFactory.CreateScope())
             {
@@ -1099,10 +1211,6 @@ END;
                     }
                 }
             }
-
-            var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
-            if (ticket is null) return null;
 
             var msg = new SupportTicketMessageDto
             {
@@ -1158,7 +1266,19 @@ END;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(systemAdminId, cancellationToken);
+            if (roleInfo.Role == "SYSADMIN") return null;
+
             var normalizedStatus = NormalizeStatus(request.Status);
+
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+            if (ticket is null) return null;
+
+            if (!CanEmployeeViewTicket(ticket, systemAdminId, roleInfo.Role, roleInfo.DepartmentId))
+            {
+                return null;
+            }
 
             using (var scope = _scopeFactory.CreateScope())
             {
@@ -1193,10 +1313,6 @@ END;
                 }
             }
 
-            var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
-            if (ticket is null) return null;
-
             ticket.TicketStatus = normalizedStatus;
             if (!string.IsNullOrWhiteSpace(request.Resolution))
             {
@@ -1210,7 +1326,7 @@ END;
             ticket.UpdatedAt = DateTime.UtcNow;
 
             await SaveStateAsync(state, cancellationToken);
-            return CloneTicket(ticket);
+            return CloneTicketWithViewer(ticket, roleInfo.Role, systemAdminId, roleInfo.DepartmentId);
         }
         finally
         {
@@ -1219,6 +1335,7 @@ END;
     }
 
     public async Task<(IReadOnlyList<AdminNotificationDto> Items, int UnreadCount)> GetAdminNotificationsAsync(
+        int currentEmployeeId,
         string? status,
         int limit,
         CancellationToken cancellationToken = default)
@@ -1226,15 +1343,23 @@ END;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
-            var state = await EnsureStateLoadedAsync(cancellationToken);
-            IEnumerable<AdminNotificationDto> query = state.AdminNotifications;
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            // System Admin KHÔNG nhận thông báo yêu cầu hỗ trợ
+            if (roleInfo.Role == "SYSADMIN")
+            {
+                return ([], 0);
+            }
 
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var scopedList = FilterNotificationsForEmployee(state.AdminNotifications, state.Tickets, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId).ToList();
+
+            IEnumerable<AdminNotificationDto> query = scopedList;
             if (string.Equals(status, "unread", StringComparison.OrdinalIgnoreCase))
             {
                 query = query.Where(n => n.ReadAtUtc == null);
             }
 
-            var unreadCount = state.AdminNotifications.Count(n => n.ReadAtUtc == null);
+            var unreadCount = scopedList.Count(n => n.ReadAtUtc == null);
             var items = query.Take(Math.Max(1, Math.Min(limit, 100))).ToList();
 
             return (items, unreadCount);
@@ -1245,13 +1370,20 @@ END;
         }
     }
 
-    public async Task<int> GetAdminUnreadNotificationCountAsync(CancellationToken cancellationToken = default)
+    public async Task<int> GetAdminUnreadNotificationCountAsync(int currentEmployeeId, CancellationToken cancellationToken = default)
     {
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            if (roleInfo.Role == "SYSADMIN")
+            {
+                return 0;
+            }
+
             var state = await EnsureStateLoadedAsync(cancellationToken);
-            return state.AdminNotifications.Count(n => n.ReadAtUtc == null);
+            var scopedList = FilterNotificationsForEmployee(state.AdminNotifications, state.Tickets, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId);
+            return scopedList.Count(n => n.ReadAtUtc == null);
         }
         finally
         {
@@ -1259,13 +1391,17 @@ END;
         }
     }
 
-    public async Task<bool> MarkAdminNotificationReadAsync(int notificationId, CancellationToken cancellationToken = default)
+    public async Task<bool> MarkAdminNotificationReadAsync(int currentEmployeeId, int notificationId, CancellationToken cancellationToken = default)
     {
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            if (roleInfo.Role == "SYSADMIN") return false;
+
             var state = await EnsureStateLoadedAsync(cancellationToken);
-            var notif = state.AdminNotifications.FirstOrDefault(n => n.NotificationId == notificationId);
+            var scopedList = FilterNotificationsForEmployee(state.AdminNotifications, state.Tickets, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId);
+            var notif = scopedList.FirstOrDefault(n => n.NotificationId == notificationId);
             if (notif is null) return false;
 
             notif.ReadAtUtc = DateTime.UtcNow;
@@ -1278,14 +1414,18 @@ END;
         }
     }
 
-    public async Task<int> MarkAllAdminNotificationsReadAsync(CancellationToken cancellationToken = default)
+    public async Task<int> MarkAllAdminNotificationsReadAsync(int currentEmployeeId, CancellationToken cancellationToken = default)
     {
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
+            var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            if (roleInfo.Role == "SYSADMIN") return 0;
+
             var state = await EnsureStateLoadedAsync(cancellationToken);
+            var scopedList = FilterNotificationsForEmployee(state.AdminNotifications, state.Tickets, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId);
             var count = 0;
-            foreach (var n in state.AdminNotifications.Where(n => n.ReadAtUtc == null))
+            foreach (var n in scopedList.Where(n => n.ReadAtUtc == null))
             {
                 n.ReadAtUtc = DateTime.UtcNow;
                 count++;
@@ -1300,6 +1440,291 @@ END;
         {
             StoreLock.Release();
         }
+    }
+
+    public async Task<(string Role, int? DepartmentId, string? DepartmentName)> ResolveEmployeeRoleInfoAsync(
+        int employeeId,
+        CancellationToken ct = default)
+    {
+        if (employeeId <= 0)
+        {
+            return ("SYSADMIN", null, null);
+        }
+
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetService<DbDtctechContext>();
+            if (db == null)
+            {
+                return ("SYSADMIN", null, null);
+            }
+
+            await EnsureDatabaseTablesAsync(db, ct);
+
+            var emp = await db.TblEmployees
+                .AsNoTracking()
+                .FirstOrDefaultAsync(e => e.EmployeeId == employeeId, ct);
+
+            if (emp == null)
+            {
+                return ("SYSADMIN", null, null);
+            }
+
+            var empDeptMap = await LoadEmployeeDepartmentMapAsync(db, ct);
+            var (role, deptId) = ClassifyEmployee(emp, empDeptMap);
+            var deptName = deptId.HasValue ? GetDepartmentDisplayName(deptId.Value, null) : null;
+            return (role, deptId, deptName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Không thể xác định vai trò nhân viên {EmpId}", employeeId);
+            return ("SYSADMIN", null, null);
+        }
+    }
+
+    // ---------- Role & Department Scoping Helpers ----------
+
+    private static IEnumerable<AdminNotificationDto> FilterNotificationsForEmployee(
+        IEnumerable<AdminNotificationDto> notifications,
+        IReadOnlyList<SupportTicketDto> tickets,
+        int employeeId,
+        string role,
+        int? departmentId)
+    {
+        if (role == "SYSADMIN")
+        {
+            return [];
+        }
+
+        var ticketDict = tickets.ToDictionary(t => t.TicketSupportId);
+
+        if (role == "DEPARTMENT_HEAD")
+        {
+            return notifications.Where(n =>
+            {
+                // Nếu thông báo chỉ định đích danh nhân viên khác (ví dụ thông báo giao việc cho nhân viên) thì không hiện cho Trưởng phòng
+                if (n.TargetEmployeeId.HasValue && n.TargetEmployeeId.Value != employeeId && n.ActionKey == "assigned-ticket")
+                {
+                    return false;
+                }
+
+                if (n.TargetEmployeeId == employeeId) return true;
+                if (departmentId.HasValue && n.DepartmentId == departmentId.Value) return true;
+
+                if (ticketDict.TryGetValue(n.SubjectId, out var ticket))
+                {
+                    var ticketDeptId = ticket.DepartmentId ?? ResolveDepartmentIdFromInput(null, ticket.Department);
+                    return departmentId.HasValue && ticketDeptId == departmentId.Value;
+                }
+
+                return false;
+            });
+        }
+
+        if (role == "STAFF")
+        {
+            return notifications.Where(n =>
+            {
+                if (n.TargetEmployeeId == employeeId) return true;
+                if (!n.TargetEmployeeId.HasValue && ticketDict.TryGetValue(n.SubjectId, out var ticket))
+                {
+                    return ticket.AssignedEmployeeId == employeeId
+                        || ticket.Assignments.Any(a => a.EmployeeId == employeeId && a.AssignmentRole == "ASSIGNEE" && a.UnassignedAt == null);
+                }
+                return false;
+            });
+        }
+
+        return [];
+    }
+
+    private static bool CanEmployeeViewTicket(
+        SupportTicketDto t,
+        int employeeId,
+        string role,
+        int? employeeDeptId)
+    {
+        if (employeeId <= 0 || role == "SYSADMIN")
+        {
+            return false;
+        }
+
+        if (role == "DEPARTMENT_HEAD")
+        {
+            if (!employeeDeptId.HasValue) return false;
+            var ticketDeptId = t.DepartmentId ?? ResolveDepartmentIdFromInput(null, t.Department);
+            return ticketDeptId == employeeDeptId.Value || t.DepartmentHeadEmployeeId == employeeId;
+        }
+
+        if (role == "STAFF")
+        {
+            if (t.AssignedEmployeeId == employeeId) return true;
+            return t.Assignments.Any(a =>
+                a.EmployeeId == employeeId
+                && string.Equals(a.AssignmentRole, "ASSIGNEE", StringComparison.OrdinalIgnoreCase)
+                && a.UnassignedAt == null);
+        }
+
+        return false;
+    }
+
+    private static bool BelongsToCustomerTenant(
+        SupportTicketDto t,
+        int tenantId,
+        string tenantCode,
+        int customerId)
+    {
+        if (customerId > 0 && (t.CustomerId == customerId || t.CreatedByEmployeeId == customerId))
+        {
+            return true;
+        }
+        if (tenantId > 0 && t.TenantId == tenantId)
+        {
+            return true;
+        }
+        if (!string.IsNullOrWhiteSpace(tenantCode) && string.Equals(t.TenantCode, tenantCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        return false;
+    }
+
+    private static async Task<Dictionary<int, int>> LoadEmployeeDepartmentMapAsync(DbDtctechContext db, CancellationToken ct)
+    {
+        var map = new Dictionary<int, int>();
+        try
+        {
+            var conn = db.Database.GetDbConnection();
+            var shouldClose = conn.State != System.Data.ConnectionState.Open;
+            if (shouldClose) await conn.OpenAsync(ct);
+            try
+            {
+                using var cmd = conn.CreateCommand();
+                cmd.CommandText = "SELECT CAST([employee_id] AS INT), CAST([department_id] AS INT) FROM [EMPLOYEE_DEPARTMENT] WHERE [employee_id] IS NOT NULL AND [department_id] IS NOT NULL";
+                using var reader = await cmd.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    var empId = reader.GetInt32(0);
+                    var deptId = reader.GetInt32(1);
+                    // Nếu nhân viên được gán vào phòng chuyên môn (2, 3, 4, 5), ưu tiên phòng chuyên môn hơn phòng 1 (Ban Giám Đốc)
+                    if (!map.ContainsKey(empId) || (map[empId] == 1 && deptId > 1))
+                    {
+                        map[empId] = deptId;
+                    }
+                }
+            }
+            finally
+            {
+                if (shouldClose) await conn.CloseAsync();
+            }
+        }
+        catch
+        {
+            // Fallback sẽ được xử lý trong ClassifyEmployee
+        }
+        return map;
+    }
+
+    private static (string Role, int? DepartmentId) ClassifyEmployee(TblEmployee emp, Dictionary<int, int> empDeptMap)
+    {
+        var account = (emp.EmployeeAccount ?? string.Empty).Trim().ToLowerInvariant();
+        var code = (emp.EmployeeCode ?? string.Empty).Trim().ToUpperInvariant();
+        var displayName = (emp.EmployeeFullName ?? string.Empty).Trim().ToLowerInvariant();
+
+        // 1. System Admin: không tham gia luồng yêu cầu hỗ trợ
+        if (account == "sysadmin" || account == "admin" || code == "SYS001" || code == "ADM-SYSADMIN" || displayName.Contains("system admin") || displayName.Contains("quản trị hệ thống"))
+        {
+            return ("SYSADMIN", null);
+        }
+
+        // 2. Xác định phòng ban của nhân viên
+        int? deptId = empDeptMap.TryGetValue(emp.EmployeeId, out var mappedDept) && mappedDept > 1
+            ? mappedDept
+            : null;
+
+        if (!deptId.HasValue)
+        {
+            if (account.Contains("tech") || account == "test.manager" || displayName.Contains("kỹ thuật"))
+                deptId = 2;
+            else if (account.Contains("sale") || displayName.Contains("kinh doanh") || displayName.Contains("bán hàng"))
+                deptId = 3;
+            else if (account.Contains("account") || displayName.Contains("kế toán") || displayName.Contains("tài chính"))
+                deptId = 4;
+            else if (account.Contains("legal") || account.Contains("hr") || displayName.Contains("pháp chế") || displayName.Contains("hành chính"))
+                deptId = 5;
+        }
+
+        // 3. Xác định có phải Trưởng phòng hay Nhân viên
+        var isHead = account.StartsWith("head.")
+            || account.Contains("manager")
+            || account.Contains("truongphong")
+            || code.StartsWith("HEAD-")
+            || code == "EMP-MANAGER"
+            || displayName.Contains("trưởng phòng")
+            || displayName.Contains("truong phong")
+            || displayName.Contains("quản lý")
+            || displayName.Contains("giám đốc");
+
+        if (isHead && deptId.HasValue)
+        {
+            return ("DEPARTMENT_HEAD", deptId);
+        }
+
+        if (deptId.HasValue)
+        {
+            return ("STAFF", deptId);
+        }
+
+        return ("STAFF", 2);
+    }
+
+    private static async Task<TblEmployee?> FindDepartmentHeadAsync(DbDtctechContext db, int departmentId, CancellationToken ct)
+    {
+        var allEmps = await db.TblEmployees
+            .AsNoTracking()
+            .Where(e => e.Status == 1)
+            .OrderBy(e => e.EmployeeId)
+            .ToListAsync(ct);
+
+        var empDeptMap = await LoadEmployeeDepartmentMapAsync(db, ct);
+
+        foreach (var emp in allEmps)
+        {
+            var (role, deptId) = ClassifyEmployee(emp, empDeptMap);
+            if (role == "DEPARTMENT_HEAD" && deptId == departmentId)
+            {
+                return emp;
+            }
+        }
+
+        return null;
+    }
+
+    private static int ResolveDepartmentIdFromInput(int? departmentId, string? departmentText)
+    {
+        if (departmentId.HasValue && departmentId.Value is >= 2 and <= 5)
+        {
+            return departmentId.Value;
+        }
+
+        var d = (departmentText ?? string.Empty).Trim().ToUpperInvariant();
+        if (d.Contains("BÁN HÀNG") || d.Contains("KINH DOANH") || d.Contains("SALE")) return 3;
+        if (d.Contains("KẾ TOÁN") || d.Contains("TÀI CHÍNH") || d.Contains("ACCOUNT")) return 4;
+        if (d.Contains("GÓP Ý") || d.Contains("PHÁP CHẾ") || d.Contains("HÀNH CHÍNH") || d.Contains("LEGAL")) return 5;
+        return 2; // Mặc định: Phòng Kỹ Thuật & Hỗ Trợ (2)
+    }
+
+    private static string GetDepartmentDisplayName(int departmentId, string? fallback)
+    {
+        return departmentId switch
+        {
+            2 => "Phòng Kỹ Thuật & Hỗ Trợ",
+            3 => "Phòng Kinh Doanh",
+            4 => "Phòng Kế Toán - Tài Chính",
+            5 => "Phòng Hành Chính - Pháp Chế",
+            _ => !string.IsNullOrWhiteSpace(fallback) ? fallback : "Phòng Kỹ Thuật & Hỗ Trợ"
+        };
     }
 
     // ---------- Helper methods & Db loaders ----------
@@ -1409,11 +1834,20 @@ END;
         Dictionary<long, string> departments,
         Dictionary<long, TblEmployee> employees)
     {
+        var resolvedDeptId = e.department_id.HasValue ? (int)e.department_id.Value : 2;
         var deptName = e.department_id.HasValue && departments.TryGetValue(e.department_id.Value, out var dn)
-            ? dn : "KỸ THUẬT";
+            ? dn : GetDepartmentDisplayName(resolvedDeptId, null);
 
-        var headAssignment = assignments.FirstOrDefault(a => a.ticket_support_employee_assignment_role == "DEPARTMENT_HEAD");
-        var staffAssignment = assignments.FirstOrDefault(a => a.ticket_support_employee_assignment_role == "ASSIGNEE");
+        var headAssignment = assignments
+            .Where(a => a.ticket_support_employee_assignment_role == "DEPARTMENT_HEAD" && a.ticket_support_employee_unassigned_at == null)
+            .OrderByDescending(a => a.ticket_support_employee_assigned_at)
+            .FirstOrDefault()
+            ?? assignments.FirstOrDefault(a => a.ticket_support_employee_assignment_role == "DEPARTMENT_HEAD");
+
+        var staffAssignment = assignments
+            .Where(a => a.ticket_support_employee_assignment_role == "ASSIGNEE" && a.ticket_support_employee_unassigned_at == null)
+            .OrderByDescending(a => a.ticket_support_employee_assigned_at)
+            .FirstOrDefault();
 
         TblEmployee? headEmp = headAssignment?.employee_id != null && employees.TryGetValue(headAssignment.employee_id.Value, out var h) ? h : null;
         TblEmployee? staffEmp = staffAssignment?.employee_id != null && employees.TryGetValue(staffAssignment.employee_id.Value, out var s) ? s : null;
@@ -1428,7 +1862,7 @@ END;
             TicketSupportId = (int)e.ticket_support_id,
             CustomerId = (int?)e.customer_id,
             TenantId = (int?)e.tenant_id,
-            DepartmentId = (int?)e.department_id,
+            DepartmentId = resolvedDeptId,
             Department = deptName,
             TicketCode = e.ticket_code ?? $"TK-{e.ticket_support_id}",
             TicketSubject = e.ticket_title ?? string.Empty,
@@ -1440,9 +1874,9 @@ END;
             TicketClosedAt = e.ticket_closed_at,
             CreatedAt = e.created_at,
             UpdatedAt = e.updated_at,
-            DepartmentHeadEmployeeId = headEmp != null ? headEmp.EmployeeId : null,
+            DepartmentHeadEmployeeId = headEmp != null ? headEmp.EmployeeId : (int?)headAssignment?.employee_id,
             DepartmentHeadName = headEmp != null ? (headEmp.EmployeeFullName ?? headEmp.EmployeeAccount) : null,
-            AssignedEmployeeId = staffEmp != null ? staffEmp.EmployeeId : null,
+            AssignedEmployeeId = staffEmp != null ? staffEmp.EmployeeId : (int?)staffAssignment?.employee_id,
             AssignedEmployeeName = staffEmp != null ? (staffEmp.EmployeeFullName ?? staffEmp.EmployeeAccount) : null,
             AssignedAt = staffAssignment?.ticket_support_employee_assigned_at,
             Assignments = assignments.Select(a =>
@@ -1500,32 +1934,24 @@ END;
         }
         foreach (var t in fromDb)
         {
-            if (!string.IsNullOrWhiteSpace(t.TicketCode)) dict[t.TicketCode] = t;
+            if (!string.IsNullOrWhiteSpace(t.TicketCode))
+            {
+                if (dict.TryGetValue(t.TicketCode, out var existing))
+                {
+                    // Giữ lại thông tin tên khách hàng / tenant từ state nếu DB không lưu trực tiếp tên
+                    if (string.IsNullOrWhiteSpace(t.TenantName) && !string.IsNullOrWhiteSpace(existing.TenantName))
+                        t.TenantName = existing.TenantName;
+                    if (string.IsNullOrWhiteSpace(t.TenantCode) && !string.IsNullOrWhiteSpace(existing.TenantCode))
+                        t.TenantCode = existing.TenantCode;
+                    if (string.IsNullOrWhiteSpace(t.CreatedByName) && !string.IsNullOrWhiteSpace(existing.CreatedByName))
+                        t.CreatedByName = existing.CreatedByName;
+                    if (!t.CreatedByEmployeeId.HasValue && existing.CreatedByEmployeeId.HasValue)
+                        t.CreatedByEmployeeId = existing.CreatedByEmployeeId;
+                }
+                dict[t.TicketCode] = t;
+            }
         }
         return dict.Values.ToList();
-    }
-
-    private static bool BelongsToViewer(
-        SupportTicketDto t,
-        int tenantId,
-        string tenantCode,
-        int employeeId,
-        bool isHead,
-        int? employeeDeptId)
-    {
-        // 1. Nếu là người tạo ticket hoặc cùng tenant khách hàng
-        if (t.CustomerId == employeeId || t.CreatedByEmployeeId == employeeId) return true;
-        if (tenantId > 0 && t.TenantId == tenantId) return true;
-
-        // 2. Nếu là Trưởng phòng ban: xem được tất cả ticket gửi đến phòng ban mình
-        if (isHead && employeeDeptId.HasValue && t.DepartmentId == employeeDeptId.Value) return true;
-        if (t.DepartmentHeadEmployeeId == employeeId) return true;
-
-        // 3. Nếu là nhân viên được phân công xử lý ticket
-        if (t.AssignedEmployeeId == employeeId) return true;
-        if (t.Assignments.Any(a => a.EmployeeId == employeeId)) return true;
-
-        return false;
     }
 
     private static IEnumerable<SupportTicketDto> ApplyFilters(
@@ -1548,8 +1974,8 @@ END;
 
         if (!string.IsNullOrWhiteSpace(department) && !string.Equals(department, "All", StringComparison.OrdinalIgnoreCase))
         {
-            var dept = department.Trim();
-            query = query.Where(t => string.Equals(t.Department, dept, StringComparison.OrdinalIgnoreCase));
+            var targetDeptId = ResolveDepartmentIdFromInput(null, department);
+            query = query.Where(t => (t.DepartmentId ?? ResolveDepartmentIdFromInput(null, t.Department)) == targetDeptId);
         }
 
         if (!string.IsNullOrWhiteSpace(keyword))
@@ -1630,6 +2056,19 @@ END;
         }
     }
 
+    private static SupportTicketDto CloneTicketWithViewer(
+        SupportTicketDto src,
+        string viewerRole,
+        int? viewerEmployeeId,
+        int? viewerDepartmentId)
+    {
+        var copy = CloneTicket(src);
+        copy.ViewerRole = viewerRole;
+        copy.ViewerEmployeeId = viewerEmployeeId;
+        copy.ViewerDepartmentId = viewerDepartmentId;
+        return copy;
+    }
+
     private static SupportTicketDto CloneTicket(SupportTicketDto src) => new()
     {
         TicketSupportId = src.TicketSupportId,
@@ -1657,6 +2096,9 @@ END;
         AssignedEmployeeId = src.AssignedEmployeeId,
         AssignedEmployeeName = src.AssignedEmployeeName,
         AssignedAt = src.AssignedAt,
+        ViewerRole = src.ViewerRole,
+        ViewerEmployeeId = src.ViewerEmployeeId,
+        ViewerDepartmentId = src.ViewerDepartmentId,
         Assignments = src.Assignments.Select(a => new TicketEmployeeAssignmentDto
         {
             TicketSupportEmployeeId = a.TicketSupportEmployeeId,
@@ -1687,44 +2129,31 @@ END;
         }).ToList()
     };
 
-    // ---------- Notifications ----------
+    // ---------- Notifications (Strict Department Head & Assigned Staff Only; Never SysAdmin) ----------
 
     private async Task SendNewTicketNotificationAsync(SupportTicketDto ticket, string senderName, TblEmployee? head)
     {
         try
         {
-            var recipients = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (head != null && SmtpEmailOptions.IsEmailAddress(head.EmployeeEmail))
+            // Chỉ gửi thông báo cho Trưởng phòng của phòng ban được khách hàng chọn (không gửi cho sysadmin)
+            if (head == null || !SmtpEmailOptions.IsEmailAddress(head.EmployeeEmail))
             {
-                recipients.Add(head.EmployeeEmail!);
+                return;
             }
-
-            var adminRecipients = await ResolveSupportHandlerEmailsAsync();
-            foreach (var r in adminRecipients) recipients.Add(r);
 
             var systemAdminUrl = BuildSystemAdminTicketUrl(ticket.TicketSupportId);
-            foreach (var recipient in recipients)
-            {
-                try
-                {
-                    var emailMsg = SupportTicketEmailTemplate.BuildNewTicketEmail(
-                        recipient,
-                        ticket,
-                        senderName,
-                        "1 tệp đính kèm",
-                        systemAdminUrl);
+            var emailMsg = SupportTicketEmailTemplate.BuildNewTicketEmail(
+                head.EmployeeEmail!,
+                ticket,
+                senderName,
+                "Không có tệp đính kèm",
+                systemAdminUrl);
 
-                    await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Gửi email thông báo ticket mới tới {Recipient} thất bại.", recipient);
-                }
-            }
+            await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Lỗi khi xử lý gửi email thông báo ticket mới {Code}.", ticket.TicketCode);
+            _logger.LogWarning(ex, "Lỗi khi xử lý gửi email thông báo ticket mới {Code} tới Trưởng phòng.", ticket.TicketCode);
         }
     }
 
@@ -1771,7 +2200,7 @@ END;
             var htmlBody = $@"<div style='font-family: Arial, sans-serif; padding: 20px;'>
                     <h2>Thông báo kết quả xử lý yêu cầu hỗ trợ</h2>
                     <p>Xin chào <strong>{ticket.CreatedByName}</strong>,</p>
-                    <p>Yêu cầu hỗ trợ <strong>{ticket.TicketCode}</strong> của bạn đã được Trưởng phòng ban giải quyết:</p>
+                    <p>Yêu cầu hỗ trợ <strong>{ticket.TicketCode}</strong> của bạn đã được xử lý:</p>
                     <div style='background: #f4f8fa; padding: 15px; border-left: 4px solid #0284c7; margin: 15px 0;'>
                         {resolutionNotice}
                     </div>
@@ -1790,71 +2219,25 @@ END;
     {
         try
         {
-            var recipients = await ResolveSupportHandlerEmailsAsync();
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetService<DbDtctechContext>();
+            if (db == null) return;
+
+            // Chỉ gửi email cho nhân viên đang phụ trách ticket hoặc Trưởng phòng của phòng ban đó (không gửi cho sysadmin)
+            var targetEmpId = ticket.AssignedEmployeeId ?? ticket.DepartmentHeadEmployeeId;
+            if (!targetEmpId.HasValue) return;
+
+            var emp = await db.TblEmployees.AsNoTracking().FirstOrDefaultAsync(e => e.EmployeeId == targetEmpId.Value);
+            if (emp?.EmployeeEmail == null || !SmtpEmailOptions.IsEmailAddress(emp.EmployeeEmail)) return;
+
             var systemAdminUrl = BuildSystemAdminTicketUrl(ticket.TicketSupportId);
-            foreach (var recipient in recipients)
-            {
-                try
-                {
-                    var emailMsg = SupportTicketEmailTemplate.BuildCustomerReplyEmail(recipient, ticket, message, systemAdminUrl);
-                    await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Không thể gửi email phản hồi tới {Recipient}.", recipient);
-                }
-            }
+            var emailMsg = SupportTicketEmailTemplate.BuildCustomerReplyEmail(emp.EmployeeEmail, ticket, message, systemAdminUrl);
+            await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Lỗi khi gửi email phản hồi ticket {Code}.", ticket.TicketCode);
         }
-    }
-
-    private async Task<IReadOnlyList<string>> ResolveSupportHandlerEmailsAsync()
-    {
-        var recipients = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var centralDb = scope.ServiceProvider.GetService<CentralDbContext>();
-            if (centralDb is not null)
-            {
-                var adminEmails = await centralDb.SystemAdmins
-                    .AsNoTracking()
-                    .Where(a => a.IsActive && a.Email != null && a.Email != "")
-                    .Select(a => a.Email!)
-                    .ToListAsync();
-
-                foreach (var email in adminEmails)
-                {
-                    var trimmed = email.Trim();
-                    if (!string.Equals(trimmed, "Me@gmail.com", StringComparison.OrdinalIgnoreCase) && SmtpEmailOptions.IsEmailAddress(trimmed))
-                    {
-                        recipients.Add(trimmed);
-                    }
-                }
-            }
-        }
-        catch { }
-
-        var configured = _configuration["SupportTicket:HandlerEmail"];
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            foreach (var part in configured.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            {
-                if (SmtpEmailOptions.IsEmailAddress(part)) recipients.Add(part);
-            }
-        }
-
-        var smtp = _smtpOptions.Value;
-        if (recipients.Count == 0)
-        {
-            if (SmtpEmailOptions.IsEmailAddress(smtp.FromAddress)) recipients.Add(smtp.FromAddress!);
-            else if (SmtpEmailOptions.IsEmailAddress(smtp.Username)) recipients.Add(smtp.Username!);
-        }
-
-        return recipients.ToList();
     }
 
     private string BuildSystemAdminTicketUrl(int ticketSupportId)

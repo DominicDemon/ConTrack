@@ -40,43 +40,59 @@ public sealed class TenantResolver : ITenantResolver
             ?? _configuration?.GetConnectionString("CentralDatabase")
             ?? "server=localhost;database=MasterDB;uid=sa;pwd=123;TrustServerCertificate=True;Encrypt=False;";
 
-        /*
-         * AsNoTracking:
-         * Chỉ đọc dữ liệu, không cần EF theo dõi thay đổi.
-         */
-        var tenant = await _centralDbContext.Tenants
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                x => x.TenantCode == normalizedTenantCode
-                    && x.Status == TenantStatus.Active,
-                cancellationToken);
-
-        if (tenant is not null)
+        try
         {
-            var connStr = !string.IsNullOrWhiteSpace(tenant.TenantDatabase?.ConnectionString)
-                ? tenant.TenantDatabase.ConnectionString
-                : defaultConnectionString;
-            return new ResolvedTenant(
-                tenant.TenantId,
-                tenant.TenantCode,
-                tenant.TenantName,
-                tenant.TenantDatabase?.Mode ?? TenantDatabaseMode.Shared,
-                connStr);
+            /*
+             * AsNoTracking:
+             * Chỉ đọc dữ liệu, không cần EF theo dõi thay đổi.
+             */
+            var tenant = await _centralDbContext.Tenants
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    x => x.TenantCode.ToLower() == normalizedTenantCode
+                        && x.Status == TenantStatus.Active,
+                    cancellationToken)
+                ?? await _centralDbContext.Tenants
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(
+                        x => x.TenantCode.ToLower() == normalizedTenantCode,
+                        cancellationToken);
+
+            if (tenant is not null)
+            {
+                var connStr = !string.IsNullOrWhiteSpace(tenant.TenantDatabase?.ConnectionString)
+                    ? tenant.TenantDatabase.ConnectionString
+                    : defaultConnectionString;
+                return new ResolvedTenant(
+                    tenant.TenantId,
+                    tenant.TenantCode,
+                    tenant.TenantName,
+                    tenant.TenantDatabase?.Mode ?? TenantDatabaseMode.Shared,
+                    connStr);
+            }
+
+            var firstActive = await _centralDbContext.Tenants
+                .AsNoTracking()
+                .OrderBy(x => x.TenantId)
+                .FirstOrDefaultAsync(x => x.Status == TenantStatus.Active, cancellationToken)
+                ?? await _centralDbContext.Tenants
+                    .AsNoTracking()
+                    .OrderBy(x => x.TenantId)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+            if (firstActive is not null)
+            {
+                return new ResolvedTenant(
+                    firstActive.TenantId,
+                    normalizedTenantCode,
+                    firstActive.TenantName,
+                    TenantDatabaseMode.Shared,
+                    defaultConnectionString);
+            }
         }
-
-        var firstActive = await _centralDbContext.Tenants
-            .AsNoTracking()
-            .OrderBy(x => x.TenantId)
-            .FirstOrDefaultAsync(x => x.Status == TenantStatus.Active, cancellationToken);
-
-        if (firstActive is not null)
+        catch
         {
-            return new ResolvedTenant(
-                firstActive.TenantId,
-                normalizedTenantCode,
-                firstActive.TenantName,
-                TenantDatabaseMode.Shared,
-                defaultConnectionString);
+            // Fallback to MasterDB default tenant if TENANT query fails.
         }
 
         return new ResolvedTenant(

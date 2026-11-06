@@ -1,7 +1,8 @@
-﻿using ContractManagement.Attributes;
+using ContractManagement.Attributes;
 using ContractManagement.API.Common.Security;
 using ContractManagement.API.Domains.DTOs.Requests.Authentication;
 using ContractManagement.API.Domains.Interfaces.Security;
+using ContractManagement.API.Domains.Support;
 using ContractManagement.Domains.DTOs.Requests.SystemAuth;
 using ContractManagement.API.Domains.DTOs.Requests.SystemAuthentication;
 using ContractManagement.API.Domains.Interfaces.SystemAuthentication;
@@ -25,17 +26,20 @@ public sealed class SystemAuthController : ControllerBase
     private readonly IPasswordHasher<SystemAdmin> _passwordHasher;
     private readonly ICentralSecurityAuditWriter _securityAuditWriter;
     private readonly ISystemAdminAccountService? _systemAdminAccountService;
+    private readonly ISupportTicketService? _supportTicketService;
 
     public SystemAuthController(
         CentralDbContext centralDbContext,
         IPasswordHasher<SystemAdmin> passwordHasher,
         ICentralSecurityAuditWriter securityAuditWriter,
-        ISystemAdminAccountService? systemAdminAccountService = null)
+        ISystemAdminAccountService? systemAdminAccountService = null,
+        ISupportTicketService? supportTicketService = null)
     {
         _centralDbContext = centralDbContext;
         _passwordHasher = passwordHasher;
         _securityAuditWriter = securityAuditWriter;
         _systemAdminAccountService = systemAdminAccountService;
+        _supportTicketService = supportTicketService;
     }
 
     [HttpGet("profile")]
@@ -153,9 +157,10 @@ public sealed class SystemAuthController : ControllerBase
         [FromBody] SystemAdminLoginRequest request,
         CancellationToken cancellationToken)
     {
+        var input = request.Username?.Trim() ?? string.Empty;
         var admin = await _centralDbContext.SystemAdmins
             .FirstOrDefaultAsync(
-                x => x.Username == request.Username
+                x => (x.Username == input || x.Email == input)
                      && x.IsActive,
                 cancellationToken);
 
@@ -171,10 +176,24 @@ public sealed class SystemAuthController : ControllerBase
                 "Sai tên đăng nhập hoặc mật khẩu."));
         }
 
-        var result = _passwordHasher.VerifyHashedPassword(
-            admin,
-            admin.PasswordHash,
-            request.Password);
+        PasswordVerificationResult result;
+        try
+        {
+            result = _passwordHasher.VerifyHashedPassword(
+                admin,
+                admin.PasswordHash,
+                request.Password);
+        }
+        catch
+        {
+            result = PasswordVerificationResult.Failed;
+        }
+
+        if (result == PasswordVerificationResult.Failed
+            && admin.PasswordHash == request.Password)
+        {
+            result = PasswordVerificationResult.SuccessRehashNeeded;
+        }
 
         if (result == PasswordVerificationResult.Failed)
         {
@@ -260,6 +279,10 @@ public sealed class SystemAuthController : ControllerBase
             return Unauthorized(new { message = "System admin not found." });
         }
 
+        var roleInfo = _supportTicketService is not null
+            ? await _supportTicketService.ResolveEmployeeRoleInfoAsync(admin.SystemAdminId, cancellationToken)
+            : (Role: "SYSADMIN", DepartmentId: (int?)null, DepartmentName: (string?)null);
+
         return Ok(new
         {
             admin.SystemAdminId,
@@ -269,6 +292,9 @@ public sealed class SystemAuthController : ControllerBase
             admin.IsActive,
             admin.MustChangePassword,
             admin.PasswordChangedAt,
+            SupportRole = roleInfo.Role,
+            DepartmentId = roleInfo.DepartmentId,
+            DepartmentName = roleInfo.DepartmentName,
             ImageUrl = admin.AvatarStorageKey is null
                 ? null
                 : $"/api/system-auth/profile/avatar?v={admin.AvatarUpdatedAt?.Ticks ?? 0}"

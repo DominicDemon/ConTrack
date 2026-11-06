@@ -170,17 +170,27 @@ export function DataTable<TData, TValue>({
           </div>
 
           {searchKey && (
-            <div className="relative w-full md:w-64">
+            <div className="relative w-full md:w-96 flex items-center">
               <Input
                 placeholder={searchPlaceholder}
+                maxLength={255}
                 value={
                   (table.getColumn(searchKey)?.getFilterValue() as string) ?? ""
                 }
                 onChange={(event) =>
                   table.getColumn(searchKey)?.setFilterValue(event.target.value)
                 }
-                className="h-9 bg-background"
+                className="h-9 bg-background pr-9"
               />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="ml-2 shrink-0"
+                aria-label="Tìm kiếm"
+              >
+                <Search className="w-4 h-4" />
+              </Button>
             </div>
           )}
         </div>

@@ -7,7 +7,7 @@ public partial class EMPLOYEE
 {
     public int EmployeeId { get; set; }
 
-    public string? EmployeeCode { get; set; }
+    public string? EmployeeCode { get; set; } = $"EMP-{Guid.NewGuid():N}"[..14].ToUpperInvariant();
 
     public string? EmployeeAccount { get; set; }
 
@@ -25,7 +25,7 @@ public partial class EMPLOYEE
 
     public string? EmployeeMobile { get; set; }
 
-    public string? EmployeePhone { get; set; }
+    public string? EmployeePhone { get; set; } = $"ID{Guid.NewGuid():N}"[..16].ToUpperInvariant();
 
     public string? EmployeeEmail { get; set; }
 

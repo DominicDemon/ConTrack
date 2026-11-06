@@ -80,12 +80,16 @@ public partial class DbDtctechContext
             entity.Property(e => e.Gender)
                 .HasColumnName("employee_gender")
                 .HasMaxLength(10)
-                .IsUnicode(false);
+                .IsUnicode(false)
+                .IsFixedLength(false);
             entity.Property(e => e.EmployeeMobile)
                 .HasColumnName("employee_phone")
                 .HasMaxLength(20)
                 .IsUnicode(false);
-            entity.Ignore(e => e.EmployeePhone);
+            entity.Property(e => e.EmployeePhone)
+                .HasColumnName("employee_personal_identifier")
+                .HasMaxLength(20)
+                .IsUnicode(false);
             entity.Property(e => e.EmployeeEmail)
                 .HasColumnName("employee_email")
                 .HasMaxLength(100)
@@ -440,6 +444,38 @@ public partial class DbDtctechContext
                 .HasConversion<long>();
             entity.Property(e => e.CreatedAtUtc).HasColumnName("notification_recipient_createdatutc").HasColumnType("datetime2");
             entity.Property(e => e.ReadAtUtc).HasColumnName("notification_recipient_readatutc").HasColumnType("datetime2");
+        });
+
+        // 11. AUTHORIZATION_AUDIT -> [AUDIT_LOG] in MasterDB-Optimize_v1.sql
+        modelBuilder.Entity<AUTHORIZATION_AUDIT>(entity =>
+        {
+            entity.ToTable("AUDIT_LOG");
+            entity.HasKey(x => x.AuthorizationAuditId);
+            entity.Property(x => x.AuthorizationAuditId).HasColumnName("audit_log_id");
+            entity.Property(x => x.Action).HasColumnName("action_type").HasMaxLength(50).IsUnicode(false);
+            entity.Property(x => x.TargetType).HasColumnName("entity_name").HasMaxLength(100).IsUnicode(false);
+            entity.Property(x => x.TargetId)
+                .HasColumnName("entity_id")
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .HasConversion(
+                    v => string.IsNullOrEmpty(v) ? "N/A" : v,
+                    v => v);
+            entity.Property(x => x.ActorType).HasColumnName("actor_type").HasMaxLength(20).IsUnicode(false);
+            entity.Property(x => x.ActorEmployeeId).HasColumnName("actor_id").HasConversion<long?>();
+            entity.Property(x => x.IpAddress).HasColumnName("actor_ip_address").HasMaxLength(45).IsUnicode(false);
+            entity.Property(x => x.ChangedFields).HasColumnName("new_data");
+            entity.Property(x => x.OccurredAt).HasColumnName("created_at").HasColumnType("datetime2");
+
+            entity.Ignore(x => x.TenantId);
+            entity.Ignore(x => x.Result);
+            entity.Ignore(x => x.FailureCode);
+            entity.Ignore(x => x.PreviousEmployeeType);
+            entity.Ignore(x => x.NewEmployeeType);
+            entity.Ignore(x => x.PreviousStatus);
+            entity.Ignore(x => x.NewStatus);
+            entity.Ignore(x => x.UserAgent);
+            entity.Ignore(x => x.CorrelationId);
         });
     }
 }

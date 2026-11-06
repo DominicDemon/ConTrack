@@ -97,7 +97,13 @@ public sealed class CentralDbContext : DbContext
             entity.Property(x => x.CentralSecurityAuditId).HasColumnName("audit_log_id");
             entity.Property(x => x.Action).HasColumnName("action_type").HasMaxLength(50).IsUnicode(false);
             entity.Property(x => x.TargetType).HasColumnName("entity_name").HasMaxLength(100).IsUnicode(false);
-            entity.Property(x => x.TargetId).HasColumnName("entity_id").HasMaxLength(100).IsUnicode(false);
+            entity.Property(x => x.TargetId)
+                .HasColumnName("entity_id")
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .HasConversion(
+                    v => string.IsNullOrEmpty(v) ? "N/A" : v,
+                    v => v);
             entity.Property(x => x.Result).HasColumnName("actor_type").HasMaxLength(20).IsUnicode(false);
             entity.Property(x => x.ActorSystemAdminId).HasColumnName("actor_id").HasConversion<long?>();
             entity.Property(x => x.IpAddress).HasColumnName("actor_ip_address").HasMaxLength(45).IsUnicode(false);
@@ -246,14 +252,18 @@ public sealed class CentralDbContext : DbContext
                 .HasConversion(
                     v => v == TenantStatus.Active
                         ? "ACTIVE"
-                        : v == TenantStatus.Suspended
-                            ? "SUSPENDED"
-                            : "FAILED",
+                        : v == TenantStatus.Provisioning
+                            ? "PENDING"
+                            : v == TenantStatus.Suspended
+                                ? "SUSPENDED"
+                                : "FAILED",
                     v => string.Equals(v, "ACTIVE", StringComparison.OrdinalIgnoreCase)
                         ? TenantStatus.Active
-                        : string.Equals(v, "SUSPENDED", StringComparison.OrdinalIgnoreCase)
-                            ? TenantStatus.Suspended
-                            : TenantStatus.Failed)
+                        : string.Equals(v, "PENDING", StringComparison.OrdinalIgnoreCase)
+                            ? TenantStatus.Provisioning
+                            : string.Equals(v, "SUSPENDED", StringComparison.OrdinalIgnoreCase)
+                                ? TenantStatus.Suspended
+                                : TenantStatus.Failed)
                 .HasMaxLength(20)
                 .IsUnicode(false)
                 .IsRequired();

@@ -41,6 +41,7 @@ const STATUS_FILTER_OPTIONS = [
   { label: "Tất cả trạng thái", value: "All" },
   { label: "Chờ tiếp nhận", value: TicketStatus.Open },
   { label: "Đang xử lý", value: TicketStatus.InProgress },
+  { label: "Chờ duyệt kết quả", value: TicketStatus.PendingHeadApproval },
   { label: "Đã xử lý", value: TicketStatus.Resolved },
 ];
 
@@ -63,6 +64,11 @@ function TicketStatusBadge({ status }: { status: TicketStatus }) {
       label: "Đang xử lý",
       className:
         "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/20",
+    },
+    [TicketStatus.PendingHeadApproval]: {
+      label: "Chờ duyệt kết quả",
+      className:
+        "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-500/20",
     },
     [TicketStatus.Resolved]: {
       label: "Đã xử lý",

@@ -20,6 +20,9 @@ export interface UserProfileDto {
   mustChangePassword: boolean;
   passwordChangedAt: string | null;
   imageUrl: string | null;
+  supportRole?: "SYSADMIN" | "DEPARTMENT_HEAD" | "STAFF" | string | null;
+  departmentId?: number | null;
+  departmentName?: string | null;
 }
 
 export const authApi = {

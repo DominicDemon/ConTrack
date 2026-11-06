@@ -3,12 +3,14 @@ import axiosClient from "@/lib/axios-interceptor";
 export enum TicketStatus {
   Open = "Open",
   InProgress = "In_Progress",
+  PendingHeadApproval = "PendingHeadApproval",
   Resolved = "Resolved",
 }
 
 export const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
-  [TicketStatus.Open]: "Chờ tiếp nhận",
-  [TicketStatus.InProgress]: "Đang xử lý",
+  [TicketStatus.Open]: "Chờ Trưởng phòng tiếp nhận",
+  [TicketStatus.InProgress]: "Đang xử lý (Đã giao nhân viên)",
+  [TicketStatus.PendingHeadApproval]: "Chờ Trưởng phòng duyệt kết quả",
   [TicketStatus.Resolved]: "Đã xử lý",
 };
 
@@ -40,6 +42,29 @@ export interface TicketMessageDto {
   createdAt: string;
 }
 
+export interface TicketEmployeeAssignmentDto {
+  ticketSupportEmployeeId: number;
+  ticketSupportId: number;
+  employeeId: number;
+  employeeName: string;
+  employeeEmail?: string | null;
+  assignmentRole: string;
+  assignedAt: string;
+  unassignedAt?: string | null;
+  assignedByEmployeeId?: number | null;
+  assignedByName?: string | null;
+}
+
+export interface DepartmentStaffDto {
+  employeeId: number;
+  employeeName: string;
+  employeeCode?: string | null;
+  employeeEmail?: string | null;
+  departmentId?: number | null;
+  departmentName?: string | null;
+  isManager: boolean;
+}
+
 export interface TicketDto {
   ticketSupportId: number;
   customerId?: number | null;
@@ -51,6 +76,7 @@ export interface TicketDto {
   ticketDescription: string;
   ticketPriority: TicketPriority;
   ticketStatus: TicketStatus;
+  departmentId?: number | null;
   department: string;
   module?: string | null;
   createdByName?: string | null;
@@ -59,8 +85,14 @@ export interface TicketDto {
   ticketClosedAt?: string | null;
   createdAt: string;
   updatedAt?: string | null;
+  departmentHeadEmployeeId?: number | null;
+  departmentHeadName?: string | null;
   assignedEmployeeId?: number | null;
   assignedEmployeeName?: string | null;
+  viewerRole?: "DEPARTMENT_HEAD" | "STAFF" | "CUSTOMER" | "SYSADMIN" | string | null;
+  viewerEmployeeId?: number | null;
+  viewerDepartmentId?: number | null;
+  assignments?: TicketEmployeeAssignmentDto[];
   messages?: TicketMessageDto[];
 }
 
@@ -158,5 +190,49 @@ export const ticketApi = {
     try {
       await axiosClient.patch(`/api/admin/tickets/${id}/status`, payload);
     } catch (_) {}
+  },
+
+  getDepartmentStaff: async (ticketId: number): Promise<DepartmentStaffDto[]> => {
+    try {
+      const res = await axiosClient.get<unknown, DepartmentStaffDto[]>(
+        `/api/admin/tickets/${ticketId}/staff`,
+      );
+      if (Array.isArray(res)) return res;
+    } catch (_) {}
+    return [];
+  },
+
+  assignToStaff: async (
+    ticketId: number,
+    payload: { staffEmployeeId: number; note?: string },
+  ) => {
+    return await axiosClient.post<unknown, TicketDto>(
+      `/api/admin/tickets/${ticketId}/assign`,
+      payload,
+    );
+  },
+
+  staffComplete: async (
+    ticketId: number,
+    payload: { resolution: string },
+  ) => {
+    return await axiosClient.post<unknown, TicketDto>(
+      `/api/admin/tickets/${ticketId}/staff-complete`,
+      payload,
+    );
+  },
+
+  headResolve: async (
+    ticketId: number,
+    payload: {
+      resolution: string;
+      messageToCustomer?: string;
+      closeTicket?: boolean;
+    },
+  ) => {
+    return await axiosClient.post<unknown, TicketDto>(
+      `/api/admin/tickets/${ticketId}/resolve`,
+      payload,
+    );
   },
 };

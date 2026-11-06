@@ -333,142 +333,6 @@ export default function CustomerSupportTicketDetailPage() {
                 </div>
               )}
 
-              {/* KHỐI NGHIỆP VỤ 1: TRƯỞNG PHÒNG PHÂN VIỆC CHO NHÂN VIÊN */}
-              <Card className="border-border shadow-sm border-blue-500/30 bg-blue-500/5">
-                <CardHeader className="pb-3">
-                  <div className="flex items-center gap-2">
-                    <UserPlus className="size-5 text-blue-600 dark:text-blue-400" />
-                    <div>
-                      <CardTitle className="text-base font-semibold text-blue-900 dark:text-blue-200">
-                        Nghiệp vụ Trưởng phòng: Phân công nhân viên xử lý
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Người đứng đầu phòng ban {ticket.department} điều phối giao việc cho nhân viên trong phòng
-                      </CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4 text-sm">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium">Chọn nhân viên phòng ban:</Label>
-                      <Select
-                        value={selectedStaffId}
-                        onValueChange={setSelectedStaffId}
-                        onOpenChange={(open) => {
-                          if (open && departmentStaff.length === 0) void loadStaffList();
-                        }}
-                      >
-                        <SelectTrigger className="bg-background text-sm">
-                          <SelectValue placeholder={loadingStaff ? "Đang tải nhân sự..." : "Chọn nhân viên phụ trách"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {departmentStaff.map((staff) => (
-                            <SelectItem key={staff.employeeId} value={String(staff.employeeId)}>
-                              {staff.employeeName} ({staff.employeeCode ?? "NV"}) {staff.isManager ? " - Trưởng phòng" : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-medium">Ghi chú phân công:</Label>
-                      <Input
-                        placeholder="Nội dung nhắc nhở / hạn chót xử lý..."
-                        value={assignNote}
-                        onChange={(e) => setAssignNote(e.target.value)}
-                        className="bg-background text-sm"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex justify-end">
-                    <Button
-                      size="sm"
-                      onClick={handleAssignToStaff}
-                      disabled={assigning || !selectedStaffId}
-                      className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
-                    >
-                      {assigning ? <Loader2 className="size-4 animate-spin" /> : <UserCheck className="size-4" />}
-                      <span>Xác nhận phân việc</span>
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* KHỐI NGHIỆP VỤ 2: NHÂN VIÊN BÁO CÁO HOÀN TẤT & TRƯỞNG PHÒNG THÔNG BÁO CHO KHÁCH HÀNG */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* 2.1 Dành cho nhân viên được giao việc */}
-                <Card className="border-border shadow-sm border-purple-500/30 bg-purple-500/5">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2">
-                      <FolderKanban className="size-5 text-purple-600 dark:text-purple-400" />
-                      <div>
-                        <CardTitle className="text-sm font-semibold text-purple-900 dark:text-purple-200">
-                          Nhân viên: Báo cáo hoàn tất
-                        </CardTitle>
-                        <CardDescription className="text-xs">
-                          Nhân viên xử lý xong và gửi kết quả lên Trưởng phòng
-                        </CardDescription>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <Textarea
-                      rows={2}
-                      placeholder="Nhập chi tiết các bước đã xử lý xong để báo cáo Trưởng phòng..."
-                      value={staffResolution}
-                      onChange={(e) => setStaffResolution(e.target.value)}
-                      className="bg-background text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={staffCompleting || !staffResolution.trim()}
-                      onClick={handleStaffComplete}
-                      className="w-full text-xs gap-1.5 border-purple-300 text-purple-700 hover:bg-purple-100 dark:border-purple-800 dark:text-purple-300"
-                    >
-                      {staffCompleting && <Loader2 className="size-3.5 animate-spin" />}
-                      <span>Báo cáo hoàn tất tới Trưởng phòng</span>
-                    </Button>
-                  </CardContent>
-                </Card>
-
-                {/* 2.2 Dành cho Trưởng phòng thông báo cho khách hàng */}
-                <Card className="border-border shadow-sm border-emerald-500/30 bg-emerald-500/5">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="size-5 text-emerald-600 dark:text-emerald-400" />
-                      <div>
-                        <CardTitle className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
-                          Trưởng phòng: Thông báo kết quả cho khách
-                        </CardTitle>
-                        <CardDescription className="text-xs">
-                          Duyệt kết quả và chính thức phản hồi lại cho khách hàng
-                        </CardDescription>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <Textarea
-                      rows={2}
-                      placeholder="Phương án / Kết quả giải quyết gửi khách hàng..."
-                      value={headResolution}
-                      onChange={(e) => setHeadResolution(e.target.value)}
-                      className="bg-background text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      disabled={resolving || !headResolution.trim()}
-                      onClick={handleHeadResolve}
-                      className="w-full text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-                    >
-                      {resolving ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                      <span>Thông báo kết quả & Đóng ticket</span>
-                    </Button>
-                  </CardContent>
-                </Card>
-              </div>
-
               {/* Lịch sử trao đổi tin nhắn */}
               <Card className="border-border shadow-sm">
                 <CardHeader className="border-b pb-4">
@@ -560,9 +424,10 @@ export default function CustomerSupportTicketDetailPage() {
                   <Textarea
                     value={replyMessage}
                     onChange={(e) => setReplyMessage(e.target.value)}
-                    rows={3}
-                    placeholder="Nhập nội dung phản hồi trao đổi thêm..."
-                    className="resize-y bg-background text-sm"
+                    rows={5}
+                    maxLength={3000}
+                    placeholder="Nhập nội dung phản hồi trao đổi thêm với bộ phận phụ trách..."
+                    className="min-h-[130px] resize-y bg-background text-sm leading-relaxed"
                   />
 
                   <div className="flex items-center justify-between gap-2">

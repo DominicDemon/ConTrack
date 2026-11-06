@@ -7,7 +7,6 @@ public partial class DbDtctechContext
 {
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
-        ConfigureSupportTickets(modelBuilder);
         modelBuilder.Entity<TblContract>(entity =>
         {
             entity.Property(x => x.ContractDirection).IsRequired();
@@ -82,16 +81,6 @@ public partial class DbDtctechContext
             entity.ToTable(table => table.HasCheckConstraint("CK_TenantLegalProfile_BankNameEn",
                 "LEN(LTRIM(RTRIM([BankNameEn]))) > 0"));
         });
-        modelBuilder.Entity<TblCustomer>(entity =>
-        {
-            entity.Property(x => x.CustomerCompanyEn).HasMaxLength(500).IsUnicode();
-            entity.Property(x => x.CustomerAddressEn).HasMaxLength(500).IsUnicode();
-            entity.Property(x => x.CustomerBankNameEn).HasMaxLength(500).IsUnicode();
-            entity.Property(x => x.CustomerCityEn).HasMaxLength(100).IsUnicode();
-            entity.Property(x => x.CustomerCountryEn).HasMaxLength(100).IsUnicode();
-            entity.Property(x => x.CustomerContactPersonTitleEn).HasMaxLength(200).IsUnicode();
-            entity.Property(x => x.CustomerRepresentativeTitleEn).HasMaxLength(200).IsUnicode();
-        });
         modelBuilder.Entity<TblContractVersionPartySnapshot>(entity =>
         {
             entity.Property(x => x.SubjectCode).HasMaxLength(100).IsUnicode();
@@ -122,6 +111,7 @@ public partial class DbDtctechContext
         modelBuilder.Entity<TblContractAcceptanceRecord>().Property(x => x.ContractSignDate).HasColumnType("date");
         modelBuilder.Entity<TblContractAcceptanceRecord>().Property(x => x.LocationEn)
             .HasMaxLength(500).IsUnicode();
+
+        ConfigureSupportTickets(modelBuilder);
     }
 }
-

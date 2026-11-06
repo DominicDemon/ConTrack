@@ -1,4 +1,5 @@
-﻿using ContractManagement.Infrastructure.Persistence.Central.Entities;
+using ContractManagement.Infrastructure.MultiTenancy.Enums;
+using ContractManagement.Infrastructure.Persistence.Central.Entities;
 using Microsoft.EntityFrameworkCore;
 using ContractManagement.Infrastructure.Persistence.Recovery;
 using ContractManagement.Infrastructure.Persistence.Central.Saas;
@@ -91,106 +92,116 @@ public sealed class CentralDbContext : DbContext
     {
         modelBuilder.Entity<CentralSecurityAudit>(entity =>
         {
-            entity.ToTable("CentralSecurityAudits");
+            entity.ToTable("AUDIT_LOG");
             entity.HasKey(x => x.CentralSecurityAuditId);
-            entity.Property(x => x.TenantCode).HasMaxLength(50).IsUnicode(false);
-            entity.Property(x => x.Action).HasMaxLength(100).IsUnicode(false);
-            entity.Property(x => x.Result).HasMaxLength(30).IsUnicode(false);
-            entity.Property(x => x.FailureCode).HasMaxLength(64).IsUnicode(false);
-            entity.Property(x => x.TargetType).HasMaxLength(50).IsUnicode(false);
-            entity.Property(x => x.TargetId).HasMaxLength(100).IsUnicode(false);
-            entity.Property(x => x.ChangedFields).HasMaxLength(1000).IsUnicode(false);
-            entity.Property(x => x.OccurredAt).HasColumnType("datetime2");
-            entity.Property(x => x.IpAddress).HasMaxLength(45).IsUnicode(false);
-            entity.Property(x => x.UserAgent).HasMaxLength(1024);
-            entity.Property(x => x.CorrelationId).HasMaxLength(100).IsUnicode(false);
-            entity.HasIndex(x => x.OccurredAt);
-            entity.HasIndex(x => new { x.TenantId, x.OccurredAt });
-            entity.HasIndex(x => x.ActorSystemAdminId);
+            entity.Property(x => x.CentralSecurityAuditId).HasColumnName("audit_log_id");
+            entity.Property(x => x.Action).HasColumnName("action_type").HasMaxLength(50).IsUnicode(false);
+            entity.Property(x => x.TargetType).HasColumnName("entity_name").HasMaxLength(100).IsUnicode(false);
+            entity.Property(x => x.TargetId)
+                .HasColumnName("entity_id")
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .HasConversion(
+                    v => string.IsNullOrEmpty(v) ? "N/A" : v,
+                    v => v);
+            entity.Property(x => x.Result).HasColumnName("actor_type").HasMaxLength(20).IsUnicode(false);
+            entity.Property(x => x.ActorSystemAdminId).HasColumnName("actor_id").HasConversion<long?>();
+            entity.Property(x => x.IpAddress).HasColumnName("actor_ip_address").HasMaxLength(45).IsUnicode(false);
+            entity.Property(x => x.ChangedFields).HasColumnName("new_data");
+            entity.Property(x => x.OccurredAt).HasColumnName("created_at").HasColumnType("datetime2");
+
+            entity.Ignore(x => x.TenantId);
+            entity.Ignore(x => x.TenantCode);
+            entity.Ignore(x => x.FailureCode);
+            entity.Ignore(x => x.UserAgent);
+            entity.Ignore(x => x.CorrelationId);
         });
     }
 
     /*
-     *  Cấu hình entity SystemAdmin.
+     *  Cấu hình entity SystemAdmin ánh xạ vào bảng EMPLOYEE trong MasterDB.
      */
     private static void ConfigureSystemAdmin(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<SystemAdmin>(entity =>
         {
-            entity.ToTable("SystemAdmins");
+            entity.ToTable("EMPLOYEE");
 
             entity.HasKey(x => x.SystemAdminId);
 
+            entity.Property(x => x.SystemAdminId)
+                .HasColumnName("employee_id")
+                .HasConversion<long>()
+                .ValueGeneratedOnAdd();
+
+            entity.Property<string>("EmployeeCode")
+                .HasColumnName("employee_code")
+                .HasMaxLength(30)
+                .IsUnicode(false)
+                .HasDefaultValue("SYSADMIN");
+
             entity.Property(x => x.Username)
+                .HasColumnName("employee_username")
                 .HasMaxLength(100)
                 .IsUnicode(false)
                 .IsRequired();
 
             entity.Property(x => x.PasswordHash)
+                .HasColumnName("employee_password_hash")
                 .HasMaxLength(255)
                 .IsUnicode(false)
                 .IsRequired();
 
             entity.Property(x => x.FullName)
+                .HasColumnName("employee_display_name")
                 .HasMaxLength(200)
                 .IsRequired();
 
             entity.Property(x => x.Email)
-                .HasMaxLength(200)
+                .HasColumnName("employee_email")
+                .HasMaxLength(100)
                 .IsUnicode(false);
 
+            entity.Property(x => x.RecoveryEmailVerifiedAt)
+                .HasColumnName("employee_email_verified_at")
+                .HasColumnType("datetime2");
+
             entity.Property(x => x.IsActive)
+                .HasColumnName("employee_status")
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasConversion(
+                    v => v ? "ACTIVE" : "INACTIVE",
+                    v => string.IsNullOrWhiteSpace(v)
+                        || string.Equals(v, "ACTIVE", StringComparison.OrdinalIgnoreCase)
+                        || v == "1")
                 .HasDefaultValue(true);
 
             entity.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
                 .HasColumnType("datetime2");
 
             entity.Property(x => x.UpdatedAt)
+                .HasColumnName("updated_at")
                 .HasColumnType("datetime2");
 
             entity.Property(x => x.PasswordChangedAt)
+                .HasColumnName("employee_last_login_at")
                 .HasColumnType("datetime2");
 
-            entity.Property(x => x.MustChangePassword)
-                .HasDefaultValue(false);
-
-            entity.Property(x => x.SessionVersion)
-                .HasDefaultValue(1);
-
-            entity.Property(x => x.AvatarStorageKey)
-                .HasMaxLength(500);
-
-            entity.Property(x => x.AvatarContentType)
-                .HasMaxLength(100)
-                .IsUnicode(false);
-
-            entity.Property(x => x.AvatarSha256)
-                .HasMaxLength(64)
-                .IsUnicode(false);
-
-            entity.Property(x => x.AvatarUpdatedAt)
-                .HasColumnType("datetime2");
-
-            entity.Property(x => x.CoverStorageKey)
-                .HasMaxLength(500);
-
-            entity.Property(x => x.CoverContentType)
-                .HasMaxLength(100)
-                .IsUnicode(false);
-
-            entity.Property(x => x.CoverSha256)
-                .HasMaxLength(64)
-                .IsUnicode(false);
-
-            entity.Property(x => x.CoverUpdatedAt)
-                .HasColumnType("datetime2");
-
-            entity.Property(x => x.RowVersion)
-                .IsRowVersion()
-                .IsConcurrencyToken();
-
-            entity.HasIndex(x => x.Username)
-                .IsUnique();
+            entity.Ignore(x => x.MustChangePassword);
+            entity.Ignore(x => x.SessionVersion);
+            entity.Ignore(x => x.AvatarStorageKey);
+            entity.Ignore(x => x.AvatarContentType);
+            entity.Ignore(x => x.AvatarFileSize);
+            entity.Ignore(x => x.AvatarSha256);
+            entity.Ignore(x => x.AvatarUpdatedAt);
+            entity.Ignore(x => x.CoverStorageKey);
+            entity.Ignore(x => x.CoverContentType);
+            entity.Ignore(x => x.CoverFileSize);
+            entity.Ignore(x => x.CoverSha256);
+            entity.Ignore(x => x.CoverUpdatedAt);
+            entity.Ignore(x => x.RowVersion);
         });
     }
 
@@ -199,53 +210,78 @@ public sealed class CentralDbContext : DbContext
     {
         modelBuilder.Entity<Tenant>(entity =>
         {
-            entity.ToTable("Tenants");
+            entity.ToTable("TENANT");
 
             entity.HasKey(x => x.TenantId);
 
+            entity.Property(x => x.TenantId)
+                .HasColumnName("tenant_id")
+                .HasConversion<long>()
+                .ValueGeneratedOnAdd();
+
+            entity.Property(x => x.OwnerCustomerId)
+                .HasColumnName("customer_id");
+
+            entity.Property<long>("SaasTypeId")
+                .HasColumnName("saas_type_id")
+                .HasDefaultValue(1L);
+
+            entity.Property<long>("PackageLevelId")
+                .HasColumnName("package_level_id")
+                .HasDefaultValue(1L);
+
             entity.Property(x => x.TenantCode)
+                .HasColumnName("tenant_code")
                 .HasMaxLength(50)
                 .IsUnicode(false)
-                .UseCollation("Latin1_General_100_CI_AS")
                 .IsRequired();
 
             entity.Property(x => x.TenantName)
+                .HasColumnName("tenant_name")
                 .HasMaxLength(500)
                 .IsRequired();
 
-            /*
-             * Enum sẽ được lưu thành:
-             *
-             * Active
-             * Failed
-             * Suspended
-             *
-             * thay vì 1, 2, 3.
-             */
+            entity.Property<string>("TenantSubdomain")
+                .HasColumnName("tenant_subdomain")
+                .HasMaxLength(100)
+                .IsUnicode(false)
+                .HasDefaultValue("default");
+
             entity.Property(x => x.Status)
-                .HasConversion<string>()
-                .HasMaxLength(30)
+                .HasColumnName("tenant_status")
+                .HasConversion(
+                    v => v == TenantStatus.Active
+                        ? "ACTIVE"
+                        : v == TenantStatus.Provisioning
+                            ? "PENDING"
+                            : v == TenantStatus.Suspended
+                                ? "SUSPENDED"
+                                : "FAILED",
+                    v => string.Equals(v, "ACTIVE", StringComparison.OrdinalIgnoreCase)
+                        ? TenantStatus.Active
+                        : string.Equals(v, "PENDING", StringComparison.OrdinalIgnoreCase)
+                            ? TenantStatus.Provisioning
+                            : string.Equals(v, "SUSPENDED", StringComparison.OrdinalIgnoreCase)
+                                ? TenantStatus.Suspended
+                                : TenantStatus.Failed)
+                .HasMaxLength(20)
+                .IsUnicode(false)
                 .IsRequired();
 
-            entity.Property(x => x.ProvisioningError)
-                .HasMaxLength(2000);
-
             entity.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
                 .HasColumnType("datetime2");
 
             entity.Property(x => x.UpdatedAt)
+                .HasColumnName("updated_at")
                 .HasColumnType("datetime2");
 
-            /*
-             * Không cho phép hai tenant cùng TenantCode.
-             */
+            entity.Ignore(x => x.ProvisioningError);
+            entity.Ignore(x => x.TenantDatabaseId);
+            entity.Ignore(x => x.TenantDatabase);
+
             entity.HasIndex(x => x.TenantCode)
                 .IsUnique();
-
-            entity.HasOne(x => x.TenantDatabase)
-                .WithMany(x => x.Tenants)
-                .HasForeignKey(x => x.TenantDatabaseId)
-                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 
@@ -254,37 +290,29 @@ public sealed class CentralDbContext : DbContext
     {
         modelBuilder.Entity<TenantDatabase>(entity =>
         {
-            entity.ToTable("TenantDatabases");
+            entity.ToTable("TENANT_DATABASE");
 
             entity.HasKey(x => x.TenantDatabaseId);
 
-            entity.Property(x => x.DatabaseKey)
-                .HasMaxLength(100)
-                .IsUnicode(false)
-                .IsRequired();
+            entity.Property(x => x.TenantDatabaseId)
+                .HasColumnName("tenant_database_id")
+                .HasConversion<long>()
+                .ValueGeneratedOnAdd();
 
             entity.Property(x => x.DatabaseName)
-                .HasMaxLength(128)
+                .HasColumnName("tenant_database_db_name")
+                .HasMaxLength(255)
                 .IsUnicode(false)
-                .IsRequired();
-
-            entity.Property(x => x.ConnectionString)
-                .HasMaxLength(2000)
-                .IsRequired();
-
-            entity.Property(x => x.Mode)
-                .HasConversion<string>()
-                .HasMaxLength(30)
                 .IsRequired();
 
             entity.Property(x => x.CreatedAt)
+                .HasColumnName("created_at")
                 .HasColumnType("datetime2");
 
-            entity.HasIndex(x => x.DatabaseKey)
-                .IsUnique();
-
-            entity.HasIndex(x => x.DatabaseName)
-                .IsUnique();
+            entity.Ignore(x => x.DatabaseKey);
+            entity.Ignore(x => x.ConnectionString);
+            entity.Ignore(x => x.Mode);
+            entity.Ignore(x => x.Tenants);
         });
     }
 }

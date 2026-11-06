@@ -29,6 +29,13 @@ public sealed class SupportTicketDto
     public string? AssignedEmployeeName { get; set; }
     public DateTime? AssignedAt { get; set; }
 
+    /// <summary>
+    /// Vai trò của người đang xem ticket: "CUSTOMER" | "DEPARTMENT_HEAD" | "STAFF" | "SYSTEM_ADMIN"
+    /// </summary>
+    public string ViewerRole { get; set; } = "CUSTOMER";
+    public int? ViewerEmployeeId { get; set; }
+    public int? ViewerDepartmentId { get; set; }
+
     public List<TicketEmployeeAssignmentDto> Assignments { get; set; } = [];
     public List<SupportTicketMessageDto> Messages { get; set; } = [];
 }
@@ -87,7 +94,9 @@ public sealed class AdminNotificationDto
     public string TenantName { get; set; } = string.Empty;
     public string TenantCode { get; set; } = string.Empty;
     public string Priority { get; set; } = "Medium";
+    public int? DepartmentId { get; set; }
     public string Department { get; set; } = "KỸ THUẬT";
+    public int? TargetEmployeeId { get; set; }
     public string ActionKey { get; set; } = "new-ticket";
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? ReadAtUtc { get; set; }

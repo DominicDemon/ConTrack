@@ -1,4 +1,4 @@
-﻿using ContractManagement.Infrastructure.DatabaseScripts.SeedData;
+using ContractManagement.Infrastructure.DatabaseScripts.SeedData;
 using ContractManagement.Infrastructure.MultiTenancy.Contracts;
 using ContractManagement.Infrastructure.MultiTenancy.Enums;
 using ContractManagement.Infrastructure.MultiTenancy.Interfaces;
@@ -46,18 +46,20 @@ public sealed class TenantProvisioningService
     public async Task<IReadOnlyList<TenantProvisioningResult>> GetAllAsync(
         CancellationToken cancellationToken = default)
     {
-        return await _centralDbContext.Tenants
+        var tenants = await _centralDbContext.Tenants
             .AsNoTracking()
-            .Include(tenant => tenant.TenantDatabase)
             .OrderBy(tenant => tenant.TenantCode)
+            .ToListAsync(cancellationToken);
+
+        return tenants
             .Select(tenant => new TenantProvisioningResult(
                 tenant.TenantId,
                 tenant.TenantCode,
                 tenant.TenantName,
-                tenant.TenantDatabase.DatabaseName,
-                tenant.TenantDatabase.Mode,
+                tenant.TenantDatabase?.DatabaseName ?? "MasterDB",
+                tenant.TenantDatabase?.Mode ?? TenantDatabaseMode.Shared,
                 tenant.Status))
-            .ToListAsync(cancellationToken);
+            .ToList();
     }
 
     public async Task<TenantProvisioningResult>
@@ -89,7 +91,6 @@ public sealed class TenantProvisioningService
          */
         var existingTenant =
             await _centralDbContext.Tenants
-                .Include(x => x.TenantDatabase)
                 .SingleOrDefaultAsync(
                     x => x.TenantCode.ToLower() == normalizedTenantCode,
                     cancellationToken);
@@ -178,6 +179,30 @@ public sealed class TenantProvisioningService
                 command.InitialManager,
                 command.SecurityContext,
                 cancellationToken);
+
+            var sharedConnectionString =
+                _configuration.GetConnectionString("DefaultConnection")
+                ?? _configuration.GetConnectionString("CentralDatabase");
+            if (!string.IsNullOrWhiteSpace(sharedConnectionString)
+                && !string.Equals(sharedConnectionString, connectionString, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    await _tenantSeedData.InitializeAsync(
+                        sharedConnectionString,
+                        tenant.TenantId,
+                        command.InitialManager,
+                        command.SecurityContext,
+                        cancellationToken);
+                }
+                catch (Exception seedSharedEx)
+                {
+                    _logger.LogWarning(
+                        seedSharedEx,
+                        "Đồng bộ tài khoản InitialManager vào MasterDB cho tenant {TenantCode} bị bỏ qua.",
+                        tenantCode);
+                }
+            }
 
             tenant.Status = TenantStatus.Active;
             tenant.ProvisioningError = null;

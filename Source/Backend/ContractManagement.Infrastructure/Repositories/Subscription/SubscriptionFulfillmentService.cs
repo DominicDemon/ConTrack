@@ -249,6 +249,13 @@ public sealed class SubscriptionFulfillmentService
         var tenant = await _db.Tenants.SingleAsync(t => t.TenantId == result.TenantId, cancellationToken);
         var now = UtcNow;
         tenant.OwnerCustomerId = subscription.CustomerId;
+        if (subscription.Customer is not null)
+        {
+            var hasher = new Microsoft.AspNetCore.Identity.PasswordHasher<TblEmployee>();
+            subscription.Customer.CustomerPasswordHash = hasher.HashPassword(
+                new TblEmployee(),
+                password);
+        }
         subscription.TenantId = result.TenantId;
         subscription.Status = Active;
         subscription.StartAt = now;

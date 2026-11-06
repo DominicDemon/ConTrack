@@ -91,6 +91,9 @@ export interface TicketDto {
   assignedEmployeeId?: number | null;
   assignedEmployeeName?: string | null;
   assignedAt?: string | null;
+  viewerRole?: "DEPARTMENT_HEAD" | "STAFF" | "CUSTOMER" | "SYSADMIN" | string | null;
+  viewerEmployeeId?: number | null;
+  viewerDepartmentId?: number | null;
   assignments?: TicketAssignmentDto[];
   messages?: TicketMessageDto[];
 }

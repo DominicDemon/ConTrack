@@ -17,7 +17,17 @@ public static class InternalHost
     private const string UserKey = "Internal.EmployeeId.v1";
     public static async Task Run(WebApplicationBuilder builder, string[] args)
     {
-        if (string.IsNullOrWhiteSpace(builder.Configuration.GetConnectionString("MasterDatabase")))
+        var masterConn = builder.Configuration.GetConnectionString("MasterDatabase");
+        if (string.IsNullOrWhiteSpace(masterConn))
+        {
+            masterConn = builder.Configuration.GetConnectionString("DefaultConnection")
+                ?? builder.Configuration.GetConnectionString("CentralDatabase");
+            if (!string.IsNullOrWhiteSpace(masterConn))
+            {
+                builder.Configuration["ConnectionStrings:MasterDatabase"] = masterConn;
+            }
+        }
+        if (string.IsNullOrWhiteSpace(masterConn))
             throw new InvalidOperationException("Internal mode requires ConnectionStrings:MasterDatabase.");
         builder.Services.AddMasterDatabase(builder.Configuration);
         builder.Services.AddScoped<IInternalRepository, InternalRepository>();

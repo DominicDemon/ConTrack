@@ -47,11 +47,11 @@ const STATUS_FILTER_OPTIONS = [
 ];
 
 const PRIORITY_FILTER_OPTIONS = [
-  { label: "Tất cả ưu tiên", value: "All" },
-  { label: "Thấp", value: TicketPriority.Low },
-  { label: "Bình thường", value: TicketPriority.Medium },
-  { label: "Cao", value: TicketPriority.High },
+  { label: "Tất cả độ ưu tiên", value: "All" },
   { label: "Khẩn cấp", value: TicketPriority.Urgent },
+  { label: "Cao", value: TicketPriority.High },
+  { label: "Bình thường", value: TicketPriority.Medium },
+  { label: "Thấp", value: TicketPriority.Low },
 ];
 
 function TicketStatusBadge({ status }: { status: TicketStatus }) {
@@ -364,6 +364,26 @@ function SupportTicketsContent() {
         },
       },
       {
+        accessorKey: "serviceName",
+        header: "Dịch vụ & Phụ trách",
+        cell: ({ row }) => {
+          const item = row.original;
+          const svc = item.serviceName || item.module || "Dịch vụ chung";
+          return (
+            <div className="flex flex-col max-w-[240px]">
+              <span className="font-semibold text-foreground text-xs truncate">
+                {svc}
+              </span>
+              <span className="text-xs text-muted-foreground truncate mt-0.5">
+                {item.assignedEmployeeName
+                  ? `NV: ${item.assignedEmployeeName}`
+                  : "Chưa phân công NV"}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
         accessorKey: "ticketPriority",
         header: () => <div className="text-center">Độ ưu tiên</div>,
         cell: ({ row }) => (
@@ -429,7 +449,7 @@ function SupportTicketsContent() {
         value={filterPriority}
         onChange={(val) => setFilterPriority(val)}
         options={PRIORITY_FILTER_OPTIONS}
-        placeholder="Mức độ ưu tiên"
+        placeholder="Độ ưu tiên xử lý"
       />
     </>
   );

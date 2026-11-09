@@ -66,6 +66,13 @@ export interface DepartmentStaffDto {
   isManager: boolean;
 }
 
+export interface SupportServiceItemDto {
+  serviceId: number;
+  serviceCode?: string | null;
+  serviceName: string;
+  description?: string | null;
+}
+
 export interface TicketDto {
   ticketSupportId: number;
   customerId?: number | null;
@@ -80,6 +87,8 @@ export interface TicketDto {
   ticketStatus: TicketStatus;
   departmentId?: number | null;
   department: string;
+  serviceId?: number | null;
+  serviceName?: string | null;
   module?: string | null;
   ticketResolution?: string | null;
   ticketResolvedAt?: string | null;
@@ -101,9 +110,11 @@ export interface TicketDto {
 export interface CreateSupportTicketRequestDto {
   subject: string;
   description: string;
-  priority: TicketPriority;
+  priority?: TicketPriority;
   departmentId?: number;
   department: string;
+  serviceId?: number | null;
+  serviceName?: string;
   module?: string;
   attachmentNames?: string[];
 }
@@ -116,6 +127,24 @@ export interface CustomerReplyTicketRequestDto {
 const MOCK_CUSTOMER_TICKETS: TicketDto[] = [];
 
 export const customerTicketApi = {
+  getServices: async (): Promise<SupportServiceItemDto[]> => {
+    try {
+      const response = await axiosClient.get<unknown, SupportServiceItemDto[]>(
+        "/api/support/tickets/services"
+      );
+      if (Array.isArray(response) && response.length > 0) return response;
+    } catch {
+      // Fallback
+    }
+    return [
+      { serviceId: 1, serviceCode: "SVC-CLD-01", serviceName: "Dịch vụ Lưu trữ Đám mây (Cloud Server / VPS)" },
+      { serviceId: 2, serviceCode: "SVC-CON-02", serviceName: "Dịch vụ Quản lý Hợp đồng Điện tử (ConTrack Enterprise)" },
+      { serviceId: 3, serviceCode: "SVC-CA-03", serviceName: "Dịch vụ Chữ ký số & Xác thực Điện tử (eSign / USB Token)" },
+      { serviceId: 4, serviceCode: "SVC-INV-04", serviceName: "Dịch vụ Hóa đơn Điện tử & Thanh toán" },
+      { serviceId: 5, serviceCode: "SVC-SUP-05", serviceName: "Dịch vụ Bảo trì & Hỗ trợ Kỹ thuật Hệ thống" },
+    ];
+  },
+
   getAll: async (params?: { status?: string; priority?: string; keyword?: string }) => {
     try {
       const response = await axiosClient.get<unknown, TicketDto[]>("/api/support/tickets", { params });

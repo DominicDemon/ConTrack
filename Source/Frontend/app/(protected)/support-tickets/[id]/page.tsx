@@ -1,604 +1,536 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { use, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Building2,
+  Calendar,
+  CheckCheck,
   CheckCircle2,
   Clock,
-  Copy,
-  FolderKanban,
-  Headset,
+  FileText,
+  Layers,
   Loader2,
-  MessageSquare,
+  MessageCircle,
   Paperclip,
-  Plus,
-  RefreshCw,
   Send,
-  ShieldCheck,
-  Trash2,
-  User,
   UserCheck,
-  UserPlus,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Header } from "@/components/ui/custom/header";
 import { cn } from "@/lib/utils";
 import {
   customerTicketApi,
-  DepartmentStaffDto,
   TicketDto,
-  TicketPriority,
   TicketStatus,
-  TICKET_PRIORITY_LABELS,
-  TICKET_STATUS_LABELS,
 } from "@/services/ticket-api";
 
-function TicketStatusBadge({ status }: { status: TicketStatus | string }) {
-  const config: Record<string, { label: string; className: string }> = {
-    [TicketStatus.Open]: {
-      label: "Chờ Trưởng phòng tiếp nhận",
-      className:
-        "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20",
-    },
-    [TicketStatus.InProgress]: {
-      label: "Đang xử lý (Đã giao nhân viên)",
-      className:
-        "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/20",
-    },
-    [TicketStatus.PendingHeadApproval]: {
-      label: "Chờ Trưởng phòng duyệt kết quả",
-      className:
-        "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-500/10 dark:text-purple-400 dark:border-purple-500/20",
-    },
-    [TicketStatus.Resolved]: {
-      label: "Đã xử lý xong",
-      className:
-        "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20",
-    },
-  };
-  const current = config[status] ?? {
-    label: status,
-    className: "bg-muted text-muted-foreground",
-  };
-  return (
-    <Badge variant="outline" className={cn("font-medium", current.className)}>
-      {current.label}
-    </Badge>
-  );
+function formatZaloTime(dateStr: string) {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "--:--";
+  const hm = d.toLocaleTimeString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const dm = d.toLocaleDateString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+  return `${hm} • ${dm}`;
 }
 
-export default function CustomerSupportTicketDetailPage() {
-  const params = useParams<{ id: string }>();
+export default function CustomerSupportTicketDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = use(params);
+  const ticketId = Number(id);
   const router = useRouter();
-  const ticketId = Number(params?.id);
 
   const [ticket, setTicket] = useState<TicketDto | null>(null);
   const [loading, setLoading] = useState(true);
-  const [replyMessage, setReplyMessage] = useState("");
-  const [replyAttachmentName, setReplyAttachmentName] = useState<string | undefined>(undefined);
-  const [sendingReply, setSendingReply] = useState(false);
-  const replyFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [activeTab, setActiveTab] = useState<"chat" | "info">("chat");
 
-  // Workflow states
-  const [departmentStaff, setDepartmentStaff] = useState<DepartmentStaffDto[]>([]);
-  const [loadingStaff, setLoadingStaff] = useState(false);
-  const [selectedStaffId, setSelectedStaffId] = useState<string>("");
-  const [assignNote, setAssignNote] = useState("");
-  const [assigning, setAssigning] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [attachmentName, setAttachmentName] = useState("");
+  const [sending, setSending] = useState(false);
 
-  const [staffResolution, setStaffResolution] = useState("");
-  const [staffCompleting, setStaffCompleting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const chatBottomRef = useRef<HTMLDivElement | null>(null);
+  const prevMsgCountRef = useRef<number>(0);
 
-  const [headResolution, setHeadResolution] = useState("");
-  const [headCustomerNotice, setHeadCustomerNotice] = useState("");
-  const [resolving, setResolving] = useState(false);
-
-  const loadTicket = useCallback(async () => {
-    if (!Number.isFinite(ticketId) || ticketId <= 0) return;
-    setLoading(true);
-    try {
-      const data = await customerTicketApi.getById(ticketId);
-      setTicket(data);
-    } catch {
-      toast.error("Không thể tải thông tin chi tiết yêu cầu hỗ trợ");
-    } finally {
-      setLoading(false);
-    }
-  }, [ticketId]);
+  const loadDetail = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        const data = await customerTicketApi.getById(ticketId);
+        if (data) {
+          setTicket(data);
+        }
+      } catch {
+        if (!silent) {
+          toast.error("Không thể tải chi tiết yêu cầu hỗ trợ");
+        }
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [ticketId],
+  );
 
   useEffect(() => {
-    void loadTicket();
-  }, [loadTicket]);
+    void loadDetail(false);
+  }, [loadDetail]);
 
-  const loadStaffList = async () => {
-    if (!ticketId) return;
-    setLoadingStaff(true);
+  // Tự động đồng bộ tin nhắn mới theo thời gian thực (mỗi 2 giây) mà không cần bấm Làm mới
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void loadDetail(true);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [loadDetail]);
+
+  // Tự động cuộn xuống cuối khung chat khi có tin nhắn mới
+  const chatMessages = (ticket?.messages ?? []).filter(
+    (m) => m.ticketMessageType !== "STAFF_REPORT" && m.ticketMessageType !== "ASSIGNMENT",
+  );
+
+  useEffect(() => {
+    if (chatMessages.length !== prevMsgCountRef.current) {
+      prevMsgCountRef.current = chatMessages.length;
+      setTimeout(() => {
+        chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 60);
+    }
+  }, [chatMessages.length]);
+
+  const handleSendReply = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const content = replyText.trim();
+    if (!content || !ticket) return;
+
+    setSending(true);
     try {
-      const staff = await customerTicketApi.getDepartmentStaff(ticketId);
-      setDepartmentStaff(staff);
+      const createdMsg = await customerTicketApi.sendMessage(
+        ticket.ticketSupportId,
+        {
+          messageContent: content,
+          attachmentName: attachmentName || undefined,
+        },
+      );
+
+      // Hiển thị tin nhắn ngay lập tức như Zalo
+      setTicket((prev) =>
+        prev
+          ? {
+              ...prev,
+              messages: [...(prev.messages ?? []), createdMsg],
+            }
+          : prev,
+      );
+      setReplyText("");
+      setAttachmentName("");
+      setTimeout(() => {
+        chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 50);
     } catch {
-      toast.error("Không thể tải danh sách nhân viên phòng ban");
+      toast.error("Gửi tin nhắn thất bại");
     } finally {
-      setLoadingStaff(false);
+      setSending(false);
     }
   };
 
-  const handleCopy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    toast.success(`Đã sao chép ${label}: ${text}`);
-  };
+  if (loading) {
+    return (
+      <>
+        <Header />
+        <div className="grow flex items-center justify-center p-10">
+          <Loader2 className="size-6 animate-spin text-primary" />
+          <span className="ml-2 text-sm text-muted-foreground">
+            Đang tải thông tin yêu cầu hỗ trợ...
+          </span>
+        </div>
+      </>
+    );
+  }
 
-  const handleSendCustomerReply = async () => {
-    if (!ticket || !replyMessage.trim()) return;
+  if (!ticket) {
+    return (
+      <>
+        <Header />
+        <div className="grow p-2 lg:p-10">
+          <Card className="mx-auto max-w-xl border-dashed">
+            <CardContent className="py-12 text-center">
+              <p className="font-semibold text-foreground">
+                Không tìm thấy yêu cầu hỗ trợ hoặc bạn không có quyền truy cập
+              </p>
+              <Button
+                className="mt-4"
+                variant="outline"
+                onClick={() => router.push("/support-tickets")}
+              >
+                <ArrowLeft className="mr-2 size-4" />
+                Quay lại danh sách
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </>
+    );
+  }
 
-    setSendingReply(true);
-    try {
-      const newMsg = await customerTicketApi.sendMessage(ticket.ticketSupportId, {
-        messageContent: replyMessage.trim(),
-        attachmentName: replyAttachmentName,
-      });
-
-      toast.success("Đã gửi phản hồi thành công.");
-      setTicket((prev) => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          messages: [...(prev.messages || []), newMsg],
-        };
-      });
-      setReplyMessage("");
-      setReplyAttachmentName(undefined);
-    } catch {
-      toast.error("Không thể gửi tin nhắn phản hồi. Vui lòng thử lại.");
-    } finally {
-      setSendingReply(false);
-    }
-  };
-
-  const handleAssignToStaff = async () => {
-    if (!selectedStaffId) {
-      toast.error("Vui lòng chọn nhân viên trong phòng ban để phân công.");
-      return;
-    }
-    setAssigning(true);
-    try {
-      const updated = await customerTicketApi.assignToStaff(ticketId, {
-        staffEmployeeId: Number(selectedStaffId),
-        note: assignNote.trim(),
-      });
-      toast.success("Đã phân công việc cho nhân viên phòng ban thành công!");
-      setTicket(updated);
-      setAssignNote("");
-    } catch {
-      toast.error("Lỗi khi phân công nhân viên xử lý.");
-    } finally {
-      setAssigning(false);
-    }
-  };
-
-  const handleStaffComplete = async () => {
-    if (!staffResolution.trim()) {
-      toast.error("Vui lòng nhập kết quả xử lý trước khi báo cáo.");
-      return;
-    }
-    setStaffCompleting(true);
-    try {
-      const updated = await customerTicketApi.staffComplete(ticketId, {
-        resolution: staffResolution.trim(),
-      });
-      toast.success("Đã báo cáo hoàn tất xử lý cho Trưởng phòng duyệt!");
-      setTicket(updated);
-      setStaffResolution("");
-    } catch {
-      toast.error("Lỗi khi báo cáo hoàn tất xử lý.");
-    } finally {
-      setStaffCompleting(false);
-    }
-  };
-
-  const handleHeadResolve = async () => {
-    if (!headResolution.trim()) {
-      toast.error("Vui lòng nhập kết quả xử lý để thông báo tới khách hàng.");
-      return;
-    }
-    setResolving(true);
-    try {
-      const updated = await customerTicketApi.headResolve(ticketId, {
-        resolution: headResolution.trim(),
-        messageToCustomer: headCustomerNotice.trim() || undefined,
-        closeTicket: true,
-      });
-      toast.success("Đã gửi thông báo kết quả cho khách hàng và đóng ticket!");
-      setTicket(updated);
-      setHeadResolution("");
-      setHeadCustomerNotice("");
-    } catch {
-      toast.error("Lỗi khi thông báo kết quả cho khách hàng.");
-    } finally {
-      setResolving(false);
-    }
-  };
+  const isResolved = ticket.ticketStatus === TicketStatus.Resolved;
+  const serviceLabel = ticket.serviceName || ticket.module || "Dịch vụ chung";
 
   return (
     <>
       <Header />
 
       <div className="grow overflow-y-auto p-2 lg:p-10 space-y-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div>
-            <Button
-              variant="ghost"
-              className="-ml-3 mb-2 text-muted-foreground"
-              onClick={() => router.push("/support-tickets")}
-            >
-              <ArrowLeft className="size-4 mr-2" />
-              Quay lại danh sách
-            </Button>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl font-bold tracking-tight text-foreground font-mono">
-                {ticket ? ticket.ticketCode : "Đang tải..."}
-              </h1>
-              {ticket && <TicketStatusBadge status={ticket.ticketStatus} />}
-            </div>
-            {ticket && (
-              <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+        <div className="space-y-6">
+          {/* Page Header đồng bộ với các trang khác */}
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <Button
+                variant="ghost"
+                className="-ml-3 mb-2 text-muted-foreground"
+                onClick={() => router.push("/support-tickets")}
+              >
+                <ArrowLeft className="size-4 mr-2" />
+                Quay lại danh sách yêu cầu
+              </Button>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="text-2xl font-bold tracking-tight text-foreground font-mono">
+                  {ticket.ticketCode}
+                </h1>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "font-semibold",
+                    isResolved
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : ticket.ticketStatus === TicketStatus.InProgress
+                        ? "border-sky-200 bg-sky-50 text-sky-700"
+                        : "border-amber-200 bg-amber-50 text-amber-700",
+                  )}
+                >
+                  {isResolved
+                    ? "Đã đóng / Hoàn tất"
+                    : ticket.ticketStatus === TicketStatus.InProgress
+                      ? "Đang xử lý"
+                      : ticket.ticketStatus === TicketStatus.PendingHeadApproval
+                        ? "Chờ phản hồi"
+                        : "Chờ xử lý"}
+                </Badge>
+                <Badge variant="secondary" className="font-medium">
+                  Dịch vụ: {serviceLabel}
+                </Badge>
+              </div>
+              <p className="mt-2 max-w-3xl text-base font-medium text-foreground">
                 {ticket.ticketSubject}
               </p>
-            )}
+            </div>
+
+            {/* Chuyển trang con (Tabs tách biệt) */}
+            <div className="inline-flex rounded-lg border bg-muted p-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab("chat")}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all",
+                  activeTab === "chat"
+                    ? "bg-background text-primary shadow-xs"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <MessageCircle className="size-4" />
+                <span>Trao đổi trực tuyến</span>
+                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary">
+                  {chatMessages.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("info")}
+                className={cn(
+                  "inline-flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all",
+                  activeTab === "info"
+                    ? "bg-background text-primary shadow-xs"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <FileText className="size-4" />
+                <span>Thông tin & Kết quả xử lý</span>
+              </button>
+            </div>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void loadTicket()}
-              disabled={loading}
-              className="h-9 gap-1.5"
-            >
-              <RefreshCw className={cn("size-4", loading && "animate-spin")} />
-              <span>Làm mới</span>
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => router.push("/support-tickets/create")}
-              className="h-9 shadow-sm"
-            >
-              <Plus className="size-4 mr-2" />
-              Tạo yêu cầu mới
-            </Button>
-          </div>
-        </div>
+          {/* KẾT QUẢ XỬ LÝ NỔI BẬT NẾU ĐÃ CÓ */}
+          {ticket.ticketResolution && (
+            <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/90 p-4 text-emerald-950 shadow-xs dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-200">
+              <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" />
+              <div className="space-y-1 text-sm">
+                <p className="font-bold">
+                  Phản hồi kết quả chính thức từ Trưởng phòng {ticket.department}:
+                </p>
+                <p className="whitespace-pre-line leading-relaxed">
+                  {ticket.ticketResolution}
+                </p>
+              </div>
+            </div>
+          )}
 
-        {loading && !ticket ? (
-          <Card className="border-border shadow-sm p-12 text-center text-sm text-muted-foreground">
-            <Loader2 className="size-6 animate-spin mx-auto mb-2 text-primary" />
-            Đang tải chi tiết yêu cầu hỗ trợ...
-          </Card>
-        ) : !ticket ? (
-          <Card className="border-border shadow-sm p-12 text-center space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Không tìm thấy yêu cầu hỗ trợ này.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => router.push("/support-tickets")}
-            >
-              Quay lại danh sách
-            </Button>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
-            {/* Cột trái (8/12): Luồng trao đổi & Phản hồi & Nghiệp vụ điều phối */}
-            <div className="space-y-6 lg:col-span-7 xl:col-span-8">
-              {/* Kết quả xử lý chính thức thông báo cho khách hàng */}
-              {ticket.ticketResolution && (
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-5 text-sm text-emerald-800 dark:text-emerald-300 flex items-start gap-3">
-                  <CheckCircle2 className="size-5 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
-                  <div className="space-y-1">
-                    <p className="font-semibold text-base">
-                      Kết quả giải quyết từ Trưởng phòng ban ({ticket.department}):
+          {/* TAB 1: KHUNG CHAT ZALO REALTIME */}
+          {activeTab === "chat" && (
+            <div className="flex h-[620px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm dark:border-slate-800">
+              {/* Header Zalo Chat */}
+              <div className="flex items-center justify-between border-b bg-white px-5 py-3.5 dark:bg-slate-900">
+                <div className="flex items-center gap-3">
+                  <div className="relative flex size-10 items-center justify-center rounded-full bg-blue-600 font-bold text-white">
+                    TP
+                    <span className="absolute right-0 bottom-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-foreground">
+                      {ticket.departmentHeadName
+                        ? `Trưởng phòng: ${ticket.departmentHeadName}`
+                        : `Trưởng bộ phận ${ticket.department}`}
                     </p>
-                    <p className="leading-relaxed whitespace-pre-wrap">
-                      {ticket.ticketResolution}
+                    <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                      <span className="size-1.5 rounded-full bg-emerald-500" />
+                      Trực tuyến • Tự động cập nhật tin nhắn tức thì
                     </p>
-                    {ticket.ticketResolvedAt && (
-                      <p className="text-xs text-muted-foreground pt-1">
-                        Thời gian hoàn tất: {new Date(ticket.ticketResolvedAt).toLocaleString("vi-VN")}
-                      </p>
-                    )}
                   </div>
                 </div>
-              )}
 
-              {/* Lịch sử trao đổi tin nhắn */}
-              <Card className="border-border shadow-sm">
-                <CardHeader className="border-b pb-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                        <MessageSquare className="size-5" />
-                      </div>
-                      <div>
-                        <CardTitle className="text-base font-semibold">
-                          Lịch sử trao đổi & Phản hồi
-                        </CardTitle>
-                        <CardDescription className="text-xs">
-                          Trao đổi giữa Khách hàng, Trưởng phòng ({ticket.department}) và Nhân viên xử lý
-                        </CardDescription>
-                      </div>
-                    </div>
-                    <Badge variant="outline" className="text-[11px] font-normal">
-                      {ticket.messages?.length ?? 0} tin nhắn
-                    </Badge>
-                  </div>
-                </CardHeader>
+                <div className="hidden text-right text-xs text-muted-foreground sm:block">
+                  <p className="font-semibold text-foreground">{serviceLabel}</p>
+                  <p>{ticket.department}</p>
+                </div>
+              </div>
 
-                <CardContent className="space-y-4 pt-5 max-h-[500px] overflow-y-auto">
-                  {ticket.messages?.map((msg) => (
+              {/* Message Stream kiểu Zalo */}
+              <div className="flex-1 space-y-4 overflow-y-auto bg-[#eef0f5] p-5 dark:bg-slate-950">
+                {chatMessages.map((msg) => {
+                  const isMine = !msg.isFromEmployee;
+                  return (
                     <div
                       key={msg.ticketMessageId}
                       className={cn(
-                        "rounded-xl border p-4 text-sm max-w-[88%]",
-                        msg.isFromEmployee
-                          ? "mr-auto bg-primary/5 border-primary/20 text-foreground"
-                          : "ml-auto bg-secondary/50 border-border text-foreground",
+                        "flex items-end gap-2.5",
+                        isMine ? "justify-end" : "justify-start",
                       )}
                     >
-                      <div className="flex items-center justify-between gap-4 mb-1.5">
-                        <span className="font-semibold text-xs flex items-center gap-1.5 text-primary">
-                          {msg.isFromEmployee ? (
-                            <>
-                              <ShieldCheck className="size-4" />
-                              <span>{msg.senderName}</span>
-                            </>
-                          ) : (
-                            <>
-                              <User className="size-4 text-muted-foreground" />
-                              <span>{msg.senderName} (Khách hàng)</span>
-                            </>
-                          )}
-                        </span>
-                        <span className="text-[11px] text-muted-foreground">
-                          {new Date(msg.createdAt).toLocaleString("vi-VN", {
-                            day: "2-digit",
-                            month: "2-digit",
-                            year: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </div>
-                      <p className="whitespace-pre-wrap leading-relaxed">
-                        {msg.ticketMessageContent}
-                      </p>
-                      {msg.ticketMessageAttachmentName && (
-                        <div className="mt-2.5 pt-2 border-t border-border/60 flex items-center gap-1.5 text-xs text-primary font-medium">
-                          <Paperclip className="size-3.5" />
-                          <span>
-                            Tệp đính kèm: {msg.ticketMessageAttachmentName}
-                          </span>
+                      {!isMine && (
+                        <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white shadow-xs">
+                          TP
                         </div>
                       )}
-                    </div>
-                  ))}
-                </CardContent>
 
-                <div className="border-t p-5 space-y-3 bg-muted/10">
-                  {replyAttachmentName && (
-                    <div className="inline-flex items-center gap-2 rounded-lg border bg-background px-3 py-1.5 text-xs">
-                      <Paperclip className="size-3.5 text-primary" />
-                      <span className="font-medium">{replyAttachmentName}</span>
-                      <button
-                        type="button"
-                        onClick={() => setReplyAttachmentName(undefined)}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    </div>
-                  )}
-
-                  <Textarea
-                    value={replyMessage}
-                    onChange={(e) => setReplyMessage(e.target.value)}
-                    rows={5}
-                    maxLength={3000}
-                    placeholder="Nhập nội dung phản hồi trao đổi thêm với bộ phận phụ trách..."
-                    className="min-h-[130px] resize-y bg-background text-sm leading-relaxed"
-                  />
-
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <input
-                        ref={replyFileInputRef}
-                        type="file"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) setReplyAttachmentName(file.name);
-                          e.target.value = "";
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-9 gap-1.5 text-xs"
-                        onClick={() => replyFileInputRef.current?.click()}
-                      >
-                        <Paperclip className="size-3.5" />
-                        <span>Đính kèm tệp</span>
-                      </Button>
-                    </div>
-
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={!replyMessage.trim() || sendingReply}
-                      onClick={handleSendCustomerReply}
-                      className="h-9 gap-1.5 px-5 shadow-sm"
-                    >
-                      {sendingReply ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Send className="size-4" />
-                      )}
-                      <span>Gửi phản hồi</span>
-                    </Button>
-                  </div>
-                </div>
-              </Card>
-            </div>
-
-            {/* Cột phải (4/12): Thông tin điều phối, phòng ban, nhân viên */}
-            <div className="space-y-6 lg:col-span-5 xl:col-span-4">
-              <Card className="border-border shadow-sm">
-                <CardHeader className="border-b pb-4">
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex size-9 items-center justify-center rounded-lg bg-secondary text-foreground">
-                      <Building2 className="size-5" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base font-semibold">
-                        Thông tin Điều phối
-                      </CardTitle>
-                      <CardDescription className="text-xs">
-                        Chi tiết người tiếp nhận và phân công xử lý
-                      </CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3 pt-5 text-sm">
-                  <div className="rounded-xl border bg-muted/30 p-3.5 space-y-2.5 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Mã Ticket:</span>
-                      <div className="flex items-center gap-1.5 font-mono font-semibold text-foreground">
-                        <span>{ticket.ticketCode}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(ticket.ticketCode, "mã ticket")}
-                          className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                        >
-                          <Copy className="size-3" />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Trạng thái:</span>
-                      <span className="font-semibold text-foreground">
-                        {TICKET_STATUS_LABELS[ticket.ticketStatus] ?? ticket.ticketStatus}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Mức độ ưu tiên:</span>
-                      <Badge
-                        variant="outline"
+                      <div
                         className={cn(
-                          "text-[11px]",
-                          ticket.ticketPriority === TicketPriority.Urgent &&
-                            "border-rose-500/30 bg-rose-500/10 text-rose-600",
+                          "max-w-[75%] rounded-2xl px-4 py-2.5 shadow-xs",
+                          isMine
+                            ? "rounded-br-xs bg-[#e5efff] text-slate-900 border border-blue-200/80 dark:bg-blue-600 dark:text-white dark:border-blue-500"
+                            : "rounded-bl-xs bg-white text-slate-900 border border-slate-200/80 dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700",
                         )}
                       >
-                        {TICKET_PRIORITY_LABELS[ticket.ticketPriority] ?? ticket.ticketPriority}
-                      </Badge>
-                    </div>
+                        {!isMine && (
+                          <p className="mb-1 text-[11px] font-bold text-blue-600 dark:text-blue-400">
+                            {msg.senderName} ({ticket.department})
+                          </p>
+                        )}
 
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Phòng ban tiếp nhận:</span>
-                      <span className="font-medium text-foreground">{ticket.department}</span>
-                    </div>
+                        <p className="whitespace-pre-line text-sm leading-relaxed">
+                          {msg.ticketMessageContent}
+                        </p>
 
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Trưởng phòng (Bên nhận ban đầu):</span>
-                      <span className="font-semibold text-foreground text-right text-blue-600 dark:text-blue-400">
-                        {ticket.departmentHeadName || "Trưởng phòng ban"}
-                      </span>
-                    </div>
+                        {msg.ticketMessageAttachmentName && (
+                          <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-black/5 px-2.5 py-1 text-xs font-medium">
+                            <Paperclip className="size-3.5" />
+                            <span>{msg.ticketMessageAttachmentName}</span>
+                          </div>
+                        )}
 
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-muted-foreground shrink-0">Nhân viên được phân công:</span>
-                      <span className="font-semibold text-primary text-right">
-                        {ticket.assignedEmployeeName || "Chưa giao (Trưởng phòng đang giữ)"}
-                      </span>
+                        <div
+                          className={cn(
+                            "mt-1.5 flex items-center gap-1 text-[11px]",
+                            isMine
+                              ? "justify-end text-slate-500 dark:text-blue-100"
+                              : "justify-start text-slate-400",
+                          )}
+                        >
+                          <span>{formatZaloTime(msg.createdAt)}</span>
+                          {isMine && <CheckCheck className="size-3.5 text-blue-600 dark:text-blue-200" />}
+                        </div>
+                      </div>
                     </div>
+                  );
+                })}
+                <div ref={chatBottomRef} />
+              </div>
 
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Thời gian tạo:</span>
-                      <span className="text-foreground flex items-center gap-1">
-                        <Clock className="size-3 text-muted-foreground" />
-                        {new Date(ticket.createdAt).toLocaleString("vi-VN")}
-                      </span>
+              {/* Input gửi tin nhắn kiểu Zalo */}
+              <form
+                onSubmit={handleSendReply}
+                className="border-t bg-white p-3.5 dark:bg-slate-900"
+              >
+                {attachmentName && (
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-md bg-blue-50 px-3 py-1 text-xs text-blue-700">
+                    <Paperclip className="size-3.5" />
+                    <span>{attachmentName}</span>
+                    <button
+                      type="button"
+                      onClick={() => setAttachmentName("")}
+                      className="font-bold hover:text-rose-600"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setAttachmentName(f.name);
+                      e.target.value = "";
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Đính kèm tệp"
+                    className="shrink-0 text-slate-500 hover:text-blue-600"
+                  >
+                    <Paperclip className="size-5" />
+                  </Button>
+
+                  <input
+                    type="text"
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder="Nhập tin nhắn trao đổi với Trưởng phòng... (Nhấn Enter để gửi ngay)"
+                    className="h-10 flex-1 rounded-full border border-slate-300 bg-slate-50 px-4 text-sm focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                  />
+
+                  <Button
+                    type="submit"
+                    disabled={sending || !replyText.trim()}
+                    className="h-10 rounded-full bg-blue-600 px-5 text-white hover:bg-blue-700"
+                  >
+                    {sending ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Send className="size-4" />
+                    )}
+                    <span className="ml-1.5 hidden sm:inline">Gửi ngay</span>
+                  </Button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* TAB 2: THÔNG TIN CHI TIẾT YÊU CẦU & KẾT QUẢ */}
+          {activeTab === "info" && (
+            <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+              <Card className="md:col-span-2 shadow-xs">
+                <CardHeader className="border-b pb-3">
+                  <CardTitle className="text-base font-bold">
+                    Nội dung câu hỏi ban đầu
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4">
+                  <div className="rounded-lg border bg-slate-50/70 p-4 text-sm leading-relaxed whitespace-pre-line dark:bg-slate-900/50">
+                    {ticket.ticketDescription}
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="shadow-xs">
+                <CardHeader className="border-b pb-3">
+                  <CardTitle className="text-base font-bold">
+                    Thông tin phiếu hỗ trợ
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4 text-sm">
+                  <div className="flex items-start gap-3">
+                    <Layers className="mt-0.5 size-4 shrink-0 text-teal-600" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Dịch vụ</p>
+                      <p className="font-semibold text-foreground">
+                        {serviceLabel}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Lịch sử phân công (TICKET_SUPPORT_EMPLOYEE) */}
-                  {ticket.assignments && ticket.assignments.length > 0 && (
-                    <div className="mt-4 pt-3 border-t">
-                      <p className="font-semibold text-xs text-foreground mb-2 flex items-center gap-1.5">
-                        <UserCheck className="size-3.5 text-primary" />
-                        Lịch sử phân công (TICKET_SUPPORT_EMPLOYEE):
+                  <div className="flex items-start gap-3">
+                    <Building2 className="mt-0.5 size-4 shrink-0 text-teal-600" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">
+                        Phòng ban tiếp nhận
                       </p>
-                      <div className="space-y-2">
-                        {ticket.assignments.map((asg) => (
-                          <div
-                            key={asg.ticketSupportEmployeeId}
-                            className="p-2.5 rounded-lg border bg-background/50 text-[11px] space-y-1"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="font-medium text-foreground">
-                                {asg.employeeName}
-                              </span>
-                              <Badge variant="secondary" className="text-[10px]">
-                                {asg.assignmentRole === "DEPARTMENT_HEAD"
-                                  ? "Trưởng phòng tiếp nhận"
-                                  : "Nhân viên xử lý"}
-                              </Badge>
-                            </div>
-                            {asg.assignedByName && (
-                              <p className="text-muted-foreground">
-                                Phân công bởi: {asg.assignedByName}
-                              </p>
-                            )}
-                            {asg.assignedAt && (
-                              <p className="text-muted-foreground text-[10px]">
-                                Thời gian: {new Date(asg.assignedAt).toLocaleString("vi-VN")}
-                              </p>
-                            )}
-                          </div>
-                        ))}
+                      <p className="font-semibold text-foreground">
+                        {ticket.department}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <UserCheck className="mt-0.5 size-4 shrink-0 text-teal-600" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">
+                        Trưởng phòng phụ trách
+                      </p>
+                      <p className="font-semibold text-foreground">
+                        {ticket.departmentHeadName || "Đang điều phối"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <Calendar className="mt-0.5 size-4 shrink-0 text-teal-600" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">
+                        Thời gian gửi
+                      </p>
+                      <p className="font-medium text-foreground">
+                        {formatZaloTime(ticket.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {ticket.ticketResolvedAt && (
+                    <div className="flex items-start gap-3">
+                      <Clock className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">
+                          Thời gian hoàn tất
+                        </p>
+                        <p className="font-medium text-emerald-600">
+                          {formatZaloTime(ticket.ticketResolvedAt)}
+                        </p>
                       </div>
                     </div>
                   )}
                 </CardContent>
               </Card>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </>
   );

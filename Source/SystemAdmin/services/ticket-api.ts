@@ -78,6 +78,8 @@ export interface TicketDto {
   ticketStatus: TicketStatus;
   departmentId?: number | null;
   department: string;
+  serviceId?: number | null;
+  serviceName?: string | null;
   module?: string | null;
   createdByName?: string | null;
   ticketResolution?: string | null;
@@ -162,28 +164,11 @@ export const ticketApi = {
   },
 
   replyMessage: async (id: number, payload: ReplyTicketRequestDto) => {
-    const newMsg: TicketMessageDto = {
-      ticketMessageId: Date.now() % 1000000,
-      ticketSupportId: id,
-      senderEmployeeId: 1,
-      senderName: "System Administrator",
-      isFromEmployee: true,
-      ticketMessageContent: payload.messageContent,
-      ticketMessageType: "TEXT",
-      createdAt: new Date().toISOString(),
-    };
-
-    try {
-      const res = await axiosClient.post<unknown, TicketMessageDto>(
-        `/api/admin/tickets/${id}/messages`,
-        payload,
-      );
-      if (res && typeof res === "object" && "ticketMessageId" in res) {
-        return res;
-      }
-    } catch (_) {}
-
-    return newMsg;
+    const res = await axiosClient.post<unknown, TicketMessageDto>(
+      `/api/admin/tickets/${id}/messages`,
+      payload,
+    );
+    return res;
   },
 
   updateStatus: async (id: number, payload: UpdateTicketStatusRequestDto) => {
@@ -204,7 +189,7 @@ export const ticketApi = {
 
   assignToStaff: async (
     ticketId: number,
-    payload: { staffEmployeeId: number; note?: string },
+    payload: { staffEmployeeId: number; priority?: TicketPriority | string; note?: string },
   ) => {
     return await axiosClient.post<unknown, TicketDto>(
       `/api/admin/tickets/${ticketId}/assign`,

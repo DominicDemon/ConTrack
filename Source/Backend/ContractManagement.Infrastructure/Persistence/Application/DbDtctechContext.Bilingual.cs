@@ -7,6 +7,7 @@ public partial class DbDtctechContext
 {
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        ConfigureElectronicSigning(modelBuilder);
         modelBuilder.Entity<TblContract>(entity =>
         {
             entity.Property(x => x.ContractDirection).IsRequired();

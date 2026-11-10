@@ -16,6 +16,8 @@ public sealed class SupportTicketDto
     public string TicketStatus { get; set; } = "Open";
     public int? DepartmentId { get; set; }
     public string Department { get; set; } = "KỸ THUẬT";
+    public long? ServiceId { get; set; }
+    public string? ServiceName { get; set; }
     public string? Module { get; set; }
     public string? TicketResolution { get; set; }
     public DateTime? TicketResolvedAt { get; set; }
@@ -28,6 +30,13 @@ public sealed class SupportTicketDto
     public int? AssignedEmployeeId { get; set; }
     public string? AssignedEmployeeName { get; set; }
     public DateTime? AssignedAt { get; set; }
+
+    /// <summary>
+    /// Vai trò của người đang xem ticket: "CUSTOMER" | "DEPARTMENT_HEAD" | "STAFF" | "SYSTEM_ADMIN"
+    /// </summary>
+    public string ViewerRole { get; set; } = "CUSTOMER";
+    public int? ViewerEmployeeId { get; set; }
+    public int? ViewerDepartmentId { get; set; }
 
     public List<TicketEmployeeAssignmentDto> Assignments { get; set; } = [];
     public List<SupportTicketMessageDto> Messages { get; set; } = [];
@@ -59,6 +68,13 @@ public sealed class DepartmentEmployeeDto
     public bool IsManager { get; set; }
 }
 
+public sealed class SupportServiceItemDto
+{
+    public long ServiceId { get; set; }
+    public string ServiceName { get; set; } = string.Empty;
+    public string? Description { get; set; }
+}
+
 public sealed class SupportTicketMessageDto
 {
     public int TicketMessageId { get; set; }
@@ -87,7 +103,9 @@ public sealed class AdminNotificationDto
     public string TenantName { get; set; } = string.Empty;
     public string TenantCode { get; set; } = string.Empty;
     public string Priority { get; set; } = "Medium";
+    public int? DepartmentId { get; set; }
     public string Department { get; set; } = "KỸ THUẬT";
+    public int? TargetEmployeeId { get; set; }
     public string ActionKey { get; set; } = "new-ticket";
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? ReadAtUtc { get; set; }
@@ -106,6 +124,7 @@ public sealed class CreateSupportTicketRequestDto
     public string? Module { get; set; }
     public long? ProductId { get; set; }
     public long? ServiceId { get; set; }
+    public string? ServiceName { get; set; }
     public List<string>? AttachmentNames { get; set; }
     public List<string>? AttachmentUrls { get; set; }
 
@@ -117,6 +136,7 @@ public sealed class CreateSupportTicketRequestDto
 public sealed class AssignTicketToStaffRequestDto
 {
     public int StaffEmployeeId { get; set; }
+    public string? Priority { get; set; }
     public string? Note { get; set; }
 }
 

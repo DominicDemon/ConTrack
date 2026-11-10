@@ -30,15 +30,18 @@ public sealed class NotificationDispatchWorker : BackgroundService
             {
                 await using var centralScope = _scopes.CreateAsyncScope();
                 var central = centralScope.ServiceProvider.GetRequiredService<CentralDbContext>();
-                var tenants = await central.Tenants.AsNoTracking()
+                var activeTenants = await central.Tenants.AsNoTracking()
                     .Where(x => x.Status == TenantStatus.Active)
+                    .ToListAsync(stoppingToken);
+                var tenants = activeTenants
                     .Select(x => new ResolvedTenant(x.TenantId, x.TenantCode, x.TenantName,
                         x.TenantDatabase.Mode, x.TenantDatabase.ConnectionString))
-                    .ToListAsync(stoppingToken);
+                    .ToList();
                 foreach (var tenant in tenants)
                 {
                     try { await ProcessTenantAsync(tenant, stoppingToken); }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+                    catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 208) { }
                     catch (Exception ex)
                     {
                         _logger.LogWarning("Notification dispatch tenant {TenantId} failed: {ErrorCode}",

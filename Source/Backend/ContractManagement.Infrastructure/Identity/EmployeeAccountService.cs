@@ -400,6 +400,35 @@ public sealed class EmployeeAccountService : IEmployeeAccountService
         bool asTracking,
         CancellationToken cancellationToken)
     {
+        var actorKind = _httpContextAccessor.HttpContext?.Session.GetString("ActorKind");
+        if (string.Equals(actorKind, "Customer", StringComparison.OrdinalIgnoreCase) || employeeId < 0)
+        {
+            var custId = Math.Abs(employeeId);
+            var customer = await _dbContext.TblCustomers
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.CustomerId == custId, cancellationToken);
+            if (customer is not null && customer.Status != 0)
+            {
+                var mappedAcct = customer.CustomerEmail ?? customer.CustomerPhone ?? $"cust.{customer.CustomerId}";
+                return new TblEmployee
+                {
+                    EmployeeId = customer.CustomerId,
+                    EmployeeCode = $"CUST-{customer.CustomerId:D4}",
+                    EmployeeAccount = mappedAcct,
+                    EmployeeFullName = customer.CustomerFullName ?? mappedAcct,
+                    EmployeeEmail = customer.CustomerEmail,
+                    EmployeeMobile = customer.CustomerPhone,
+                    EmployeeAddress = customer.CustomerAddress,
+                    EmployeeBirthDate = customer.CustomerBirthday,
+                    EmployeeType = 6,
+                    Status = 1,
+                    MustChangePassword = false,
+                    SessionVersion = 1,
+                    RowVersion = new byte[8]
+                };
+            }
+        }
+
         var query = _dbContext.TblEmployees.AsQueryable();
         if (!asTracking)
         {

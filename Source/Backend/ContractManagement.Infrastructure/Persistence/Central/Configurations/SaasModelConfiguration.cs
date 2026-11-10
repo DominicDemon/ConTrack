@@ -155,7 +155,7 @@ public static class SaasModelConfiguration
             e.ToTable("SUBSCRIPTION");
             e.HasKey(x => x.SubscriptionId).HasName("PK_SUBSCRIPTION");
             e.Property(x => x.SubscriptionId).HasColumnName("subscription_id");
-            e.Property(x => x.TenantId).HasColumnName("tenant_id");               // NULL được
+            e.Property(x => x.TenantId).HasColumnName("tenant_id").HasConversion<long?>(); // NULL được
             e.Property(x => x.CustomerId).HasColumnName("customer_id");
             e.Property(x => x.PlanVersionId).HasColumnName("plan_version_id");
             e.Property(x => x.Status).HasColumnName("subscription_status").Ascii(20).HasDefaultValue("PENDING");

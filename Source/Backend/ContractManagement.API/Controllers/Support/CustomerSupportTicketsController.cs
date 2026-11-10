@@ -22,6 +22,13 @@ public sealed class CustomerSupportTicketsController : ControllerBase
         _currentTenant = currentTenant;
     }
 
+    [HttpGet("services")]
+    public async Task<IActionResult> GetServices(CancellationToken cancellationToken)
+    {
+        var services = await _ticketService.GetAvailableServicesAsync(cancellationToken);
+        return Ok(services);
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetAll(
         [FromQuery] string? status,

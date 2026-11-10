@@ -1,3 +1,4 @@
+using ContractManagement.API.Common.Security;
 using ContractManagement.API.Domains.Support;
 using ContractManagement.Attributes;
 using ContractManagement.Filter;
@@ -24,7 +25,9 @@ public sealed class AdminNotificationsController : ControllerBase
         [FromQuery] int limit = 20,
         CancellationToken cancellationToken = default)
     {
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 0;
         var (items, unreadCount) = await _ticketService.GetAdminNotificationsAsync(
+            systemAdminId,
             status,
             limit,
             cancellationToken);
@@ -39,7 +42,8 @@ public sealed class AdminNotificationsController : ControllerBase
     [HttpGet("unread-count")]
     public async Task<IActionResult> UnreadCount(CancellationToken cancellationToken = default)
     {
-        var count = await _ticketService.GetAdminUnreadNotificationCountAsync(cancellationToken);
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 0;
+        var count = await _ticketService.GetAdminUnreadNotificationCountAsync(systemAdminId, cancellationToken);
         return Ok(new { count });
     }
 
@@ -48,7 +52,8 @@ public sealed class AdminNotificationsController : ControllerBase
         int id,
         CancellationToken cancellationToken = default)
     {
-        var found = await _ticketService.MarkAdminNotificationReadAsync(id, cancellationToken);
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 0;
+        var found = await _ticketService.MarkAdminNotificationReadAsync(systemAdminId, id, cancellationToken);
         if (!found)
         {
             return NotFound();
@@ -60,7 +65,8 @@ public sealed class AdminNotificationsController : ControllerBase
     [HttpPost("mark-all-read")]
     public async Task<IActionResult> MarkAllRead(CancellationToken cancellationToken = default)
     {
-        var changed = await _ticketService.MarkAllAdminNotificationsReadAsync(cancellationToken);
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 0;
+        var changed = await _ticketService.MarkAllAdminNotificationsReadAsync(systemAdminId, cancellationToken);
         return Ok(new { changed });
     }
 }

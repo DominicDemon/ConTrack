@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { FileText, ArrowRight, Eye, EyeOff, Check } from "lucide-react";
 import { APP_NAME } from "@/lib/application-branding";
-import { internalApi, type InternalUser } from "@/services/internal-api";
+import { internalApi, homePath, type InternalUser } from "@/services/internal-api";
 import { InternalTheme, internalStyles as ui } from "./internal-theme";
 import s from "./workspace.module.css";
 
@@ -11,9 +11,9 @@ export default function InternalLogin() {
   const router = useRouter();
   const [username, setUsername] = useState(""); const [password, setPassword] = useState("");
   const [show, setShow] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  useEffect(() => { void internalApi<InternalUser>("/auth/me").then(() => router.replace("/workspace/contracts/drafts")).catch(() => {}); }, [router]);
+  useEffect(() => { void internalApi<InternalUser>("/auth/me").then(user => router.replace(homePath(user))).catch(() => {}); }, [router]);
   async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError("");
-    try { await internalApi("/auth/login", "POST", { username, password }); router.replace("/workspace/contracts/drafts"); }
+    try { router.replace(homePath(await internalApi<InternalUser>("/auth/login", "POST", { username, password }))); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   return <InternalTheme><div className={s.login}>
     <section className={s.loginIntro}>

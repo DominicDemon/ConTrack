@@ -143,8 +143,8 @@ public class ContractReviewTests
         var reviews = sp.GetRequiredService<ContractReviewRepository>();
         var portal = sp.GetRequiredService<CustomerPortalRepository>();
         var writer = sp.GetRequiredService<SmsOutboxWriter>();
-        var saleId = await db.Employees.Where(e => e.EmployeeUsername == "sale.local").Select(e => e.EmployeeId).SingleAsync();
-        var officeId = await db.Employees.Where(e => e.EmployeeUsername == "office.local").Select(e => e.EmployeeId).SingleAsync();
+        var saleId = await db.Employees.Where(e => e.EmployeeUsername == "sale").Select(e => e.EmployeeId).SingleAsync();
+        var officeId = await db.Employees.Where(e => e.EmployeeUsername == "admin").Select(e => e.EmployeeId).SingleAsync();
         var sale = (await repo.GetUser(saleId, default))!; var office = (await repo.GetUser(officeId, default))!;
         var other = new InternalUser(-1, "Other", "other", ["draft.write"]);
         var template = (await repo.Templates(default)).First();

@@ -390,7 +390,7 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             if (approved)
             {
                 var workflow = await db.ApprovalWorkflows.Where(w => w.ApprovalWorkflowCode == ContractReviewRepository.InternalCheckWorkflow && w.ApprovalWorkflowIsactive)
-                    .Select(w => (long?)w.ApprovalWorkflowId).FirstOrDefaultAsync(ct) ?? throw new InvalidOperationException("Missing CONTRACT_INTERNAL_CHECK workflow; run the internal bootstrap.");
+                    .Select(w => (long?)w.ApprovalWorkflowId).FirstOrDefaultAsync(ct) ?? throw new InvalidOperationException("Missing CONTRACT_INTERNAL_CHECK workflow; seed it in the MASTER database script.");
                 db.ContractApprovalRequests.Add(new ContractApprovalRequest { ContractDocumentId = doc.ContractDocumentId, ContractVersionId = review.ContractVersionId,
                     ApprovalWorkflowId = workflow, SubmittedByEmployeeId = doc.EmployeeId, SubmittedAt = now, ContractApprovalRequestStatus = 0, ContractReviewRequestId = reviewId });
             }

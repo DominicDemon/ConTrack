@@ -1,4 +1,9 @@
-export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean };
+export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean; canManageEmployees: boolean; mustChangePassword: boolean };
+/** Where a signed-in employee starts: account admins without draft rights go to employee management. */
+export const homePath = (user: InternalUser) => user.canWrite || !user.canManageEmployees ? "/workspace/contracts/drafts" : "/workspace/admin/employees";
+export type EmployeeAdminRow = { id: string; code: string; username: string; name: string; email: string | null; phone: string | null; status: "ACTIVE" | "LOCKED" | string; mustChangePassword: boolean; lastLoginAt: string | null; roleIds: string[] };
+export type RoleOption = { id: string; code: string; name: string; permissions: string[] };
+export type TemporaryPasswordResult = { employee: EmployeeAdminRow; temporaryPassword: string };
 export type DraftField = { key: string; label: string; required: boolean; dataType?: "TEXT" | "NUMBER" | "DATE" | "SELECT"; options?: string[]; min?: number | null; max?: number | null };
 export type DraftTerm = { key: string; title: string; content: string; editable: boolean };
 export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; fields: DraftField[]; terms: DraftTerm[] };

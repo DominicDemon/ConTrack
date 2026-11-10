@@ -23,8 +23,8 @@ public static class InternalHost
         builder.Services.AddMasterDatabase(builder.Configuration);
         builder.Services.AddScoped<IInternalRepository, InternalRepository>();
         builder.Services.AddScoped<InternalDraftService>();
-        builder.Services.AddScoped<InternalBootstrap>();
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
+        builder.Services.AddScoped<IEmployeeAdmin, EmployeeAdminRepository>();
         builder.Services.AddScoped<IContractReviewRepository, ContractReviewRepository>();
         builder.Services.AddScoped<ICustomerPortalRepository, CustomerPortalRepository>();
         builder.Services.AddScoped<SmsCallbackProcessor>();
@@ -66,14 +66,6 @@ public static class InternalHost
             o.AddSecurityRequirement(doc => new OpenApiSecurityRequirement { [new OpenApiSecuritySchemeReference("csrf", doc)] = [] });
         });
         var app = builder.Build();
-        if (args.Contains("--seed-internal"))
-        {
-            await using var scope = app.Services.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<InternalBootstrap>().Run(
-                builder.Configuration["InternalBootstrap:SalePassword"] ?? "", builder.Configuration["InternalBootstrap:AdminPassword"] ?? "");
-            Console.WriteLine("Internal schema, roles, accounts and demo template initialized. Existing passwords were preserved.");
-            return;
-        }
         app.Use(async (context, next) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -105,16 +97,40 @@ public static class InternalHost
             if (string.IsNullOrWhiteSpace(input.Username) || input.Username.Length > 100 || string.IsNullOrEmpty(input.Password) || input.Password.Length > 200)
                 throw new InternalAppException(401, "Tên đăng nhập hoặc mật khẩu không đúng.");
             var user = await repository.Authenticate(input.Username.Trim(), input.Password, ct);
-            if (user is null || !user.CanWrite) throw new InternalAppException(401, "Tên đăng nhập hoặc mật khẩu không đúng.");
+            if (user is null || !(user.CanWrite || user.CanManageEmployees)) throw new InternalAppException(401, "Tên đăng nhập hoặc mật khẩu không đúng.");
             context.Session.Clear(); context.Session.SetString(UserKey, user.Id.ToString());
             return Results.Ok(user);
         }).RequireRateLimiting("internal-login");
         api.MapGet("/auth/me", async (HttpContext c, IInternalRepository r, CancellationToken ct) => Results.Ok(await User(c, r, ct)));
         api.MapPost("/auth/logout", async (HttpContext c, IAntiforgery csrf) => { await csrf.ValidateRequestAsync(c); c.Session.Clear(); return Results.NoContent(); });
+        api.MapPost("/auth/change-password", async (EmployeeChangePasswordInput input, HttpContext c, IAntiforgery csrf, IInternalRepository r, IEmployeeAdmin accounts, CancellationToken ct) =>
+        {
+            await csrf.ValidateRequestAsync(c);
+            var user = await User(c, r, ct);
+            await accounts.ChangePassword(user.Id, input, ct);
+            return Results.Ok(await r.GetUser(user.Id, ct));
+        });
+        var admin = api.MapGroup("/admin").AddEndpointFilter(async (invocation, next) =>
+        {
+            var c = invocation.HttpContext;
+            var user = await User(c, c.RequestServices.GetRequiredService<IInternalRepository>(), c.RequestAborted);
+            RequirePasswordChanged(user);
+            if (!user.CanManageEmployees) throw new InternalAppException(403, "Bạn không có quyền quản lý tài khoản nhân viên.");
+            c.Items[UserKey] = user;
+            if (!HttpMethods.IsGet(c.Request.Method)) await c.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(c);
+            return await next(invocation);
+        });
+        admin.MapGet("/employees", async (IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.Employees(ct)));
+        admin.MapGet("/roles", async (IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.Roles(ct)));
+        admin.MapPost("/employees", async (CreateEmployeeInput input, HttpContext c, IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.Create(input, Current(c), ct)));
+        admin.MapPut("/employees/{id:long}/roles", async (long id, EmployeeRolesInput input, HttpContext c, IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.SetRoles(id, input, Current(c), ct)));
+        admin.MapPut("/employees/{id:long}/status", async (long id, EmployeeStatusInput input, HttpContext c, IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.SetStatus(id, input, Current(c), ct)));
+        admin.MapPost("/employees/{id:long}/reset-password", async (long id, HttpContext c, IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.ResetPassword(id, Current(c), ct)));
         var secured = api.MapGroup("").AddEndpointFilter(async (invocation, next) =>
         {
             var c = invocation.HttpContext;
             var user = await User(c, c.RequestServices.GetRequiredService<IInternalRepository>(), c.RequestAborted);
+            RequirePasswordChanged(user);
             if (!user.CanWrite) throw new InternalAppException(403, "Bạn không có quyền sử dụng chức năng hợp đồng nháp.");
             c.Items[UserKey] = user;
             if (!HttpMethods.IsGet(c.Request.Method)) await c.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(c);
@@ -164,6 +180,10 @@ public static class InternalHost
         await app.RunAsync();
     }
     private static InternalUser Current(HttpContext c) => (InternalUser)c.Items[UserKey]!;
+    private static void RequirePasswordChanged(InternalUser user)
+    {
+        if (user.MustChangePassword) throw new InternalAppException(403, "Bạn cần đổi mật khẩu tạm trước khi tiếp tục.", "PASSWORD_CHANGE_REQUIRED");
+    }
     private static async Task<InternalUser> User(HttpContext context, IInternalRepository repository, CancellationToken ct)
     {
         if (!long.TryParse(context.Session.GetString(UserKey), out var id)) throw new InternalAppException(401, "Vui lòng đăng nhập.");

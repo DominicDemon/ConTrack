@@ -7,10 +7,13 @@ Máy hiện tại đã cấu hình Windows Authentication tới `localhost/Contr
 trong `Backend/ContractManagement.API/appsettings.Development.json` (Git bỏ qua).
 Máy khác có thể cấu hình biến `ConnectionStrings__MasterDatabase`.
 
-Từ thư mục `Source`, sau khi có schema MASTER:
+Database là nguồn schema (database first); app không tự tạo bảng hay dữ liệu. Trước khi chạy,
+database MASTER phải có đủ schema (gồm `Artifacts/Database/Master/001`–`004`), tài khoản, vai trò, quyền
+và quy trình duyệt `CONTRACT_INTERNAL_CHECK`, tất cả tạo trực tiếp bằng SQL.
+
+Từ thư mục `Source`:
 
 ```powershell
-.\scripts\Initialize-InternalWorkspace.ps1
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 dotnet run --project Backend/ContractManagement.API --no-launch-profile --urls http://127.0.0.1:5005
 ```
@@ -22,25 +25,39 @@ npm install
 npm run dev
 ```
 
-Truy cập http://localhost:3000. Tài khoản `sale.local` và `office.local` cùng mật khẩu
-ngẫu nhiên nằm ở `.local/internal-accounts.json`, không được commit. Script chạy lại
-không đổi mật khẩu đã có. Không xóa file này để tạo lại mật khẩu của tài khoản hiện hữu.
+Truy cập http://localhost:3000. Tài khoản nhân viên (vai trò `INTERNAL_SALE` / `INTERNAL_OFFICE`)
+và khách hàng được tạo sẵn trong database. Mật khẩu lưu dạng hash ASP.NET Identity (`PasswordHasher`).
+Chưa có mẫu hợp đồng nào: tải mẫu lên qua nút “Tải lên hợp đồng mẫu” ở màn tạo nháp.
 Swagger (Development): http://localhost:5005/swagger.
 API được proxy cùng origin qua Next; đổi đích bằng `INTERNAL_API_ORIGIN` nếu cần.
 
 ## Luồng sử dụng
 
 1. Đăng nhập → Hợp đồng nháp → Tạo hợp đồng nháp.
-2. Chọn mẫu minh họa, chọn khách hoặc tạo nhanh bằng tên và SĐT.
+2. Chọn mẫu đã tải lên, chọn khách hoặc tạo nhanh bằng tên và SĐT.
 3. Nhập tên hợp đồng, thông tin hai bên, hạng mục, VAT và điều khoản.
 4. Xem trước bên phải; kéo thanh giữa để đổi chiều rộng. Mobile có tab Soạn thảo/Xem trước.
 5. Lưu nháp, quay về danh sách rồi mở lại để sửa.
 
 Chỉ mẫu, khách hàng và tên là bắt buộc khi lưu. Thông tin thiếu được đánh dấu.
-Mẫu demo chưa được công ty phê duyệt; thông tin pháp nhân phải do người dùng nhập.
+Mẫu tải lên chưa được coi là đã phê duyệt; thông tin pháp nhân phải do người dùng nhập.
 Khách và mẫu được chụp vào nháp, không tự cập nhật theo dữ liệu gốc về sau.
 Sale chỉ truy cập nháp của mình; văn phòng có quyền toàn công ty. Cả hai được tạo khách.
 Chưa có OTP ký, màn hành chính duyệt từng bước, thanh toán, ký hoặc xuất DOCX/PDF.
+
+## Nhân viên & phân quyền
+
+Nhân viên có quyền `employee.manage` (vai trò `INTERNAL_ADMIN`) thấy menu **Nhân viên & phân quyền**
+(`/workspace/admin/employees`, API `/api/internal/admin/*`):
+
+- Tạo tài khoản: mã, tên đăng nhập, họ tên, email/SĐT tùy chọn, ít nhất một vai trò `INTERNAL`.
+  Hệ thống sinh mật khẩu tạm 12 ký tự, chỉ hiện một lần, và bật `employee_must_change_password`.
+- Đổi vai trò, khóa / mở khóa (`employee_status` `ACTIVE` / `LOCKED`), cấp lại mật khẩu tạm.
+  Quyền được đọc lại ở mỗi request nên thay đổi có hiệu lực ngay; tài khoản bị khóa bị đăng xuất ở thao tác kế tiếp.
+- Admin không thao tác được trên tài khoản của chính mình, nên luôn còn ít nhất một admin.
+- Khi còn mật khẩu tạm, mọi API trừ `/auth/me`, `/auth/change-password`, `/auth/logout` trả 403
+  `PASSWORD_CHANGE_REQUIRED`, và giao diện chỉ hiện màn đổi mật khẩu. Mật khẩu mới: tối thiểu 8 ký tự, có chữ và số.
+- Mỗi thao tác ghi `AUDIT_LOG` (`CREATE`, `CHANGE_ROLES`, `LOCK`, `UNLOCK`, `RESET_PASSWORD`, `CHANGE_PASSWORD`).
 
 ## Gửi khách xem
 
@@ -111,7 +128,8 @@ xóa ciphertext khi rời hàng đợi. Callback `GET /api/sms/esms/callback` ch
   ID BIGINT là chuỗi JSON. API legacy không được ánh xạ trong chế độ Internal.
 - `001-internal-drafts.sql` nâng current_version_id lên BIGINT, thêm unique username,
   sửa index email khách thành filtered unique để cho phép nhiều email NULL.
-- Bootstrap seed quyền/vai trò/mẫu có thể chạy lặp, dùng mật khẩu từ cấu hình local.
+- `002-contract-review.sql` thêm luồng gửi khách xem và hàng đợi SMS; `003-draft-content.sql` thêm
+  3 bảng nội dung nháp. Các script idempotent, chạy tay (SSMS hoặc `sqlcmd -I`); app không tự chạy.
 - File mẫu riêng nằm ở `Backend/private-storage/internal-templates`; metadata/hash nằm
   trong FILE_STORAGE. Có thể đổi đường dẫn bằng `InternalStorage__Root`.
 - Tạo/cập nhật document, version, items, terms, dynamic values và audit trong transaction.
@@ -134,7 +152,7 @@ $env:CONTRACK_MASTER_TEST_CONNECTION = 'Server=localhost;Database=ContractManage
 dotnet test ContractManagement.Tests --filter 'FullyQualifiedName~InternalDraftTests|FullyQualifiedName~MasterDatabaseTests|FullyQualifiedName~ContractReview'
 ```
 
-Live tests tạo và dọn dữ liệu thử; gồm lưu/mở lại, snapshot khách, quyền sở hữu,
+Live tests cần database có tài khoản `sale` và `admin` cùng ít nhất một mẫu hợp đồng; chúng tạo và dọn dữ liệu thử; gồm lưu/mở lại, snapshot khách, quyền sở hữu,
 xung đột rowversion, tính tiền và rollback lỗi SQL sau khi đã tạo document/version.
 Không có biến kết nối thì các live tests được đánh dấu skip.
 Frontend: `npm run typecheck` và `npm run build`.

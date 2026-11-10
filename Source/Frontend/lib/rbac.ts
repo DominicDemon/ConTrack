@@ -16,6 +16,8 @@ export const RBAC_PERMISSIONS = {
   contractApprovalDecide: "contract.approval.decide",
   contractExecutionRead: "contract.execution.read",
   contractSigningManage: "contract.signing.manage",
+  contractSigningInitiate: "contract.signing.initiate",
+  contractElectronicSigningDirector: "contract.electronic-signing.director",
   contractAcceptanceManage: "contract.acceptance.manage",
   contractPaymentManage: "contract.payment.manage",
   contractComplete: "contract.complete",

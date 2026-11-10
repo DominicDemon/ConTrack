@@ -24,6 +24,8 @@ public static class RbacPermissions
     public const string ContractApprovalDecide = "contract.approval.decide";
     public const string ContractExecutionRead = "contract.execution.read";
     public const string ContractSigningManage = "contract.signing.manage";
+    public const string ContractSigningInitiate = "contract.signing.initiate";
+    public const string ContractElectronicSigningDirector = "contract.electronic-signing.director";
     public const string ContractAcceptanceManage = "contract.acceptance.manage";
     public const string ContractPaymentManage = "contract.payment.manage";
     public const string ContractComplete = "contract.complete";
@@ -59,7 +61,7 @@ public static class EmployeePermissionCatalog
     private static readonly IReadOnlyDictionary<EmployeeType, IReadOnlyList<string>> PermissionsByType =
         new Dictionary<EmployeeType, IReadOnlyList<string>>
         {
-            [EmployeeType.Sale] = Merge(RbacPermissions.CustomerManage),
+            [EmployeeType.Sale] = Merge(RbacPermissions.CustomerManage, RbacPermissions.ContractSigningInitiate),
             [EmployeeType.Marketing] = Merge(RbacPermissions.CustomerManage),
             [EmployeeType.AdminOfficer] = Merge(
                 RbacPermissions.CatalogManage,
@@ -82,6 +84,8 @@ public static class EmployeePermissionCatalog
                 RbacPermissions.ContractApprovalDecide,
                 RbacPermissions.ContractExecutionRead,
                 RbacPermissions.ContractSigningManage,
+                RbacPermissions.ContractSigningInitiate,
+                RbacPermissions.ContractElectronicSigningDirector,
                 RbacPermissions.ContractAcceptanceManage,
                 RbacPermissions.ContractPaymentManage,
                 RbacPermissions.ContractComplete,

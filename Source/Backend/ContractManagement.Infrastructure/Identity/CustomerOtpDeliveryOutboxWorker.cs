@@ -1,4 +1,5 @@
 using ContractManagement.Domains.Interfaces.Contract;
+using ContractManagement.Application.Features.Contracts.Signing;
 using ContractManagement.Infrastructure.MultiTenancy.Enums;
 using ContractManagement.Infrastructure.MultiTenancy.Interfaces;
 using ContractManagement.Infrastructure.MultiTenancy.Models;
@@ -167,9 +168,12 @@ public sealed class CustomerOtpDeliveryOutboxWorker : BackgroundService
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 var failedAt = DateTime.UtcNow;
+                var deliveryUncertain = exception is GsmSmsDeliveryUncertainException;
                 candidate.LeaseId = null;
                 candidate.LeaseUntil = null;
-                candidate.LastFailure = exception.GetType().Name;
+                candidate.LastFailure = deliveryUncertain
+                    ? "Delivery status unknown; automatic resend suppressed."
+                    : exception.GetType().Name;
                 // SMTP exception messages can contain recipient addresses; log only safe metadata.
                 _logger.LogWarning(
                     "Customer OTP delivery failed. Tenant {TenantId}, outbox {OutboxId}, attempt {Attempt}, error {ErrorType}, SMTP status {SmtpStatus}",
@@ -177,7 +181,8 @@ public sealed class CustomerOtpDeliveryOutboxWorker : BackgroundService
                     exception.GetType().Name,
                     exception is System.Net.Mail.SmtpException smtpException
                         ? (int?)smtpException.StatusCode : null);
-                if (candidate.AttemptCount >= _options.MaxDeliveryAttempts
+                if (deliveryUncertain
+                    || candidate.AttemptCount >= _options.MaxDeliveryAttempts
                     || challenge.ExpiresAt <= failedAt)
                 {
                     candidate.Status = "Failed";
@@ -202,6 +207,150 @@ public sealed class CustomerOtpDeliveryOutboxWorker : BackgroundService
                     cancellationToken);
                 await dbContext.SaveChangesAsync(cancellationToken);
             }
+        }
+
+        await ProcessElectronicSigningOtpOutboxAsync(
+            dbContext, cryptography, scope.ServiceProvider, tenant.TenantId, cancellationToken);
+    }
+
+    private async Task ProcessElectronicSigningOtpOutboxAsync(
+        DbDtctechContext dbContext,
+        CustomerAccessCryptography cryptography,
+        IServiceProvider scopedServices,
+        long tenantId,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var expiredLeases = await dbContext.ContractSigningOtps
+            .Where(x => x.DeliveryStatus == "Leased"
+                && x.DeliveryLeaseUntil <= now)
+            .Include(x => x.Signer)
+            .Take(20)
+            .ToListAsync(cancellationToken);
+        foreach (var expiredLease in expiredLeases)
+        {
+            expiredLease.DeliveryStatus = "Unknown";
+            expiredLease.DeliveryLastFailure = "Worker stopped after acquiring the delivery lease; resend suppressed.";
+            expiredLease.DeliveryLeaseId = null;
+            expiredLease.DeliveryLeaseUntil = null;
+            expiredLease.OtpCiphertext = null;
+            expiredLease.UsedAt ??= now;
+            dbContext.ContractSigningAuditLogs.Add(new ContractSigningAuditLog
+            {
+                SessionId = expiredLease.Signer.SessionId,
+                SignerId = expiredLease.SignerId,
+                Action = "CustomerOtpDeliveryUnknown",
+                CreatedAt = now
+            });
+        }
+
+        if (expiredLeases.Count > 0)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        var pending = await dbContext.ContractSigningOtps
+            .Where(x => x.DeliveryStatus == "Pending"
+                && x.DeliveryNextAttemptAt <= now)
+            .OrderBy(x => x.CreatedAt)
+            .Take(20)
+            .ToListAsync(cancellationToken);
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
+        var smsProvider = scopedServices.GetRequiredService<IGsmModemSmsProvider>();
+
+        foreach (var challenge in pending)
+        {
+            var signer = await dbContext.ContractSigningSigners
+                .SingleOrDefaultAsync(x => x.Id == challenge.SignerId, cancellationToken);
+            if (signer is null || challenge.ExpiresAt <= DateTime.UtcNow
+                || challenge.UsedAt.HasValue || challenge.OtpCiphertext is null)
+            {
+                challenge.DeliveryStatus = "Expired";
+                challenge.DeliveryLastFailure = "Challenge expired or was invalidated before delivery.";
+                challenge.DeliveryNextAttemptAt = null;
+                challenge.OtpCiphertext = null;
+                challenge.UsedAt ??= DateTime.UtcNow;
+                await dbContext.SaveChangesAsync(cancellationToken);
+                continue;
+            }
+
+            challenge.DeliveryStatus = "Leased";
+            challenge.DeliveryLeaseId = Guid.NewGuid().ToString("N");
+            challenge.DeliveryLeaseUntil = DateTime.UtcNow.AddMinutes(1);
+            challenge.DeliveryAttemptCount++;
+            try
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                dbContext.ChangeTracker.Clear();
+                return;
+            }
+
+            try
+            {
+                await smsProvider.SendOtpAsync(
+                    signer.Phone,
+                    cryptography.DecryptScalar(challenge.OtpCiphertext),
+                    challenge.ExpiresAt,
+                    cancellationToken);
+                var sentAt = DateTime.UtcNow;
+                challenge.DeliveryStatus = "Sent";
+                challenge.SentAt = sentAt;
+                challenge.OtpCiphertext = null;
+                challenge.DeliveryLeaseId = null;
+                challenge.DeliveryLeaseUntil = null;
+                challenge.DeliveryNextAttemptAt = null;
+                dbContext.ContractSigningAuditLogs.Add(new ContractSigningAuditLog
+                {
+                    SessionId = signer.SessionId,
+                    SignerId = signer.Id,
+                    Action = "CustomerOtpSent",
+                    CreatedAt = sentAt
+                });
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                var failedAt = DateTime.UtcNow;
+                var isUnknown = exception is GsmSmsDeliveryUncertainException;
+                challenge.DeliveryLeaseId = null;
+                challenge.DeliveryLeaseUntil = null;
+                challenge.DeliveryLastFailure = isUnknown
+                    ? "Delivery status unknown; automatic resend suppressed."
+                    : exception.GetType().Name;
+                if (isUnknown || challenge.DeliveryAttemptCount >= _options.MaxDeliveryAttempts
+                    || challenge.ExpiresAt <= failedAt)
+                {
+                    challenge.DeliveryStatus = isUnknown ? "Unknown" : "Failed";
+                    challenge.UsedAt = failedAt;
+                    challenge.OtpCiphertext = null;
+                    challenge.DeliveryNextAttemptAt = null;
+                }
+                else
+                {
+                    challenge.DeliveryStatus = "Pending";
+                    challenge.DeliveryNextAttemptAt = failedAt.AddSeconds(
+                        Math.Max(1, _options.RetryDelaySeconds));
+                }
+
+                dbContext.ContractSigningAuditLogs.Add(new ContractSigningAuditLog
+                {
+                    SessionId = signer.SessionId,
+                    SignerId = signer.Id,
+                    Action = isUnknown ? "CustomerOtpDeliveryUnknown" : "CustomerOtpDeliveryFailed",
+                    CreatedAt = failedAt
+                });
+                _logger.LogWarning(
+                    "Electronic signing OTP delivery failed. Tenant {TenantId}, challenge {ChallengeId}, attempt {Attempt}, error {ErrorType}.",
+                    tenantId, challenge.ChallengeId, challenge.DeliveryAttemptCount, exception.GetType().Name);
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 

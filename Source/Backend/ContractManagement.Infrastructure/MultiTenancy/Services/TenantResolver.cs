@@ -36,9 +36,18 @@ public sealed class TenantResolver : ITenantResolver
             tenantCode.Trim().ToLowerInvariant();
 
         var defaultConnectionString =
-            _configuration?.GetConnectionString("DefaultConnection")
-            ?? _configuration?.GetConnectionString("CentralDatabase")
-            ?? "server=localhost;database=MasterDB;uid=sa;pwd=123;TrustServerCertificate=True;Encrypt=False;";
+            _configuration?.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrWhiteSpace(defaultConnectionString))
+        {
+            defaultConnectionString =
+                _configuration?.GetConnectionString("CentralDatabase");
+        }
+
+        if (string.IsNullOrWhiteSpace(defaultConnectionString))
+        {
+            defaultConnectionString =
+                "server=localhost;database=MasterDB;uid=sa;pwd=123;TrustServerCertificate=True;Encrypt=False;";
+        }
 
         try
         {

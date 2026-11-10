@@ -97,11 +97,17 @@ public static class DependencyInjection
                     serviceProvider
                         .GetRequiredService<ICurrentTenant>();
 
+                var defaultConnectionString =
+                    configuration.GetConnectionString("DefaultConnection");
+                if (string.IsNullOrWhiteSpace(defaultConnectionString))
+                {
+                    defaultConnectionString = centralConnectionString;
+                }
+
                 var connectionString = currentTenant.IsResolved
                     && !string.IsNullOrWhiteSpace(currentTenant.Value?.ConnectionString)
                         ? currentTenant.Value!.ConnectionString
-                        : configuration.GetConnectionString("DefaultConnection")
-                            ?? centralConnectionString;
+                        : defaultConnectionString;
 
                 options.UseSqlServer(
                     connectionString,

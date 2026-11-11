@@ -29,11 +29,6 @@ public sealed class ScanMasterDbContext(DbContextOptions<MasterDbContext> option
     {
         base.OnModelCreating(modelBuilder);
 
-        // MasterDB-Optimize_v1, the only schema with OCR_JOB and CONTRACTS, keeps this column as INT; the shared model reads BIGINT.
-        modelBuilder.Entity<ContractDocument>()
-            .Property(document => document.ContractDocumentCurrentVersionId)
-            .HasConversion<int?>();
-
         modelBuilder.Entity<Contract>(entity =>
         {
             entity.HasKey(e => e.ContractId).HasName("PK__CONTRACT__F8D66423920D9C63");

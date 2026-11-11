@@ -21,6 +21,7 @@
     <EmbeddedResource Include="..\..\Shared\application-branding.json" LogicalName="ContractManagement.ApplicationBranding.json" />
     <EmbeddedResource Include="..\..\Artifacts\Database\Master\001-internal-drafts.sql" LogicalName="InternalDraftUpgrade.sql" />
     <EmbeddedResource Include="..\..\Artifacts\Database\Master\002-contract-review.sql" LogicalName="ContractReviewUpgrade.sql" />
+    <EmbeddedResource Include="..\..\Artifacts\Database\Master\003-template-fields.sql" LogicalName="TemplateFieldsUpgrade.sql" />
     <EmbeddedResource Include="..\..\Artifacts\ContractTemplates\Mẫu Contract Placeholder - đã gắn placeholder.docx" LogicalName="InternalDraftTemplate.docx" />
     <Content Include="DatabaseScripts\StoredProcedures\Quotations\sp_Quotation_Create.sql" />
     <Content Include="DatabaseScripts\StoredProcedures\Quotations\sp_Quotation_GetById.sql" />

@@ -5,7 +5,8 @@ namespace ContractManagement.Domain.Internal;
 public sealed record DraftField(string Key, string Label, bool Required = false, string DataType = "TEXT", List<string>? Options = null, decimal? Min = null, decimal? Max = null);
 public sealed record DraftTerm(string Key, string Title, string Content, bool Editable = true);
 public sealed record TemplateDefinition(long Id, string Name, string Revision, bool IsDemo,
-    List<DraftField> Fields, List<DraftTerm> Terms, bool IsImported = false);
+    List<DraftField> Fields, List<DraftTerm> Terms, bool IsImported = false,
+    int DocumentType = 1, string? WordStorageKey = null, string? WordSha256 = null, bool ManualWordContent = false);
 public sealed record DraftItem(long? ProductId, string Name, decimal Quantity, decimal UnitPrice,
     decimal DiscountPercent, decimal DiscountAmount);
 public sealed record DraftTotals(decimal Subtotal, decimal Discount, decimal Vat, decimal Total);
@@ -43,10 +44,10 @@ public static class InternalDraftPolicy
 
     public static decimal Round(decimal value) => Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
-    public static DraftContent Prepare(DraftContent input, TemplateDefinition template)
+    public static DraftContent Prepare(DraftContent input, TemplateDefinition template, bool forPreview = false)
     {
         input.Name = Text(input.Name, 1000);
-        if (input.Name.Length == 0 || input.CustomerId <= 0 || input.TemplateId != template.Id)
+        if (input.TemplateId != template.Id || (!forPreview && (input.Name.Length == 0 || input.CustomerId <= 0)))
             throw new ArgumentException("Cần chọn mẫu, khách hàng và nhập tên hợp đồng.");
         if (input.Items is null || input.Terms is null || input.Fields is null || input.Items.Count > 100 || input.Terms.Count > 100)
             throw new ArgumentException("Dữ liệu nháp không hợp lệ hoặc vượt quá 100 hạng mục/điều khoản.");
@@ -83,6 +84,8 @@ public static class InternalDraftPolicy
             if (actual is null || actual.Title != locked.Title || actual.Content != locked.Content)
                 throw new ArgumentException("Không được thay đổi hoặc xóa điều khoản cố định của mẫu.");
         }
+        if (template.WordStorageKey is not null && !input.Terms.SequenceEqual(template.Terms))
+            throw new ArgumentException("Nội dung Word dùng các trường nhập liệu của mẫu. Tạo mẫu mới để thay đổi bố cục hoặc điều khoản.");
         input.Terms = input.Terms.Select(t => t with { Editable = template.Terms.FirstOrDefault(x => x.Key == t.Key)?.Editable ?? true }).ToList();
         var vat = Round((subtotal - discount) * input.VatPercent / 100);
         if (subtotal - discount + vat > 9999999999999999.99m) throw new ArgumentException("Tổng giá trị vượt giới hạn lưu trữ.");

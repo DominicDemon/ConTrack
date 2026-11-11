@@ -40,7 +40,7 @@ Chỉ mẫu, khách hàng và tên là bắt buộc khi lưu. Thông tin thiếu
 Mẫu demo chưa được công ty phê duyệt; thông tin pháp nhân phải do người dùng nhập.
 Khách và mẫu được chụp vào nháp, không tự cập nhật theo dữ liệu gốc về sau.
 Sale chỉ truy cập nháp của mình; văn phòng có quyền toàn công ty. Cả hai được tạo khách.
-Chưa có OTP ký, màn hành chính duyệt từng bước, thanh toán, ký hoặc xuất DOCX/PDF.
+Nháp dùng mẫu Word hỗ trợ xem trước PDF và tải DOCX.
 
 ## Gửi khách xem
 
@@ -74,18 +74,28 @@ xóa ciphertext khi rời hàng đợi. Callback `GET /api/sms/esms/callback` ch
 
 ## Dữ liệu và kỹ thuật
 
-### Tải mẫu Word/PDF tại màn tạo nháp
+### Tải mẫu Word tại màn tạo nháp
 
-- Nút “Tải lên hợp đồng mẫu” nằm dưới ô chọn mẫu, chỉ ở nháp mới vì nháp đã lưu giữ nguyên snapshot.
-- DOCX/PDF tối đa 10 MB, PDF tối đa 100 trang; Word .doc cần lưu lại thành .docx.
-- Đọc nội dung chữ, cho người dùng sửa và xác nhận trước khi tạo mẫu dùng chung.
-  Không tự nhận diện các bên, không tự thay tên khách trong văn bản và không giữ nguyên bố cục file gốc.
-- PDF không có lớp chữ được cảnh báo; người soạn phải tự bổ sung nội dung. Chưa có OCR.
+- Nút **Tải mẫu Word** nhận DOC/DOCX tối đa 10 MB. Cài LibreOffice hoặc cấu hình `TemplatePdfRendering:ExecutablePath` trên máy API.
+- Sửa tay nội dung văn bản và ô bảng; giao diện không có chọn/quản lý trường dữ liệu. Mẫu mới dùng `ManualContent`, giữ nguyên chữ trong DOCX/PDF. Mẫu cũ tiếp tục xử lý theo cấu hình đã lưu.
+- Chọn đoạn gốc rồi chèn đoạn văn, điều khoản (tiêu đề + nội dung), bảng hoặc ảnh PNG/JPEG. Điều khoản không tự đánh lại số của các điều cũ.
+- Ảnh mới tối đa 5 MB/ảnh và 10 MB tổng; chỉnh rộng 1–16 cm, giữ tỷ lệ và căn trái/giữa/phải. PNG/JPEG có sẵn trong Word được hiển thị ở khung chỉnh sửa; PDF là bản đối chiếu bố cục.
+- Màn tạo nháp giữ các thông tin khách hàng, ngày và số tiền; mẫu sửa tay không tự thay các thông tin đó vào chữ của Word.
+- Chọn loại hợp đồng (1), phụ lục (2), bàn giao (3), biên lai (4), đề nghị thanh toán (5). Bộ chọn hợp đồng chỉ lấy mẫu loại 1 đang hoạt động.
+- Tạo PDF, kiểm tra rồi xác nhận kích hoạt. Sửa nội dung yêu cầu xem trước lại.
+- Các API mới là `/api/internal/contract-templates/word/extract`, `/word/preview`, `/word/activate`, cùng session/CSRF/quyền nội bộ hiện có.
+- File gốc, DOCX cố định và JSON được lưu private storage với SHA-256. Snapshot nháp giữ khóa và hash DOCX, hỗ trợ xem trước PDF và tải DOCX.
+- `003-template-fields.sql` bổ sung bảng trường mẫu trong bootstrap, có thể chạy lại trên DB đã cài. Schema chính là `MasterDB-Optimize_v1.sql`.
+- Chạy `InternalWordSampleTests` với `CONTRACK_WORD_SAMPLE_ROOT` và `CONTRACK_MASTER_TEST_CONNECTION` để nghiệm thu năm file. Dữ liệu kiểm thử trong DB được tự dọn.
+
+### API trích chữ cũ
+
+- API trích chữ trước đây tiếp tục nhận DOCX/PDF tối đa 10 MB và PDF tối đa 100 trang để tương thích với caller hiện hữu.
 - `POST /api/internal/contract-templates/extract`: `{fileName, base64}` trả `{name, content, warning}`.
 - `POST /api/internal/contract-templates/import`: thêm `{name, content}` đã kiểm tra, trả `TemplateDefinition` có `isImported=true`.
   Cả hai endpoint dùng session/CSRF và quyền `draft.write`; mẫu nhập vẫn chưa được coi là đã phê duyệt.
-- File gốc và định nghĩa mẫu có checksum được lưu private storage, liên kết `FILE_STORAGE`;
-  mẫu, trường và audit được tạo trong transaction. Không thay schema DB.
+- File gốc và định nghĩa mẫu cũ có checksum được lưu private storage, liên kết `FILE_STORAGE`;
+  mẫu, trường và audit được tạo trong transaction.
 - Màn nháp kế thừa token màu/font sáng/tối từ giao diện chung và sử dụng `SummaryCards` của các màn cũ.
 
 - Domain tính tiền/làm sạch nội dung; Application kiểm tra quyền và điều phối;
@@ -110,6 +120,19 @@ khi chạy/build frontend, với cấu hình DB legacy riêng. Không trỏ DbCo
 
 ## Kiểm tra
 
+### Chèn bảng khi tải mẫu Word
+
+- Chọn một đoạn trong nội dung chính, nhập số hàng/cột rồi chọn **Chèn bảng sau vị trí chọn**.
+  Nếu chọn ô trong bảng gốc, bảng mới nằm sau toàn bộ bảng đó; không chèn vào đầu/chân trang.
+- Bảng mới hỗ trợ thêm hàng dưới hàng chọn, xóa hàng chọn, thêm/xóa cột cuối,
+  gộp với ô bên phải, tách ô đã gộp và bật/tắt viền in.
+  Các thao tác cấu trúc này chỉ áp dụng cho bảng mới. Tối đa 20 bảng, mỗi bảng 50 hàng × 12 cột.
+- Chọn **Cập nhật bản xem trước** sau khi sửa. PDF cũ không được dùng để kích hoạt.
+- `WordTemplateInput.Tables` lưu các bảng theo vị trí paragraph gốc; máy chủ tạo OpenXML,
+  quét placeholder trong tài liệu sau khi chèn và đưa bảng vào DOCX cố định của mẫu/snapshot.
+
+### Chạy kiểm thử
+
 Từ `Source/Backend`:
 
 ```powershell
@@ -121,3 +144,10 @@ Live tests tạo và dọn dữ liệu thử; gồm lưu/mở lại, snapshot kh
 xung đột rowversion, tính tiền và rollback lỗi SQL sau khi đã tạo document/version.
 Không có biến kết nối thì các live tests được đánh dấu skip.
 Frontend: `npm run typecheck` và `npm run build`.
+
+### Tự điền hồ sơ từ Word đã sửa
+
+- Sau khi kích hoạt hoặc chọn mẫu Word, `/contract-templates/{id}/word-details` đọc DOCX đã lưu và kiểm tra SHA-256, rồi nhận diện tiêu đề, các nhãn Bên A/Bên B, ngày hiệu lực/hết hạn rõ ràng, tổng tiền và bảng hạng mục.
+- Chỉ đưa hạng mục vào nháp khi số lượng × đơn giá khớp tổng tiền; dữ liệu không rõ được để trống và có ghi chú. Không dùng ngày hiệu lực của văn bản pháp luật làm ngày hiệu lực hợp đồng.
+- Nhận diện chạy trên nội dung sau chỉnh sửa, không lấy lại dữ liệu của tệp gốc. Chọn khách nhận vẫn là bước đối chiếu tài khoản, không tự tạo hoặc gửi hợp đồng.
+- Mẫu sửa tay chưa lưu nháp xem/tải file qua `/contract-templates/{id}/word-preview`, không gửi toàn bộ dữ liệu nháp chưa hoàn thiện. Nháp đã lưu vẫn dùng snapshot và kiểm tra quyền sở hữu.

@@ -16,6 +16,8 @@ public sealed class InternalBootstrap(MasterDbContext db, InternalTemplateStorag
             if (password.Length < 12 || !password.Any(char.IsDigit) || !password.Any(char.IsUpper) || !password.Any(char.IsLower))
                 throw new InvalidOperationException("InternalBootstrap passwords need 12+ characters with uppercase, lowercase and digits.");
         var assembly = typeof(InternalBootstrap).Assembly;
+        using (var reader = new StreamReader(assembly.GetManifestResourceStream("TemplateFieldsUpgrade.sql")!))
+            await db.Database.ExecuteSqlRawAsync(await reader.ReadToEndAsync(ct), ct);
         using (var reader = new StreamReader(assembly.GetManifestResourceStream("InternalDraftUpgrade.sql")!))
             await db.Database.ExecuteSqlRawAsync(await reader.ReadToEndAsync(ct), ct);
         string reviewSql;

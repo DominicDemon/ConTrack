@@ -28,7 +28,10 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             join rp in db.SystemRolePermissions on r.SystemRoleId equals rp.SystemRoleId
             join p in db.SystemPermissions on rp.SystemPermissionId equals p.SystemPermissionId
             where er.EmployeeId == id && r.SystemRoleStatus == "ACTIVE" select p.SystemPermissionCode).Distinct().ToArrayAsync(ct);
-        return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions);
+        var department = await (from ed in db.EmployeeDepartments join d in db.Departments on ed.DepartmentId equals d.DepartmentId
+            where ed.EmployeeId == id select new { d.DepartmentName, d.DepartmentManagerEmployeeId }).FirstOrDefaultAsync(ct);
+        return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions, employee.EmployeeMustChangePassword,
+            department?.DepartmentName, department?.DepartmentManagerEmployeeId == id);
     }
     public async Task<List<TemplateDefinition>> Templates(CancellationToken ct)
     {
@@ -137,7 +140,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 .Where(r => r.ContractDocumentId == d.ContractDocumentId).OrderByDescending(r => r.ContractReviewRequestId).Select(r => r.ContractReviewRequestStatus).FirstOrDefault() };
         return (await query.Take(200).ToListAsync(ct)).Select(x => { var content = JsonSerializer.Deserialize<DraftContent>(x.FieldValue, Json)!;
             if (x.d.ContractDocumentStatus == ContractDocumentStatus.Draft || (x.d.ContractDocumentStatus == ContractDocumentStatus.Negotiating && x.Latest is ContractReviewStatus.ChangesRequested or ContractReviewStatus.Rejected))
-                DraftValidation.Prepare(content, DraftCompletionPolicy.UpgradeTemplate(content.TemplateSnapshot!));
+                DraftValidation.Recheck(content);
             return new DraftSummary(x.d.ContractDocumentId, x.d.ContractDocumentCode!, x.d.ContractDocumentName,
             x.CustomerDisplayName, x.d.EmployeeId, x.EmployeeDisplayName, x.d.UpdatedDate ?? x.d.CreatedDate,
             content.MissingFields.Count, x.d.ContractDocumentStatus, x.Latest); }).ToList();
@@ -151,14 +154,15 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleOrDefaultAsync(x => x.ContractDocumentId == id && x.ContractVersionId == v.ContractVersionId && x.FieldKey == SnapshotKey, ct);
         if (snapshot is null) return null;
         var name = await db.Employees.Where(e => e.EmployeeId == d.EmployeeId).Select(e => e.EmployeeDisplayName).SingleAsync(ct);
-        var customer = await db.Customers.AsNoTracking().Where(c => c.CustomerId == d.CustomerId).Select(c => new { c.CustomerDisplayName, c.CustomerPersonalPhone }).SingleAsync(ct);
+        var customer = await db.Customers.AsNoTracking().Where(c => c.CustomerId == d.CustomerId).Select(c => new { c.CustomerDisplayName, c.CustomerPersonalPhone, c.CustomerEmail }).SingleAsync(ct);
         var latest = await db.ContractReviewRequests.AsNoTracking().Where(r => r.ContractDocumentId == id).OrderByDescending(r => r.ContractReviewRequestId)
             .Select(r => r.ContractReviewRequestStatus).FirstOrDefaultAsync(ct);
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!;
-        if (!v.ContractVersionIslocked) InternalDraftPolicy.Prepare(content, DraftCompletionPolicy.UpgradeTemplate(content.TemplateSnapshot!));
-        var phone = PhoneNumber.Normalize(customer.CustomerPersonalPhone);
+        if (!v.ContractVersionIslocked) DraftValidation.Recheck(content);
+        var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone);
         var blocked = ContractReviewPolicy.CanSend(d.ContractDocumentStatus, latest, v.ContractVersionIslocked, content.MissingFields.Count)
-            ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null);
+            ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null)
+            ?? (ReviewLink.ContactEmail(content.Fields, customer.CustomerEmail) is null ? "Nhập email khách hàng trong hợp đồng để gửi link xem." : null);
         var carried = await (from comment in db.ContractNegotiationComments.AsNoTracking()
             join term in db.ContractTerms on (long?)comment.ContractNegotiationCommentTermid equals term.ContractTermTermid into terms
             from term in terms.DefaultIfEmpty()

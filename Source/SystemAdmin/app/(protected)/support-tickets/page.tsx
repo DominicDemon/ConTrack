@@ -30,6 +30,7 @@ import {
   SummaryCards,
 } from "@/components/ui/custom/summary-cards";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/hooks/use-auth-store";
 import {
   ticketApi,
   TicketDto,
@@ -41,24 +42,16 @@ const STATUS_FILTER_OPTIONS = [
   { label: "Tất cả trạng thái", value: "All" },
   { label: "Chờ tiếp nhận", value: TicketStatus.Open },
   { label: "Đang xử lý", value: TicketStatus.InProgress },
+  { label: "Chờ duyệt kết quả", value: TicketStatus.PendingHeadApproval },
   { label: "Đã xử lý", value: TicketStatus.Resolved },
 ];
 
 const PRIORITY_FILTER_OPTIONS = [
-  { label: "Tất cả ưu tiên", value: "All" },
-  { label: "Thấp", value: TicketPriority.Low },
-  { label: "Bình thường", value: TicketPriority.Medium },
-  { label: "Cao", value: TicketPriority.High },
+  { label: "Tất cả độ ưu tiên", value: "All" },
   { label: "Khẩn cấp", value: TicketPriority.Urgent },
-];
-
-const DEPARTMENT_FILTER_OPTIONS = [
-  { label: "Tất cả phòng ban", value: "All" },
-  { label: "Kỹ thuật", value: "KỸ THUẬT" },
-  { label: "Kế toán - Hành chính", value: "KẾ TOÁN - HÀNH CHÍNH" },
-  { label: "Bán hàng", value: "BÁN HÀNG" },
-  { label: "Chăm sóc khách hàng", value: "CHĂM SÓC KHÁCH HÀNG" },
-  { label: "Pháp chế", value: "PHÁP CHẾ" },
+  { label: "Cao", value: TicketPriority.High },
+  { label: "Bình thường", value: TicketPriority.Medium },
+  { label: "Thấp", value: TicketPriority.Low },
 ];
 
 function TicketStatusBadge({ status }: { status: TicketStatus }) {
@@ -72,6 +65,11 @@ function TicketStatusBadge({ status }: { status: TicketStatus }) {
       label: "Đang xử lý",
       className:
         "bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-500/20",
+    },
+    [TicketStatus.PendingHeadApproval]: {
+      label: "Chờ duyệt kết quả",
+      className:
+        "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-500/20",
     },
     [TicketStatus.Resolved]: {
       label: "Đã xử lý",
@@ -120,13 +118,24 @@ function SupportTicketsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ticketIdParam = searchParams.get("ticketId");
+  const user = useAuthStore((state) => state.user);
 
   const [tickets, setTickets] = useState<TicketDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingId, setLoadingId] = useState<number | null>(null);
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterPriority, setFilterPriority] = useState("All");
-  const [filterDepartment, setFilterDepartment] = useState("All");
+
+  const isSysAdmin =
+    user?.supportRole === "SYSADMIN" ||
+    user?.username?.toLowerCase() === "sysadmin" ||
+    user?.username?.toLowerCase() === "admin";
+
+  useEffect(() => {
+    if (isSysAdmin) {
+      router.replace("/dashboard");
+    }
+  }, [isSysAdmin, router]);
 
   useEffect(() => {
     if (!ticketIdParam) return;
@@ -137,12 +146,16 @@ function SupportTicketsContent() {
   }, [ticketIdParam, router]);
 
   const loadTickets = useCallback(async () => {
+    if (isSysAdmin) {
+      setTickets([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const data = await ticketApi.getAll({
         status: filterStatus,
         priority: filterPriority,
-        department: filterDepartment,
       });
       setTickets(data);
     } catch {
@@ -150,7 +163,7 @@ function SupportTicketsContent() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, filterPriority, filterDepartment]);
+  }, [filterStatus, filterPriority, isSysAdmin]);
 
   useEffect(() => {
     void loadTickets();
@@ -351,6 +364,26 @@ function SupportTicketsContent() {
         },
       },
       {
+        accessorKey: "serviceName",
+        header: "Dịch vụ & Phụ trách",
+        cell: ({ row }) => {
+          const item = row.original;
+          const svc = item.serviceName || item.module || "Dịch vụ chung";
+          return (
+            <div className="flex flex-col max-w-[240px]">
+              <span className="font-semibold text-foreground text-xs truncate">
+                {svc}
+              </span>
+              <span className="text-xs text-muted-foreground truncate mt-0.5">
+                {item.assignedEmployeeName
+                  ? `NV: ${item.assignedEmployeeName}`
+                  : "Chưa phân công NV"}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
         accessorKey: "ticketPriority",
         header: () => <div className="text-center">Độ ưu tiên</div>,
         cell: ({ row }) => (
@@ -407,12 +440,6 @@ function SupportTicketsContent() {
   const CustomFilters = (
     <>
       <SelectFilter
-        value={filterDepartment}
-        onChange={(val) => setFilterDepartment(val)}
-        options={DEPARTMENT_FILTER_OPTIONS}
-        placeholder="Phòng ban"
-      />
-      <SelectFilter
         value={filterStatus}
         onChange={(val) => setFilterStatus(val)}
         options={STATUS_FILTER_OPTIONS}
@@ -422,7 +449,7 @@ function SupportTicketsContent() {
         value={filterPriority}
         onChange={(val) => setFilterPriority(val)}
         options={PRIORITY_FILTER_OPTIONS}
-        placeholder="Mức độ ưu tiên"
+        placeholder="Độ ưu tiên xử lý"
       />
     </>
   );
@@ -435,11 +462,14 @@ function SupportTicketsContent() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              Hỗ trợ & Ticket Khách hàng
+              {user?.supportRole === "DEPARTMENT_HEAD"
+                ? `Yêu cầu hỗ trợ — ${user?.departmentName || "Phòng ban phụ trách"}`
+                : "Yêu cầu hỗ trợ được phân công"}
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Tiếp nhận, xử lý và phản hồi các yêu cầu hỗ trợ kỹ thuật từ các tổ
-              chức Tenant gửi qua Web & App Mobile
+              {user?.supportRole === "DEPARTMENT_HEAD"
+                ? `Danh sách các yêu cầu hỗ trợ do khách hàng gửi đến ${user?.departmentName || "phòng ban của bạn"}. Phân công nhân viên trong phòng xử lý và duyệt kết quả.`
+                : "Danh sách các yêu cầu hỗ trợ do Trưởng phòng phân công cho bạn trực tiếp tiếp nhận và xử lý."}
             </p>
           </div>
 

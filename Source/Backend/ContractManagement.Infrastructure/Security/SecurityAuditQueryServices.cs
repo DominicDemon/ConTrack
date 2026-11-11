@@ -6,6 +6,7 @@ using ContractManagement.API.Domains.DTOs.Responses.Security;
 using ContractManagement.API.Domains.Interfaces.Security;
 using ContractManagement.Infrastructure.MultiTenancy.Interfaces;
 using ContractManagement.Infrastructure.Persistence.Application;
+using ContractManagement.Infrastructure.Persistence.Application.Models;
 using ContractManagement.Infrastructure.Persistence.Central;
 using Microsoft.EntityFrameworkCore;
 
@@ -61,9 +62,9 @@ public sealed class TenantSecurityAuditQueryService
         return await ToTenantPageAsync(query, filter, cancellationToken);
     }
 
-    private static IQueryable<Infrastructure.Persistence.Application.Models.TblAuthorizationAudit>
+    private static IQueryable<AUTHORIZATION_AUDIT>
         ApplyCommonFilter(
-            IQueryable<Infrastructure.Persistence.Application.Models.TblAuthorizationAudit> query,
+            IQueryable<AUTHORIZATION_AUDIT> query,
             SecurityAuditFilterRequest filter)
     {
         if (!string.IsNullOrWhiteSpace(filter.Action))
@@ -90,7 +91,7 @@ public sealed class TenantSecurityAuditQueryService
     }
 
     private async Task<PagedResult<TenantSecurityAuditResponse>> ToTenantPageAsync(
-        IQueryable<Infrastructure.Persistence.Application.Models.TblAuthorizationAudit> query,
+        IQueryable<AUTHORIZATION_AUDIT> query,
         SecurityAuditFilterRequest filter,
         CancellationToken cancellationToken)
     {

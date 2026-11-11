@@ -6,6 +6,16 @@ namespace ContractManagement.Tests.Domain;
 
 public class ContractReviewPolicyTests
 {
+    [Fact]
+    public void RecheckReportsOldDraftInsteadOfThrowing()
+    {
+        var template = new TemplateDefinition(1, "T", "r", false, [], [new("A", "Tiêu đề", "{{UNKNOWN}}")], true);
+        var content = new DraftContent { TemplateId = 1, CustomerId = 1, PartyType = "PERSON", Name = "x", Terms = template.Terms.ToList(), Items = [new(null, "Dịch vụ", 1, 1000, 0, 0)], TemplateSnapshot = template };
+        Assert.Throws<DraftValidationException>(() => DraftValidation.Prepare(content, template));
+        DraftValidation.Recheck(content);
+        Assert.Contains(content.MissingFields, m => m.Contains("{{UNKNOWN}}"));
+    }
+
     [Theory]
     [InlineData(D.Draft, null, false, 0, true)]
     [InlineData(D.Negotiating, S.ChangesRequested, false, 0, true)]   // new version created after changes requested

@@ -1,0 +1,17 @@
+﻿namespace ContractManagement.Infrastructure.Persistence.Application.Models;
+public sealed class CONTRACT_ACCEPTANCE_SECTION
+{
+    public int AcceptanceSectionId { get; set; }
+    public int AcceptanceRecordId { get; set; }
+    public string SectionCode { get; set; } = null!;
+    public string TitleVi { get; set; } = null!;
+    public string? TitleEn { get; set; }
+    public string? ContentVi { get; set; }
+    public string? ContentEn { get; set; }
+
+    public byte BilingualContentMode { get; set; } = 1;
+    public int DisplayOrder { get; set; }
+    public byte[] RowVersion { get; set; } = null!;
+}
+
+

@@ -46,10 +46,11 @@ public sealed class TenantSeedData : ITenantSeedData
 
         var manager = new TblEmployee
         {
-            EmployeeCode = Normalize(initialManager.EmployeeCode),
+            EmployeeCode = Normalize(initialManager.EmployeeCode) ?? $"MGR-{Guid.NewGuid():N}"[..12].ToUpperInvariant(),
             EmployeeAccount = account,
             EmployeeFullName = NormalizeRequired(initialManager.EmployeeFullName),
             EmployeeMobile = Normalize(initialManager.EmployeeMobile),
+            EmployeePhone = $"MGRID-{Guid.NewGuid():N}"[..14].ToUpperInvariant(),
             EmployeeEmail = Normalize(initialManager.EmployeeEmail),
             EmployeeType = 6,
             Status = 1,
@@ -62,26 +63,35 @@ public sealed class TenantSeedData : ITenantSeedData
             initialManager.EmployeePassword);
 
         dbContext.TblEmployees.Add(manager);
-        dbContext.TblAuthorizationAudits.Add(
-            AuthorizationAuditRecordFactory.CreateTenant(
-                tenantId,
-                null,
-                "SystemAdmin",
-                AuthorizationAuditActionTypes.EmployeeCreated,
-                AuthorizationAuditResultTypes.Success,
-                "Employee",
-                manager.EmployeeAccount,
-                null,
-                manager.EmployeeType,
-                null,
-                manager.Status,
-                null,
-                DateTime.UtcNow,
-                securityContext.IpAddress,
-                securityContext.UserAgent,
-                securityContext.CorrelationId));
-
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        try
+        {
+            dbContext.TblAuthorizationAudits.Add(
+                AuthorizationAuditRecordFactory.CreateTenant(
+                    tenantId,
+                    null,
+                    "SystemAdmin",
+                    AuthorizationAuditActionTypes.EmployeeCreated,
+                    AuthorizationAuditResultTypes.Success,
+                    "Employee",
+                    manager.EmployeeAccount,
+                    null,
+                    manager.EmployeeType,
+                    null,
+                    manager.Status,
+                    null,
+                    DateTime.UtcNow,
+                    securityContext.IpAddress,
+                    securityContext.UserAgent,
+                    securityContext.CorrelationId));
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            // Bỏ qua nếu database (ví dụ MasterDB) không có bảng tbl_AuthorizationAudit.
+        }
     }
 
     private static string NormalizeRequired(string value)

@@ -23,6 +23,12 @@ export function Header({ title }: { title: string }) {
   const user = useAuthStore((state) => state.user);
   const { logout } = useAuthStore();
 
+  const isSysAdmin =
+    !user ||
+    user.supportRole === "SYSADMIN" ||
+    user.username?.toLowerCase() === "sysadmin" ||
+    user.username?.toLowerCase() === "admin";
+
   const handleLogout = async () => {
     logout();
     router.push("/");
@@ -42,7 +48,7 @@ export function Header({ title }: { title: string }) {
           </h2>
         </div>
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
-          <AdminNotificationBell />
+          {!isSysAdmin && <AdminNotificationBell />}
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

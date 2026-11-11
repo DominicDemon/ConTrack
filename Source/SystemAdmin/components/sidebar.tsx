@@ -73,6 +73,26 @@ export function Sidebar() {
   const router = useRouter();
   const pathname = usePathname();
 
+  const isSysAdmin =
+    !user ||
+    user.supportRole === "SYSADMIN" ||
+    user.username?.toLowerCase() === "sysadmin" ||
+    user.username?.toLowerCase() === "admin";
+
+  const visibleNavItems = navItems.filter((item) => {
+    // System Admin không tham gia luồng yêu cầu hỗ trợ -> ẩn mục Hỗ trợ & Ticket
+    if (isSysAdmin && item.href === "/support-tickets") {
+      return false;
+    }
+    return true;
+  });
+
+  const portalSubtitle = isSysAdmin
+    ? "System Admin"
+    : user?.supportRole === "DEPARTMENT_HEAD"
+      ? `Trưởng phòng • ${user?.departmentName || "Phòng ban"}`
+      : `Nhân viên • ${user?.departmentName || "Phòng ban"}`;
+
   const handleLogout = async () => {
     logout();
     router.push("/");
@@ -85,16 +105,7 @@ export function Sidebar() {
 
   const renderNavigation = (mobile = false) => (
     <nav className="flex-1 space-y-1.5 overflow-y-auto px-3 py-4">
-      {/* <p
-        className={cn(
-          "mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground",
-          !mobile && !isExpanded && "sr-only",
-        )}
-      >
-        Quản trị hệ thống
-      </p> */}
-
-      {navItems.map((item) => {
+      {visibleNavItems.map((item) => {
         const Icon = item.icon;
         const isActive = pathname.startsWith(item.href);
         const showLabel = mobile || isExpanded;
@@ -252,7 +263,7 @@ export function Sidebar() {
               <div className="min-w-0">
                 <p className="truncate text-sm font-bold">{APP_NAME}</p>
                 <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  System Admin
+                  {portalSubtitle}
                 </p>
               </div>
             </Link>

@@ -29,6 +29,7 @@ public sealed class EsmsOptions
     public string TemporaryPasswordTemplate { get; set; } =
         "ConTrack: Ban co hop dong can xem. Dang nhap {portalUrl} bang SDT {phone}, mat khau tam {password}, het han sau 24 gio.";
     public string ReviewNoticeTemplate { get; set; } = "ConTrack: Ban co hop dong {contractCode} can xem lai. Dang nhap {portalUrl} de xem.";
+    public string ReviewOtpTemplate { get; set; } = "ConTrack: Ma xac nhan xem hop dong cua ban la {otp}, het han sau 5 phut.";
 }
 
 public static class SmsPurpose

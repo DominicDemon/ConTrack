@@ -1,4 +1,4 @@
-﻿using ContractManagement.Infrastructure.MultiTenancy.Enums;
+using ContractManagement.Infrastructure.MultiTenancy.Enums;
 
 namespace ContractManagement.Infrastructure.Persistence.Central.Entities;
 
@@ -34,7 +34,13 @@ public sealed class Tenant
     /// </summary>
     public int TenantDatabaseId { get; set; }
 
-    public TenantDatabase TenantDatabase { get; set; } = null!;
+    public TenantDatabase TenantDatabase { get; set; } = new()
+    {
+        DatabaseKey = "master",
+        DatabaseName = "MasterDB",
+        Mode = TenantDatabaseMode.Shared,
+        ConnectionString = "server=localhost;database=MasterDB;uid=sa;pwd=123;TrustServerCertificate=True;Encrypt=False;"
+    };
 
     /// <summary>
     /// Thông báo lỗi khi tạo database thất bại.

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ColumnDef, Row } from "@tanstack/react-table";
+import { ColumnDef } from "@tanstack/react-table";
 import {
   CalendarDays,
   CheckCircle2,
@@ -33,29 +33,21 @@ import { cn } from "@/lib/utils";
 import {
   customerTicketApi,
   TicketDto,
-  TicketPriority,
   TicketStatus,
 } from "@/services/ticket-api";
 
 const STATUS_FILTER_OPTIONS = [
-  { label: "Tất cả trạng thái", value: "All" },
-  { label: "Chờ tiếp nhận", value: TicketStatus.Open },
+  { label: "Tất cả yêu cầu", value: "All" },
+  { label: "Chờ xử lý", value: TicketStatus.Open },
   { label: "Đang xử lý", value: TicketStatus.InProgress },
-  { label: "Đã xử lý", value: TicketStatus.Resolved },
-];
-
-const PRIORITY_FILTER_OPTIONS = [
-  { label: "Tất cả ưu tiên", value: "All" },
-  { label: "Thấp", value: TicketPriority.Low },
-  { label: "Bình thường", value: TicketPriority.Medium },
-  { label: "Cao", value: TicketPriority.High },
-  { label: "Khẩn cấp", value: TicketPriority.Urgent },
+  { label: "Chờ phản hồi", value: TicketStatus.PendingHeadApproval },
+  { label: "Đã xử lý / Đóng", value: TicketStatus.Resolved },
 ];
 
 function TicketStatusBadge({ status }: { status: TicketStatus }) {
   const config: Record<TicketStatus, { label: string; className: string }> = {
     [TicketStatus.Open]: {
-      label: "Chờ tiếp nhận",
+      label: "Chờ xử lý",
       className:
         "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20",
     },
@@ -64,42 +56,18 @@ function TicketStatusBadge({ status }: { status: TicketStatus }) {
       className:
         "bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/20",
     },
+    [TicketStatus.PendingHeadApproval]: {
+      label: "Chờ phản hồi",
+      className:
+        "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400 dark:border-violet-500/20",
+    },
     [TicketStatus.Resolved]: {
-      label: "Đã xử lý",
+      label: "Đã đóng",
       className:
         "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20",
     },
   };
   const current = config[status] ?? config[TicketStatus.Open];
-  return (
-    <Badge variant="outline" className={cn("font-medium", current.className)}>
-      {current.label}
-    </Badge>
-  );
-}
-
-function TicketPriorityBadge({ priority }: { priority: TicketPriority }) {
-  const config: Record<TicketPriority, { label: string; className: string }> = {
-    [TicketPriority.Urgent]: {
-      label: "Khẩn cấp",
-      className:
-        "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/20",
-    },
-    [TicketPriority.High]: {
-      label: "Cao",
-      className:
-        "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20",
-    },
-    [TicketPriority.Medium]: {
-      label: "Bình thường",
-      className: "bg-primary/10 text-primary border-primary/20",
-    },
-    [TicketPriority.Low]: {
-      label: "Thấp",
-      className: "bg-muted text-muted-foreground border-border",
-    },
-  };
-  const current = config[priority] ?? config[TicketPriority.Medium];
   return (
     <Badge variant="outline" className={cn("font-medium", current.className)}>
       {current.label}
@@ -113,14 +81,12 @@ export default function CustomerSupportTicketsPage() {
   const [loading, setLoading] = useState(true);
   const [loadingId, setLoadingId] = useState<number | null>(null);
   const [filterStatus, setFilterStatus] = useState("All");
-  const [filterPriority, setFilterPriority] = useState("All");
 
   const loadTickets = useCallback(async () => {
     setLoading(true);
     try {
       const data = await customerTicketApi.getAll({
         status: filterStatus,
-        priority: filterPriority,
       });
       setTickets(data);
     } catch {
@@ -128,7 +94,7 @@ export default function CustomerSupportTicketsPage() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, filterPriority]);
+  }, [filterStatus]);
 
   useEffect(() => {
     void loadTickets();
@@ -153,7 +119,9 @@ export default function CustomerSupportTicketsPage() {
       (t) => t.ticketStatus === TicketStatus.Open,
     ).length;
     const inProgressCount = tickets.filter(
-      (t) => t.ticketStatus === TicketStatus.InProgress,
+      (t) =>
+        t.ticketStatus === TicketStatus.InProgress ||
+        t.ticketStatus === TicketStatus.PendingHeadApproval,
     ).length;
     const resolvedCount = tickets.filter(
       (t) => t.ticketStatus === TicketStatus.Resolved,
@@ -161,13 +129,13 @@ export default function CustomerSupportTicketsPage() {
 
     return [
       {
-        title: "Tổng yêu cầu",
+        title: "Tổng yêu cầu của bạn",
         value: total,
         icon: <Headset className="w-6 h-6" />,
         iconWrapperClassName: "bg-primary/10 text-primary",
       },
       {
-        title: "Chờ tiếp nhận",
+        title: "Chờ xử lý",
         value: openCount,
         icon: <Clock className="w-6 h-6" />,
         iconWrapperClassName:
@@ -180,7 +148,7 @@ export default function CustomerSupportTicketsPage() {
         iconWrapperClassName: "bg-sky-500/10 text-sky-600 dark:text-sky-500",
       },
       {
-        title: "Đã xử lý",
+        title: "Đã xử lý / Đóng",
         value: resolvedCount,
         icon: <CheckCircle2 className="w-6 h-6" />,
         iconWrapperClassName:
@@ -225,24 +193,24 @@ export default function CustomerSupportTicketsPage() {
       },
       {
         accessorKey: "ticketCode",
-        header: "Mã Ticket & Ngày gửi",
+        header: "Mã yêu cầu & Thời gian",
         cell: ({ row }) => {
           const item = row.original;
           const d = new Date(item.createdAt);
           return (
             <div className="flex flex-col pl-1">
               <div className="flex items-center gap-1.5">
-                <span className="font-semibold text-foreground font-mono">
+                <span className="font-semibold text-primary font-mono hover:underline">
                   {item.ticketCode}
                 </span>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleCopy(item.ticketCode, "mã ticket");
+                    handleCopy(item.ticketCode, "mã yêu cầu");
                   }}
                   className="text-muted-foreground hover:text-foreground transition-colors p-0.5 rounded hover:bg-muted"
-                  title="Sao chép mã ticket"
+                  title="Sao chép mã yêu cầu"
                 >
                   <Copy className="w-3 h-3" />
                 </button>
@@ -264,8 +232,8 @@ export default function CustomerSupportTicketsPage() {
       {
         id: "searchInfo",
         accessorFn: (row) =>
-          `${row.ticketCode} ${row.ticketSubject} ${row.ticketDescription} ${row.department}`,
-        header: "Tiêu đề & Nội dung",
+          `${row.ticketCode} ${row.ticketSubject} ${row.ticketDescription} ${row.department} ${row.serviceName || row.module || ""}`,
+        header: "Tiêu đề yêu cầu",
         cell: ({ row }) => {
           const item = row.original;
           return (
@@ -282,29 +250,29 @@ export default function CustomerSupportTicketsPage() {
       },
       {
         accessorKey: "department",
-        header: "Phòng ban & Phân hệ",
+        header: "Gửi đến (Phòng ban)",
         cell: ({ row }) => {
           const item = row.original;
           return (
-            <div className="flex flex-col">
-              <span className="font-medium text-foreground text-sm">
-                {item.department}
-              </span>
-              <span className="text-xs text-muted-foreground truncate max-w-[200px]">
-                {item.module || "Hỗ trợ chung"}
-              </span>
-            </div>
+            <span className="font-medium text-foreground text-sm">
+              {item.department}
+            </span>
           );
         },
       },
       {
-        accessorKey: "ticketPriority",
-        header: () => <div className="text-center">Độ ưu tiên</div>,
-        cell: ({ row }) => (
-          <div className="flex justify-center min-w-[100px]">
-            <TicketPriorityBadge priority={row.original.ticketPriority} />
-          </div>
-        ),
+        accessorKey: "serviceName",
+        header: "Dịch vụ",
+        cell: ({ row }) => {
+          const item = row.original;
+          const serviceLabel =
+            item.serviceName || item.module || "Dịch vụ chung";
+          return (
+            <span className="font-semibold text-foreground text-sm">
+              {serviceLabel}
+            </span>
+          );
+        },
       },
       {
         accessorKey: "ticketStatus",
@@ -328,14 +296,14 @@ export default function CustomerSupportTicketsPage() {
               isLoading={loadingId === item.ticketSupportId}
               menuItems={[
                 {
-                  label: "Phản hồi yêu cầu",
+                  label: "Trao đổi trực tuyến",
                   icon: <MessageSquare className="w-4 h-4" />,
                   onClick: () => handleView(item.ticketSupportId),
                 },
                 {
-                  label: "Sao chép mã Ticket",
+                  label: "Sao chép mã yêu cầu",
                   icon: <Copy className="w-4 h-4" />,
-                  onClick: () => handleCopy(item.ticketCode, "mã ticket"),
+                  onClick: () => handleCopy(item.ticketCode, "mã yêu cầu"),
                 },
               ]}
             />
@@ -347,20 +315,12 @@ export default function CustomerSupportTicketsPage() {
   );
 
   const CustomFilters = (
-    <>
-      <SelectFilter
-        value={filterStatus}
-        onChange={(val) => setFilterStatus(val)}
-        options={STATUS_FILTER_OPTIONS}
-        placeholder="Trạng thái"
-      />
-      <SelectFilter
-        value={filterPriority}
-        onChange={(val) => setFilterPriority(val)}
-        options={PRIORITY_FILTER_OPTIONS}
-        placeholder="Mức độ ưu tiên"
-      />
-    </>
+    <SelectFilter
+      value={filterStatus}
+      onChange={(val) => setFilterStatus(val)}
+      options={STATUS_FILTER_OPTIONS}
+      placeholder="Trạng thái"
+    />
   );
 
   return (
@@ -371,11 +331,11 @@ export default function CustomerSupportTicketsPage() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">
-              Hỗ trợ khách hàng
+              Danh sách yêu cầu hỗ trợ
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Gửi yêu cầu hỗ trợ kỹ thuật, theo dõi tiến độ xử lý và trao đổi
-              trực tiếp với bộ phận hỗ trợ ConTrack.
+              Gửi yêu cầu hỗ trợ theo từng dịch vụ, theo dõi tiến độ xử lý và
+              trao đổi trực tiếp với bộ phận hỗ trợ ConTrack.
             </p>
           </div>
 
@@ -392,61 +352,26 @@ export default function CustomerSupportTicketsPage() {
             </Button>
             <Button
               onClick={() => router.push("/support-tickets/create")}
-              className="h-9 shadow-sm"
+              className="h-9 gap-1.5 shadow-sm"
             >
-              <Plus className="w-4 h-4 mr-2" /> Tạo yêu cầu mới
+              <Plus className="w-4 h-4" />
+              <span>Gửi yêu cầu hỗ trợ</span>
             </Button>
           </div>
         </div>
 
         <SummaryCards items={summaryItems} isLoading={loading} />
 
-        <Card className="border-border shadow-sm bg-card min-h-[500px] flex flex-col gap-0 p-0">
-          <CardContent className="p-4 flex flex-col justify-between flex-1 pb-0">
+        <Card className="border-border shadow-sm overflow-hidden">
+          <CardContent className="p-0">
             <DataTable
               columns={columns}
               data={tickets}
               isLoading={loading}
-              searchKey="searchInfo"
-              searchPlaceholder="Tìm theo mã ticket, tiêu đề, phòng ban..."
-              filterSlot={CustomFilters}
-              onRowClick={(row) => handleView(row.ticketSupportId)}
-              mobileCardRenderer={(
-                row: Row<TicketDto>,
-                { isSelected, actionCell },
-              ) => {
-                const item = row.original;
-                return (
-                  <div
-                    className={`rounded-xl border bg-card p-4 shadow-sm transition-colors active:bg-secondary/40 ${
-                      isSelected
-                        ? "border-primary/40 bg-primary/5"
-                        : "border-border"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3 mb-3">
-                      <div className="flex flex-col min-w-0">
-                        <span className="font-semibold text-foreground font-mono truncate">
-                          {item.ticketCode}
-                        </span>
-                        <span className="text-sm font-medium text-foreground truncate mt-0.5">
-                          {item.ticketSubject}
-                        </span>
-                      </div>
-                      <TicketStatusBadge status={item.ticketStatus} />
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3 pt-3 border-t border-border">
-                      <span className="text-xs text-muted-foreground truncate">
-                        {item.department} •{" "}
-                        {new Date(item.createdAt).toLocaleDateString("vi-VN")}
-                      </span>
-                      <TicketPriorityBadge priority={item.ticketPriority} />
-                    </div>
-                    {actionCell}
-                  </div>
-                );
-              }}
+              searchColumn="searchInfo"
+              searchPlaceholder="Tìm theo mã yêu cầu, tiêu đề, dịch vụ, phòng ban..."
+              customFilters={CustomFilters}
+              onRowClick={(row) => handleView(row.original.ticketSupportId)}
             />
           </CardContent>
         </Card>

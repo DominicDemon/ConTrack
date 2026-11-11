@@ -1,4 +1,8 @@
-export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean };
+export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean; canManageEmployees: boolean; mustChangePassword: boolean; department: string | null; isManager: boolean };
+export type EmployeeAdminRow = { id: string; code: string; username: string; name: string; email: string | null; phone: string | null; status: "ACTIVE" | "LOCKED" | string; mustChangePassword: boolean; lastLoginAt: string | null; departmentId: string | null; isManager: boolean };
+/** staffPermissions is null when the department has a manager only (Ban Giám Đốc). */
+export type DepartmentOption = { id: string; code: string; name: string; staffPermissions: string[] | null; managerPermissions: string[]; managerId: string | null; managerName: string | null };
+export type TemporaryPasswordResult = { employee: EmployeeAdminRow; temporaryPassword: string };
 export type DraftField = { key: string; label: string; required: boolean; dataType?: "TEXT" | "NUMBER" | "DATE" | "SELECT"; options?: string[]; min?: number | null; max?: number | null };
 export type DraftTerm = { key: string; title: string; content: string; editable: boolean };
 export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; documentType?: number; wordStorageKey?: string | null; wordSha256?: string | null; manualWordContent?: boolean; fields: DraftField[]; terms: DraftTerm[] };
@@ -42,7 +46,7 @@ export function estimateTotals(content: DraftContent): DraftTotals {
   return { subtotal: round(subtotal), discount: round(discount), vat, total: round(subtotal - discount + vat) };
 }
 export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string };
-export type ReviewSummary = { id: string; versionId: string; versionNo: string; status: string; sentAt: string; sentByName: string; message: string | null; firstViewedAt: string | null; customerNote: string | null; respondedAt: string | null; followupDecision: string | null; followupNote: string | null; followupDecidedAt: string | null; rowVersion: string; comments: ReviewComment[] };
+export type ReviewSummary = { id: string; versionId: string; versionNo: string; status: string; sentAt: string; sentByName: string; message: string | null; firstViewedAt: string | null; customerNote: string | null; respondedAt: string | null; followupDecision: string | null; followupNote: string | null; followupDecidedAt: string | null; rowVersion: string; comments: ReviewComment[]; linkExpiresAt: string | null; linkEmailSent?: boolean | null };
 export const documentStatusLabel: Record<number, string> = { 0: "Nháp", 1: "Đang thương lượng", 2: "Chờ kiểm tra", 3: "Chờ ký", 4: "Đã ký", 5: "Hoàn tất", 6: "Đã đóng", 7: "Khách từ chối" };
 export const reviewStatusLabel: Record<string, string> = { SENT: "Đã gửi, khách chưa mở", VIEWED: "Khách đã xem", APPROVED: "Khách đồng ý", CHANGES_REQUESTED: "Khách yêu cầu sửa", REJECTED: "Khách từ chối", REVOKED: "Đã thu hồi", SUPERSEDED: "Đã thay bằng bản mới" };
 
@@ -57,3 +61,8 @@ export function completePartyFields(template: TemplateDefinition): TemplateDefin
   ];
   return {...template,fields:[...template.fields,...required.filter(f => !template.fields.some(x => x.key === f.key))]};
 }
+export type CustomerRow = { id: string; name: string; phone: string; email: string | null; address: string | null; taxIdentifier: string | null; active: boolean; businessCount: number; createdAt: string; lastLoginAt: string | null };
+export type ProductRow = { id: string; code: string | null; name: string; unit: string | null; categoryId: number | null; categoryName: string | null; price: number | null; description: string | null };
+export type CategoryOption = { id: number; name: string };
+export type ServiceRow = { id: string; name: string; unit: string | null; price: number | null; typeName: string | null; active: boolean };
+export type DepartmentRow = { id: string; code: string; name: string; description: string | null; status: string; managerName: string | null; memberCount: number; staffRoleName: string | null; managerRoleName: string };

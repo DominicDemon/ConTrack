@@ -41,6 +41,8 @@ public partial class Employee
 
     public DateTime? EmployeeLastLoginAt { get; set; }
 
+    public bool EmployeeMustChangePassword { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public long? CreatedBy { get; set; }

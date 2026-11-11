@@ -11,9 +11,9 @@ export default function InternalLogin() {
   const router = useRouter();
   const [username, setUsername] = useState(""); const [password, setPassword] = useState("");
   const [show, setShow] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  useEffect(() => { void internalApi<InternalUser>("/auth/me").then(() => router.replace("/workspace/contracts/drafts")).catch(() => {}); }, [router]);
+  useEffect(() => { void internalApi<InternalUser>("/auth/me").then(() => router.replace("/workspace")).catch(() => {}); }, [router]);
   async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError("");
-    try { await internalApi("/auth/login", "POST", { username, password }); router.replace("/workspace/contracts/drafts"); }
+    try { await internalApi<InternalUser>("/auth/login", "POST", { username, password }); router.replace("/workspace"); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   return <InternalTheme><div className={s.login}>
     <section className={s.loginIntro}>

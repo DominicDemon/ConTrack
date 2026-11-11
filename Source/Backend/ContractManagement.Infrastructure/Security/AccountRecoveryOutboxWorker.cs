@@ -26,8 +26,9 @@ public sealed class AccountRecoveryOutboxWorker(
                 await using var scope = scopes.CreateAsyncScope();
                 var central = scope.ServiceProvider.GetRequiredService<CentralDbContext>();
                 await ProcessSafely(new(central, "central"), ct);
-                var tenants = await central.Tenants.AsNoTracking().Where(x => x.Status == TenantStatus.Active)
-                    .Select(x => new ResolvedTenant(x.TenantId, x.TenantCode, x.TenantName, x.TenantDatabase.Mode, x.TenantDatabase.ConnectionString)).ToListAsync(ct);
+                var activeTenants = await central.Tenants.AsNoTracking().Where(x => x.Status == TenantStatus.Active).ToListAsync(ct);
+                var tenants = activeTenants
+                    .Select(x => new ResolvedTenant(x.TenantId, x.TenantCode, x.TenantName, x.TenantDatabase.Mode, x.TenantDatabase.ConnectionString)).ToList();
                 foreach (var tenant in tenants)
                 {
                     try
@@ -52,6 +53,7 @@ public sealed class AccountRecoveryOutboxWorker(
     {
         try { await ProcessAsync(store, ct); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 208) { }
         catch (Exception) { telemetry?.Failure(); logger.LogError("Recovery outbox failed for scope {Scope}. Verify migrations and configuration.", store.Scope); }
     }
     public async Task ProcessAsync(RecoveryStore store, CancellationToken ct)

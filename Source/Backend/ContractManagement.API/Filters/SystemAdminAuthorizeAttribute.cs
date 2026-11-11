@@ -31,14 +31,8 @@ public sealed class SystemAdminAuthorizeAttribute : Attribute, IAsyncAuthorizati
         var admin = systemAdminId.HasValue && sessionVersion.HasValue
             ? await centralDbContext.SystemAdmins
                 .AsNoTracking()
-                .Where(candidate => candidate.SystemAdminId == systemAdminId.Value)
-                .Select(candidate => new
-                {
-                    candidate.IsActive,
-                    candidate.MustChangePassword,
-                    candidate.SessionVersion
-                })
                 .FirstOrDefaultAsync(
+                    candidate => candidate.SystemAdminId == systemAdminId.Value,
                     httpContext.RequestAborted)
             : null;
 

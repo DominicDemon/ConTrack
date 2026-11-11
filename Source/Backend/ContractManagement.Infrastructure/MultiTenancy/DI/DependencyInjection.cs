@@ -1,4 +1,4 @@
-﻿using ContractManagement.Infrastructure.DatabaseScripts.SeedData;
+using ContractManagement.Infrastructure.DatabaseScripts.SeedData;
 using ContractManagement.Infrastructure.MultiTenancy.Interfaces;
 using ContractManagement.Infrastructure.MultiTenancy.Options;
 using ContractManagement.Infrastructure.MultiTenancy.Services;
@@ -95,11 +95,16 @@ public static class DependencyInjection
             {
                 var currentTenant =
                     serviceProvider
-                        .GetRequiredService<ICurrentTenant>()
-                        .GetRequiredTenant();
+                        .GetRequiredService<ICurrentTenant>();
+
+                var connectionString = currentTenant.IsResolved
+                    && !string.IsNullOrWhiteSpace(currentTenant.Value?.ConnectionString)
+                        ? currentTenant.Value!.ConnectionString
+                        : configuration.GetConnectionString("DefaultConnection")
+                            ?? centralConnectionString;
 
                 options.UseSqlServer(
-                    currentTenant.ConnectionString,
+                    connectionString,
                     sqlOptions =>
                     {
                         sqlOptions.EnableRetryOnFailure();

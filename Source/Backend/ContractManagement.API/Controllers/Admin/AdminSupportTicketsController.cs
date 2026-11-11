@@ -27,7 +27,9 @@ public sealed class AdminSupportTicketsController : ControllerBase
         [FromQuery] string? keyword,
         CancellationToken cancellationToken)
     {
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 0;
         var tickets = await _ticketService.GetAllForAdminAsync(
+            systemAdminId,
             status,
             priority,
             department,
@@ -42,13 +44,101 @@ public sealed class AdminSupportTicketsController : ControllerBase
         int id,
         CancellationToken cancellationToken)
     {
-        var ticket = await _ticketService.GetByIdAsync(id, cancellationToken);
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 0;
+        var ticket = await _ticketService.GetByIdAsync(id, systemAdminId, cancellationToken);
         if (ticket is null)
+        {
+            return NotFound(new { message = "Không tìm thấy ticket hỗ trợ hoặc bạn không có quyền truy cập." });
+        }
+
+        return Ok(ticket);
+    }
+
+    [HttpGet("{id:int}/staff")]
+    public async Task<IActionResult> GetDepartmentStaff(
+        int id,
+        CancellationToken cancellationToken)
+    {
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 1;
+        var staffList = await _ticketService.GetDepartmentStaffAsync(id, systemAdminId, cancellationToken);
+        return Ok(staffList);
+    }
+
+    [HttpPost("{id:int}/assign")]
+    public async Task<IActionResult> AssignToStaff(
+        int id,
+        [FromBody] AssignTicketToStaffRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 1;
+        var adminName = HttpContext.Session.GetString(AccountSessionKeys.SystemAdminName) ?? "System Administrator";
+
+        var updated = await _ticketService.AssignToStaffAsync(
+            id,
+            systemAdminId,
+            adminName,
+            request,
+            cancellationToken);
+
+        if (updated is null)
         {
             return NotFound(new { message = "Không tìm thấy ticket hỗ trợ." });
         }
 
-        return Ok(ticket);
+        return Ok(updated);
+    }
+
+    [HttpPost("{id:int}/staff-complete")]
+    public async Task<IActionResult> StaffComplete(
+        int id,
+        [FromBody] StaffCompleteTicketRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Resolution))
+        {
+            return BadRequest(new { message = "Vui lòng nhập phương án/kết quả xử lý." });
+        }
+
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 1;
+        var adminName = HttpContext.Session.GetString(AccountSessionKeys.SystemAdminName) ?? "Nhân viên xử lý";
+
+        var updated = await _ticketService.StaffCompleteAsync(
+            id,
+            systemAdminId,
+            adminName,
+            request,
+            cancellationToken);
+
+        if (updated is null)
+        {
+            return NotFound(new { message = "Không tìm thấy ticket hỗ trợ." });
+        }
+
+        return Ok(updated);
+    }
+
+    [HttpPost("{id:int}/resolve")]
+    public async Task<IActionResult> HeadResolve(
+        int id,
+        [FromBody] HeadResolveTicketRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 1;
+        var adminName = HttpContext.Session.GetString(AccountSessionKeys.SystemAdminName) ?? "System Administrator";
+
+        var updated = await _ticketService.HeadResolveAsync(
+            id,
+            systemAdminId,
+            adminName,
+            request,
+            cancellationToken);
+
+        if (updated is null)
+        {
+            return NotFound(new { message = "Không tìm thấy ticket hỗ trợ." });
+        }
+
+        return Ok(updated);
     }
 
     [HttpPost("{id:int}/messages")]
@@ -104,4 +194,3 @@ public sealed class AdminSupportTicketsController : ControllerBase
         return Ok(updated);
     }
 }
-

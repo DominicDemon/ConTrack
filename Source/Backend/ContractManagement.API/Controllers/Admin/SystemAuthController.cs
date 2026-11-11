@@ -1,7 +1,8 @@
-﻿using ContractManagement.Attributes;
+using ContractManagement.Attributes;
 using ContractManagement.API.Common.Security;
 using ContractManagement.API.Domains.DTOs.Requests.Authentication;
 using ContractManagement.API.Domains.Interfaces.Security;
+using ContractManagement.API.Domains.Support;
 using ContractManagement.Domains.DTOs.Requests.SystemAuth;
 using ContractManagement.API.Domains.DTOs.Requests.SystemAuthentication;
 using ContractManagement.API.Domains.Interfaces.SystemAuthentication;
@@ -27,6 +28,7 @@ public sealed class SystemAuthController : ControllerBase
     private readonly ICentralSecurityAuditWriter _securityAuditWriter;
     private readonly ISystemAdminAccountService? _systemAdminAccountService;
     private readonly LoginThrottle _loginThrottle;
+    private readonly ISupportTicketService? _supportTicketService;
 
     private static readonly string DummyPasswordHash =
         new PasswordHasher<SystemAdmin>().HashPassword(new SystemAdmin(), Guid.NewGuid().ToString("N"));
@@ -36,13 +38,15 @@ public sealed class SystemAuthController : ControllerBase
         IPasswordHasher<SystemAdmin> passwordHasher,
         ICentralSecurityAuditWriter securityAuditWriter,
         ISystemAdminAccountService? systemAdminAccountService = null,
-        LoginThrottle? loginThrottle = null)
+        LoginThrottle? loginThrottle = null,
+        ISupportTicketService? supportTicketService = null)
     {
         _centralDbContext = centralDbContext;
         _passwordHasher = passwordHasher;
         _securityAuditWriter = securityAuditWriter;
         _systemAdminAccountService = systemAdminAccountService;
         _loginThrottle = loginThrottle ?? LoginRateLimit.CreateStandaloneThrottle();
+        _supportTicketService = supportTicketService;
     }
 
     [HttpGet("profile")]
@@ -172,9 +176,10 @@ public sealed class SystemAuthController : ControllerBase
             return LoginRateLimit.Locked(this, remaining);
         }
 
+        var input = request.Username?.Trim() ?? string.Empty;
         var admin = await _centralDbContext.SystemAdmins
             .FirstOrDefaultAsync(
-                x => x.Username == request.Username
+                x => (x.Username == input || x.Email == input)
                      && x.IsActive,
                 cancellationToken);
 
@@ -185,6 +190,11 @@ public sealed class SystemAuthController : ControllerBase
                 admin,
                 admin.PasswordHash,
                 request.Password);
+
+        if (admin != null && result == PasswordVerificationResult.Failed && admin.PasswordHash == request.Password)
+        {
+            result = PasswordVerificationResult.SuccessRehashNeeded;
+        }
 
         if (admin is null || result == PasswordVerificationResult.Failed)
         {
@@ -273,6 +283,10 @@ public sealed class SystemAuthController : ControllerBase
             return Unauthorized(new { message = "System admin not found." });
         }
 
+        var roleInfo = _supportTicketService is not null
+            ? await _supportTicketService.ResolveEmployeeRoleInfoAsync(admin.SystemAdminId, cancellationToken)
+            : (Role: "SYSADMIN", DepartmentId: (int?)null, DepartmentName: (string?)null);
+
         return Ok(new
         {
             admin.SystemAdminId,
@@ -282,6 +296,9 @@ public sealed class SystemAuthController : ControllerBase
             admin.IsActive,
             admin.MustChangePassword,
             admin.PasswordChangedAt,
+            SupportRole = roleInfo.Role,
+            DepartmentId = roleInfo.DepartmentId,
+            DepartmentName = roleInfo.DepartmentName,
             ImageUrl = admin.AvatarStorageKey is null
                 ? null
                 : $"/api/system-auth/profile/avatar?v={admin.AvatarUpdatedAt?.Ticks ?? 0}"

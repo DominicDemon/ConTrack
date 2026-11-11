@@ -1,5 +1,6 @@
 import type { DraftContent } from "@/services/internal-api";
 export type CustomerSession = { id: string; name: string; mustChangePassword: boolean };
+export type ReviewLinkStatus = { verified: boolean; reviewId: string | null; expiresAt: string };
 export type CustomerReviewSummary = { id: string; contractName: string; versionNo: string; status: string; sentAt: string; respondedAt: string | null };
 export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string };
 export type CustomerReviewDetail = { id: string; contractName: string; versionNo: string; status: string; sentAt: string; message: string | null; customerNote: string | null;

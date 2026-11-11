@@ -30,7 +30,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, ChevronLeft, ChevronRight, CheckCheck } from "lucide-react";
+import {
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  CheckCheck,
+  Search,
+} from "lucide-react";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { MobileCardWrapper } from "./mobile-card-wrapper";
 
@@ -113,17 +119,27 @@ export function DataTable<TData, TValue>({
         </div>
 
         {searchKey && (
-          <div className="relative w-full md:w-100">
+          <div className="relative w-full md:w-96 flex items-center">
             <Input
               placeholder={searchPlaceholder}
+              maxLength={255}
               value={
                 (table.getColumn(searchKey)?.getFilterValue() as string) ?? ""
               }
               onChange={(event) =>
                 table.getColumn(searchKey)?.setFilterValue(event.target.value)
               }
-              className="h-9 bg-background"
+              className="h-9 bg-background pr-9"
             />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="ml-2 shrink-0"
+              aria-label="Tìm kiếm"
+            >
+              <Search className="w-4 h-4" />
+            </Button>
           </div>
         )}
       </div>

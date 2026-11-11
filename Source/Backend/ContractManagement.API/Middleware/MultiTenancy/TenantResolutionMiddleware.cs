@@ -1,4 +1,4 @@
-﻿using ContractManagement.Attributes;
+using ContractManagement.Attributes;
 using ContractManagement.API.Common.Security;
 using ContractManagement.Filter;
 using ContractManagement.Infrastructure.MultiTenancy.Interfaces;
@@ -110,11 +110,17 @@ public sealed class TenantResolutionMiddleware
                     .FirstOrDefault();
         }
 
+        bool isLoginEndpoint =
+            context.Request.Path.StartsWithSegments(
+                "/api/auth/login",
+                StringComparison.OrdinalIgnoreCase);
+
         /*
          * Khi Session đã có tenant nhưng header truyền tenant khác,
-         * từ chối request thay vì cho người dùng đổi tenant.
+         * từ chối request thay vì cho người dùng đổi tenant (trừ khi đang gọi /api/auth/login).
          */
         if (!isPublicCustomerAccess
+            && !isLoginEndpoint
             && !string.IsNullOrWhiteSpace(tenantFromSession)
             && !string.IsNullOrWhiteSpace(tenantFromHeader)
             && !string.Equals(
@@ -138,9 +144,15 @@ public sealed class TenantResolutionMiddleware
 
         string? tenantCode = isPublicCustomerAccess
             ? context.Request.RouteValues["tenantCode"]?.ToString()
-            : tenantFromSession
-                ?? tenantFromClaim
-                ?? tenantFromHeader;
+            : isLoginEndpoint
+                ? tenantFromHeader
+                    ?? tenantFromSession
+                    ?? tenantFromClaim
+                    ?? "dtc"
+                : tenantFromSession
+                    ?? tenantFromClaim
+                    ?? tenantFromHeader
+                    ?? "dtc";
 
         if (string.IsNullOrWhiteSpace(tenantCode))
         {

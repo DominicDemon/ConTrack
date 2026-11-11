@@ -210,6 +210,7 @@ public sealed class FileProtectionService(
             .SingleOrDefaultAsync(key => key.EmployeeId == employeeId && key.EmployeeEncryptionKeyStatus == ActiveStatus, cancellationToken)
             ?? throw new InternalAppException(409, "Nhân viên này chưa có key: hãy cấp key trước.");
 
+        var candidates = (await CandidateFilesAsync(employeeId, cancellationToken)).Count;
         var lostFiles = (await LostFilesAsync(employeeId, cancellationToken)).GetValueOrDefault(employeeId) ?? [];
         var recoveryRows = await db.FileEncryptionKeys.AsNoTracking()
             .Where(row => row.EmployeeEncryptionKeyId == null
@@ -235,29 +236,17 @@ public sealed class FileProtectionService(
         }
 
         await db.SaveChangesAsync(cancellationToken);
-        var alreadyOpen = await (
-                from held in db.FileEncryptionKeys.AsNoTracking()
-                join old in db.EmployeeEncryptionKeys on held.EmployeeEncryptionKeyId equals old.EmployeeEncryptionKeyId
-                where old.EmployeeId == employeeId && old.EmployeeEncryptionKeyStatus != ActiveStatus
-                select held.FileStorageFileid)
-            .Distinct()
-            .CountAsync(cancellationToken) - lostFiles.Count;
-        return new RecoveredFilesDto(employeeId, recoveryRows.Count, alreadyOpen, lostFiles.Count - recoveryRows.Count);
+        return new RecoveredFilesDto(employeeId, recoveryRows.Count, candidates - lostFiles.Count, lostFiles.Count - recoveryRows.Count);
     }
 
     /// <summary>
-    /// Per employee with an active key: files an older (revoked) key of theirs could open that their current key
-    /// cannot yet. <paramref name="employeeId"/> null means every employee.
+    /// Per employee with an active key: files they could open that their current key cannot yet. These are the files
+    /// an older (revoked) key of theirs opened, and the encrypted files they uploaded themselves (e.g. before they had
+    /// any key). <paramref name="employeeId"/> null means every employee.
     /// </summary>
     private async Task<Dictionary<long, List<long>>> LostFilesAsync(long? employeeId, CancellationToken cancellationToken)
     {
-        var oldGrants = await (
-                from held in db.FileEncryptionKeys.AsNoTracking()
-                join old in db.EmployeeEncryptionKeys on held.EmployeeEncryptionKeyId equals old.EmployeeEncryptionKeyId
-                where old.EmployeeEncryptionKeyStatus != ActiveStatus && (employeeId == null || old.EmployeeId == employeeId)
-                select new { old.EmployeeId, held.FileStorageFileid })
-            .Distinct()
-            .ToListAsync(cancellationToken);
+        var candidates = await CandidateFilesAsync(employeeId, cancellationToken);
         var currentGrants = (await (
                     from held in db.FileEncryptionKeys.AsNoTracking()
                     join current in db.EmployeeEncryptionKeys on held.EmployeeEncryptionKeyId equals current.EmployeeEncryptionKeyId
@@ -266,10 +255,40 @@ public sealed class FileProtectionService(
                 .ToListAsync(cancellationToken))
             .Select(grant => (grant.EmployeeId, grant.FileStorageFileid))
             .ToHashSet();
+        return candidates
+            .Where(file => !currentGrants.Contains(file))
+            .GroupBy(file => file.EmployeeId)
+            .ToDictionary(group => group.Key, group => group.Select(file => file.FileId).ToList());
+    }
+
+    /// <summary>
+    /// The files each employee may get back for their current key: those an older key of theirs opened and the
+    /// encrypted files they uploaded. <paramref name="employeeId"/> null means every employee.
+    /// </summary>
+    private async Task<List<(long EmployeeId, long FileId)>> CandidateFilesAsync(long? employeeId, CancellationToken cancellationToken)
+    {
+        var oldGrants = await (
+                from held in db.FileEncryptionKeys.AsNoTracking()
+                join old in db.EmployeeEncryptionKeys on held.EmployeeEncryptionKeyId equals old.EmployeeEncryptionKeyId
+                where old.EmployeeEncryptionKeyStatus != ActiveStatus && (employeeId == null || old.EmployeeId == employeeId)
+                select new { old.EmployeeId, held.FileStorageFileid })
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        // The uploader may always open their own scan; kept with the recovery key, so it can be given to their key.
+        var ownUploads = await (
+                from file in db.FileStorages.AsNoTracking()
+                join kept in db.FileEncryptionKeys.AsNoTracking() on file.FileStorageFileid equals kept.FileStorageFileid
+                where kept.EmployeeEncryptionKeyId == null
+                    && file.FileStorageUploadedbyemployeeid != null
+                    && (employeeId == null || file.FileStorageUploadedbyemployeeid == employeeId)
+                select new { EmployeeId = file.FileStorageUploadedbyemployeeid!.Value, file.FileStorageFileid })
+            .Distinct()
+            .ToListAsync(cancellationToken);
         return oldGrants
-            .Where(grant => !currentGrants.Contains((grant.EmployeeId, grant.FileStorageFileid)))
-            .GroupBy(grant => grant.EmployeeId)
-            .ToDictionary(group => group.Key, group => group.Select(grant => grant.FileStorageFileid).ToList());
+            .Select(grant => (grant.EmployeeId, grant.FileStorageFileid))
+            .Concat(ownUploads.Select(upload => (upload.EmployeeId, upload.FileStorageFileid)))
+            .Distinct()
+            .ToList();
     }
 
     public async Task<bool> HasActiveKeyAsync(long employeeId, CancellationToken cancellationToken) =>

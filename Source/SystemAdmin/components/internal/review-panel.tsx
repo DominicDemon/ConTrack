@@ -54,6 +54,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     return () => { active = false; };
   }, [fetchWorkflow, record.rowVersion]);
   const latest = reviews[0];
+  const canSendToCustomer = record.status === 0 || record.status === 1;
   const canCreateVersion = (record.canEdit && !["SENT", "VIEWED"].includes(latest?.status ?? ""))
     || (record.status === 1 && record.locked && (latest?.status === "CHANGES_REQUESTED" || (latest?.status === "REJECTED" && latest.followupDecision === "NEGOTIATE")));
   const awaitingDecision = record.status === 7 && latest?.status === "REJECTED" && !latest.followupDecision;
@@ -119,6 +120,8 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     run: comment => internalApi(`/contract-drafts/${record.id}/internal-approval`, "POST", { approve, comment: comment || null }),
   });
   async function startSigning() {
+    if (signerName.trim().length < 2) { setError("Nhập họ tên người đại diện ký (ít nhất 2 ký tự)."); return; }
+    if (!signerPhone.trim()) { setError("Nhập số điện thoại người đại diện ký."); return; }
     setBusy(true); setError(""); setNotice("");
     try {
       await internalApi(`/contract-drafts/${record.id}/start-signing`, "POST", {
@@ -145,7 +148,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <button className={ui.secondaryButton} disabled={busy || dirty} title={dirty ? "Lưu nháp trước khi tải lại trạng thái" : "Tải trạng thái khách hàng và phê duyệt mới nhất"} onClick={() => void refreshWorkflow()}><RefreshCw size={15}/>Làm mới trạng thái</button>
-        <button className={ui.primaryButton} aria-describedby={record.sendBlockedReason ? "send-review-block-reason" : undefined} disabled={busy || dirty || !!record.sendBlockedReason} title={record.sendBlockedReason || (dirty ? "Lưu nháp trước khi gửi" : undefined)} onClick={send}><Send size={16}/>Gửi khách xem</button>
+        {canSendToCustomer && <button className={ui.primaryButton} aria-describedby={record.sendBlockedReason ? "send-review-block-reason" : undefined} disabled={busy || dirty || !!record.sendBlockedReason} title={record.sendBlockedReason || (dirty ? "Lưu nháp trước khi gửi" : undefined)} onClick={send}><Send size={16}/>Gửi khách xem</button>}
         {canCreateVersion && <button className={ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới để chỉnh sửa</button>}
         {awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
           <button className={ui.secondaryButton} disabled={busy} onClick={() => followup("CLOSE")}><XCircle size={16}/>Đóng draft</button></>}
@@ -153,7 +156,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
           <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>Duyệt, chuyển sang ký</button>
           <button className={ui.secondaryButton} disabled={busy || dirty} onClick={() => decideApproval(false)}><XCircle size={16}/>Từ chối</button>
         </>}
-        {canStartSigning && <button className={ui.primaryButton} disabled={busy || dirty || !signerName.trim() || !signerPhone.trim()} onClick={() => void startSigning()}>
+        {canStartSigning && <button className={ui.primaryButton} disabled={busy || dirty || signerName.trim().length < 2 || !signerPhone.trim()} onClick={() => void startSigning()}>
           <Send size={16}/>Tạo phiên ký
         </button>}
         {latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất tin nhắn"
@@ -164,8 +167,8 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       <div><strong>Cách khách mở hợp đồng</strong><p>Khách mở Portal, đăng nhập bằng số điện thoại và mật khẩu, rồi chọn hợp đồng trong mục “Hợp đồng của bạn”. Link này mở trang đăng nhập, không phải link công khai riêng cho hợp đồng.</p><p className={s.muted}>Trạng thái “đang chờ khách” xác nhận yêu cầu đã được tạo, không xác nhận SMS đã giao thành công.</p></div>
       <a href={customerPortalLoginUrl} target="_blank" rel="noreferrer">Mở Portal khách hàng</a>
     </div>}
-    {record.sendBlockedReason && !canCreateVersion && !awaitingDecision && <div id="send-review-block-reason" className={s.muted} style={{ marginTop: 8 }}><p>Chưa thể gửi khách: {record.sendBlockedReason}</p>{record.content.missingFields.length > 0 && <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>{record.content.missingFields.map(field => <li key={field}>{field}</li>)}</ul>}</div>}
-    {dirty && !record.sendBlockedReason && <p className={s.muted} style={{ marginTop: 8 }}>Lưu nháp trước khi gửi khách.</p>}
+    {canSendToCustomer && record.sendBlockedReason && !canCreateVersion && !awaitingDecision && <div id="send-review-block-reason" className={s.muted} style={{ marginTop: 8 }}><p>Chưa thể gửi khách: {record.sendBlockedReason}</p>{record.content.missingFields.length > 0 && <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>{record.content.missingFields.map(field => <li key={field}>{field}</li>)}</ul>}</div>}
+    {canSendToCustomer && dirty && !record.sendBlockedReason && <p className={s.muted} style={{ marginTop: 8 }}>Lưu nháp trước khi gửi khách.</p>}
     {record.canEdit && <p className={s.muted} style={{ marginTop: 8 }}>Khi bạn lưu nội dung đã thay đổi, hệ thống tự tạo phiên bản kế tiếp và giữ phiên bản trước trong lịch sử.</p>}
     {error && <p role="alert" className={ui.error} style={{ marginTop: 10 }}>{error}</p>}
     {notice && <p role="status" className={ui.notice} style={{ marginTop: 10 }}>{notice}</p>}
@@ -175,7 +178,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       {approval.comment && <span> · {approval.comment}</span>}
     </div>}
     {canStartSigning && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 12 }}>
-      <label className={s.label}>Người đại diện công ty<input className={ui.field} maxLength={200} value={signerName} onChange={e => setSignerName(e.target.value)}/></label>
+      <label className={s.label}>Người đại diện công ty *<input className={ui.field} required aria-invalid={signerName.trim().length < 2} maxLength={200} value={signerName} onChange={e => setSignerName(e.target.value)}/>{signerName.trim().length < 2 && <span role="alert" className={s.muted}>Nhập họ tên người đại diện ký (ít nhất 2 ký tự).</span>}</label>
       <label className={s.label}>Chức vụ<input className={ui.field} maxLength={100} value={signerTitle} onChange={e => setSignerTitle(e.target.value)}/></label>
       <label className={s.label}>Số điện thoại<input className={ui.field} inputMode="tel" maxLength={30} value={signerPhone} onChange={e => setSignerPhone(e.target.value)}/></label>
     </div>}

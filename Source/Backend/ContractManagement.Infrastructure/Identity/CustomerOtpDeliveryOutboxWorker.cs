@@ -48,7 +48,7 @@ public sealed class CustomerOtpDeliveryOutboxWorker : BackgroundService
             }
             catch (Microsoft.Data.SqlClient.SqlException sqlEx) when (sqlEx.Number == 208)
             {
-                // Outbox table not provisioned in MasterDB; skip quietly.
+                // Outbox table may not exist in every shared database; skip quietly.
             }
             catch (Exception exception)
             {

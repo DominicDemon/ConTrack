@@ -45,8 +45,8 @@ public sealed class TenantResolver : ITenantResolver
 
         if (string.IsNullOrWhiteSpace(defaultConnectionString))
         {
-            defaultConnectionString =
-                "server=localhost;database=MasterDB;uid=sa;pwd=123;TrustServerCertificate=True;Encrypt=False;";
+            throw new InvalidOperationException(
+                "ConnectionStrings:DefaultConnection or CentralDatabase must be configured.");
         }
 
         try
@@ -101,7 +101,7 @@ public sealed class TenantResolver : ITenantResolver
         }
         catch
         {
-            // Fallback to MasterDB default tenant if TENANT query fails.
+            // Fall back to the configured shared application database if tenant lookup fails.
         }
 
         return new ResolvedTenant(

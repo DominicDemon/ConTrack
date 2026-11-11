@@ -119,7 +119,7 @@ public sealed class CentralDbContext : DbContext
     }
 
     /*
-     *  Cấu hình entity SystemAdmin ánh xạ vào bảng EMPLOYEE trong MasterDB.
+     *  Cấu hình entity SystemAdmin ánh xạ vào bảng EMPLOYEE trong shared application database.
      */
     private static void ConfigureSystemAdmin(ModelBuilder modelBuilder)
     {

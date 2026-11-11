@@ -190,8 +190,7 @@ public static class InternalHost
             Found(await s.HeadResolveAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct)));
         tickets.MapPost("/{id:int}/messages", async (int id, AdminReplyTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
         {
-            var hasImage = !string.IsNullOrWhiteSpace(input.AttachmentUrl) || (input.AttachmentUrls?.Any(u => !string.IsNullOrWhiteSpace(u)) ?? false);
-            if (string.IsNullOrWhiteSpace(input.MessageContent) && !hasImage) throw new ArgumentException("Vui lòng nhập nội dung phản hồi hoặc đính kèm hình ảnh.");
+            if (string.IsNullOrWhiteSpace(input.MessageContent)) throw new ArgumentException("Vui lòng nhập nội dung phản hồi.");
             return Found(await s.AddAdminMessageAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct));
         });
         tickets.MapPatch("/{id:int}/status", async (int id, UpdateTicketStatusRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>

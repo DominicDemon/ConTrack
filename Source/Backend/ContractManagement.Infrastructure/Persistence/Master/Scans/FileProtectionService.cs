@@ -386,10 +386,11 @@ public sealed class FileProtectionService(
         var wrapped = await db.FileEncryptionKeys.AsNoTracking()
             .Where(row => row.FileStorageFileid == fileId && row.EmployeeEncryptionKeyId == key.EmployeeEncryptionKeyId)
             .Select(row => row.FileEncryptionKeyWrappedkey)
-            .SingleOrDefaultAsync(cancellationToken)
-            ?? throw new InternalAppException(403, "Key của bạn chưa được cấp quyền mở tệp này. Tệp sẽ được cấp khi một người đang mở được tệp mở nó, hoặc quản trị cấp bằng khóa dự phòng.", FileKeyCodes.NotGranted);
-
-        var fileKey = FileCrypto.Unwrap(wrapped, privateKey);
+            .SingleOrDefaultAsync(cancellationToken);
+        var fileKey = wrapped is not null
+            ? FileCrypto.Unwrap(wrapped, privateKey)
+            : await GrantWithServerKeyAsync(fileId, key, eligible, cancellationToken)
+              ?? throw new InternalAppException(403, "Key của bạn chưa được cấp quyền mở tệp này. Tệp sẽ được cấp khi một người đang mở được tệp mở nó, hoặc quản trị cấp bằng khóa dự phòng.", FileKeyCodes.NotGranted);
         byte[] plain;
         try
         {
@@ -405,6 +406,54 @@ public sealed class FileProtectionService(
         await db.SaveChangesAsync(cancellationToken);
         CryptographicOperations.ZeroMemory(fileKey);
         return plain;
+    }
+
+    /// <summary>
+    /// The file key for an employee who may open the file (<paramref name="eligible"/>) but whose current key was never
+    /// given it: e.g. the scan was stored before they had a key, or they joined later. Only when the server keeps the
+    /// recovery private key; the grant is saved and logged at once. Null when it cannot be done this way.
+    /// </summary>
+    private async Task<byte[]?> GrantWithServerKeyAsync(
+        long fileId,
+        EmployeeEncryptionKey key,
+        IReadOnlyCollection<long> eligible,
+        CancellationToken cancellationToken)
+    {
+        if (!eligible.Contains(key.EmployeeId))
+        {
+            return null;
+        }
+
+        using var recoveryKey = recovery.CreatePrivateKey();
+        if (recoveryKey is null)
+        {
+            return null;
+        }
+
+        var recoveryWrapped = await db.FileEncryptionKeys.AsNoTracking()
+            .Where(row => row.FileStorageFileid == fileId
+                && row.EmployeeEncryptionKeyId == null
+                && row.FileEncryptionKeyRecoverykeyid == recovery.KeyId)
+            .Select(row => row.FileEncryptionKeyWrappedkey)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (recoveryWrapped is null)
+        {
+            return null;
+        }
+
+        var fileKey = FileCrypto.Unwrap(recoveryWrapped, recoveryKey);
+        db.FileEncryptionKeys.Add(new FileEncryptionKey
+        {
+            FileStorageFileid = fileId,
+            EmployeeEncryptionKeyId = key.EmployeeEncryptionKeyId,
+            FileEncryptionKeyWrappedkey = FileCrypto.Wrap(fileKey, key.EmployeeEncryptionKeyPublickey),
+            GrantedByEmployeeId = key.EmployeeId,
+            GrantedAt = DateTime.UtcNow,
+        });
+        db.AuditLogs.Add(Audit("EncryptedFileGrantedWithRecoveryKey", FileEntity, fileId, new { employeeId = key.EmployeeId }));
+        // Saved now so the grants to the other readers below do not add this employee twice.
+        await db.SaveChangesAsync(cancellationToken);
+        return fileKey;
     }
 
     // ---------------------------------------------------------------------------------------------

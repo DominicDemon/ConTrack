@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using ContractManagement.Domain.Entities.Master;
 using Microsoft.EntityFrameworkCore;
@@ -2209,6 +2209,11 @@ public partial class MasterDbContext : DbContext
             entity.Property(e => e.SmsProviderCallbackIsProcessed).HasColumnName("sms_provider_callback_is_processed");
             entity.Property(e => e.ReceivedAt).HasDefaultValueSql("(sysutcdatetime())", "DF_SmsCallback_ReceivedAt").HasColumnName("received_at");
         });
+
+        // DDL defines a NOT NULL unique pair, but no physical primary key.
+        // Use that existing uniqueness for EF tracking without changing the database.
+        modelBuilder.Entity<EmployeeDepartment>()
+            .HasKey(x => new { x.EmployeeId, x.DepartmentId });
 
         OnModelCreatingPartial(modelBuilder);
     }

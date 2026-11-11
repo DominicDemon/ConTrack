@@ -16,7 +16,7 @@ namespace ContractManagement.API.Internal;
 
 public static class InternalHost
 {
-    private const string UserKey = "Internal.EmployeeId.v1";
+    internal const string UserKey = "Internal.EmployeeId.v1";
     public static async Task Run(WebApplicationBuilder builder, string[] args)
     {
         var masterConn = builder.Configuration.GetConnectionString("MasterDatabase");
@@ -37,9 +37,7 @@ public static class InternalHost
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
         builder.Services.AddScoped<IEmployeeAdmin, EmployeeAdminRepository>();
         builder.Services.AddScoped<ICatalogAdmin, CatalogRepository>();
-        // Ticket workflow from main reads TICKET_* through the application context, here pointed at MASTER (no tenant in Internal mode).
-        builder.Services.AddDbContext<ContractManagement.Infrastructure.Persistence.Application.DbDtctechContext>(o =>
-            o.UseSqlServer(builder.Configuration.GetConnectionString("MasterDatabase"), sql => sql.EnableRetryOnFailure()));
+        // Toàn bộ Internal mode (bao gồm Hợp đồng nháp, Gửi khách xem, Phân quyền, Hỗ trợ khách hàng & SMS Outbox) dùng chung 1 DbContext duy nhất: MasterDbContext.
         builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
         builder.Services.AddScoped<InternalWordDocument>();
         builder.Services.AddScoped<InternalWordTemplates>();
@@ -57,6 +55,7 @@ public static class InternalHost
         builder.Services.AddScoped<ReviewLinkMailer>();
         builder.Services.AddScoped<ReviewLinkOtp>();
         builder.Services.AddMemoryCache();
+        ScanEndpoints.Register(builder.Services, builder.Configuration);
         builder.Services.AddSingleton(new InternalTemplateStorage(builder.Configuration["InternalStorage:Root"]
             ?? Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "private-storage", "internal-templates"))));
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new StringLongConverter()));
@@ -84,6 +83,11 @@ public static class InternalHost
             o.AddSecurityRequirement(doc => new OpenApiSecurityRequirement { [new OpenApiSecuritySchemeReference("csrf", doc)] = [] });
         });
         var app = builder.Build();
+        if (RecoveryCommands.IsCommand(args))
+        {
+            Environment.ExitCode = await RecoveryCommands.RunAsync(args, app.Services);
+            return;
+        }
         app.Use(async (context, next) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -192,7 +196,8 @@ public static class InternalHost
             Found(await s.HeadResolveAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct)));
         tickets.MapPost("/{id:int}/messages", async (int id, AdminReplyTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(input.MessageContent)) throw new ArgumentException("Vui lòng nhập nội dung phản hồi.");
+            var hasImage = !string.IsNullOrWhiteSpace(input.AttachmentUrl) || (input.AttachmentUrls?.Any(u => !string.IsNullOrWhiteSpace(u)) ?? false);
+            if (string.IsNullOrWhiteSpace(input.MessageContent) && !hasImage) throw new ArgumentException("Vui lòng nhập nội dung phản hồi hoặc đính kèm hình ảnh.");
             return Found(await s.AddAdminMessageAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct));
         });
         tickets.MapPatch("/{id:int}/status", async (int id, UpdateTicketStatusRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
@@ -286,6 +291,7 @@ public static class InternalHost
             Results.Ok(await r.ResendLink(id, input, Current(c), ct)));
         secured.MapPost("/customers/{id:long}/reset-temp-password", async (long id, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
         { await r.ResetTemporaryPassword(id, Current(c), ct); return Results.NoContent(); });
+        ScanEndpoints.Map(api);
         CustomerPortalEndpoints.Map(app);
         await app.RunAsync();
     }

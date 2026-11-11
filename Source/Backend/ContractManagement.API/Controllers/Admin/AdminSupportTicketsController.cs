@@ -147,9 +147,11 @@ public sealed class AdminSupportTicketsController : ControllerBase
         [FromBody] AdminReplyTicketRequestDto request,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.MessageContent))
+        var hasImage = !string.IsNullOrWhiteSpace(request.AttachmentUrl)
+            || (request.AttachmentUrls is { Count: > 0 } && request.AttachmentUrls.Any(u => !string.IsNullOrWhiteSpace(u)));
+        if (string.IsNullOrWhiteSpace(request.MessageContent) && !hasImage)
         {
-            return BadRequest(new { message = "Vui lòng nhập nội dung phản hồi." });
+            return BadRequest(new { message = "Vui lòng nhập nội dung tin nhắn hoặc chọn hình ảnh để gửi." });
         }
 
         var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 1;

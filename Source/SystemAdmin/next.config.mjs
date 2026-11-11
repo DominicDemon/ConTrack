@@ -9,16 +9,25 @@ if (typeof branding.name !== "string" || !branding.name.trim() || branding.name 
 const nextConfig = {
   env: { NEXT_PUBLIC_APP_NAME: branding.name },
   output: "standalone",
-  experimental: { proxyClientMaxBodySize: "48mb" },
+  experimental: {
+    // Scans go through the /api/internal proxy: up to 20 MB each, and OCR-related calls can take a while.
+    proxyClientMaxBodySize: 210 * 1024 * 1024,
+    proxyTimeout: 15 * 60 * 1000,
+  },
   async rewrites() {
     const api = process.env.INTERNAL_API_ORIGIN || "http://127.0.0.1:5005";
     return [{ source: "/api/internal/:path*", destination: `${api}/api/internal/:path*` }];
   },
-  async headers() {
-    return ["/verify-recovery-email", "/forgot-password", "/reset-password"].map(source => ({ source, headers: [
-      { key: "Referrer-Policy", value: "no-referrer" },
-      { key: "Cache-Control", value: "no-store" },
-    ] }));
+  async redirects() {
+    return [
+      { source: "/dashboard", destination: "/workspace", permanent: false },
+      { source: "/tenants", destination: "/workspace", permanent: false },
+      { source: "/audit-logs", destination: "/workspace", permanent: false },
+      { source: "/system-health", destination: "/workspace", permanent: false },
+      { source: "/profile", destination: "/workspace", permanent: false },
+      { source: "/support-tickets", destination: "/workspace/support-tickets", permanent: false },
+      { source: "/support-tickets/:id", destination: "/workspace/support-tickets/:id", permanent: false },
+    ];
   },
   images: {
     unoptimized: true,

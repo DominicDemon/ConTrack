@@ -132,7 +132,7 @@ function SupportTicketsContent() {
 
   useEffect(() => {
     if (isSysAdmin) {
-      router.replace("/dashboard");
+      router.replace("/workspace");
     }
   }, [isSysAdmin, router]);
 
@@ -140,7 +140,7 @@ function SupportTicketsContent() {
     if (!ticketIdParam) return;
     const id = Number(ticketIdParam);
     if (Number.isFinite(id) && id > 0) {
-      router.replace(`/support-tickets/${id}`);
+      router.replace(`/workspace/support-tickets/${id}`);
     }
   }, [ticketIdParam, router]);
 

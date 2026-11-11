@@ -10,15 +10,17 @@ import {
   FileText,
   Headset,
   HelpCircle,
+  ImagePlus,
   Loader2,
   Mail,
-  Paperclip,
   PhoneCall,
   Send,
   ShoppingBag,
   Trash2,
-  Upload,
   Wrench,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
@@ -80,6 +82,52 @@ const DEPARTMENTS = [
   },
 ];
 
+interface AttachedImageItem {
+  name: string;
+  dataUrl: string;
+}
+
+function readImageAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result) {
+        reject(new Error("Empty image"));
+        return;
+      }
+      const img = new window.Image();
+      img.onload = () => {
+        const maxDim = 1600;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL("image/jpeg", 0.88));
+            return;
+          }
+        }
+        resolve(result);
+      };
+      img.onerror = () => resolve(result);
+      img.src = result;
+    };
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function CreateSupportTicketPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -91,7 +139,9 @@ export default function CreateSupportTicketPage() {
   );
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
-  const [attachmentNames, setAttachmentNames] = useState<string[]>([]);
+  const [images, setImages] = useState<AttachedImageItem[]>([]);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [zoomScale, setZoomScale] = useState(1);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -108,19 +158,58 @@ export default function CreateSupportTicketPage() {
     };
   }, []);
 
-  const handleSelectFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const names = Array.from(files).map((f) => f.name);
-    setAttachmentNames((prev) => {
-      const merged = Array.from(new Set([...prev, ...names]));
+  const processImageFiles = async (fileList: File[]) => {
+    const validImages = fileList.filter((f) => f.type.startsWith("image/"));
+    if (validImages.length < fileList.length) {
+      toast.warning(
+        "Chỉ hỗ trợ gửi hình ảnh (PNG, JPG, JPEG, WEBP, GIF), không hỗ trợ gửi tệp tài liệu khác.",
+      );
+    }
+    if (validImages.length === 0) return;
+
+    const loaded: AttachedImageItem[] = [];
+    for (const file of validImages) {
+      try {
+        const dataUrl = await readImageAsDataUrl(file);
+        loaded.push({ name: file.name, dataUrl });
+      } catch {
+        toast.error(`Không thể đọc ảnh ${file.name}`);
+      }
+    }
+
+    setImages((prev) => {
+      const merged = [...prev, ...loaded];
       if (merged.length > 3) {
-        toast.warning("Chỉ được đính kèm tối đa 3 tệp minh họa.");
+        toast.warning("Chỉ được đính kèm tối đa 3 hình ảnh minh họa.");
         return merged.slice(0, 3);
       }
       return merged;
     });
+  };
+
+  const handleSelectFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    await processImageFiles(Array.from(files));
     e.target.value = "";
+  };
+
+  const handlePasteImages = async (
+    e: React.ClipboardEvent<HTMLTextAreaElement>,
+  ) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const pastedFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        const f = items[i].getAsFile();
+        if (f) pastedFiles.push(f);
+      }
+    }
+    if (pastedFiles.length > 0) {
+      await processImageFiles(pastedFiles);
+      toast.success("Đã dán hình ảnh từ bộ nhớ tạm!");
+    }
   };
 
   const handleSubmit = async (e?: React.FormEvent) => {
@@ -155,7 +244,8 @@ export default function CreateSupportTicketPage() {
         serviceId: svcObj ? svcObj.serviceId : Number(selectedServiceId),
         serviceName: svcObj?.serviceName ?? "Dịch vụ chung",
         module: svcObj?.serviceName ?? "Dịch vụ chung",
-        attachmentNames,
+        attachmentNames: images.map((img) => img.name),
+        attachmentUrls: images.map((img) => img.dataUrl),
       });
 
       toast.success(
@@ -174,7 +264,6 @@ export default function CreateSupportTicketPage() {
       <PortalHeader />
 
       <div className="grow overflow-y-auto p-2 lg:p-10 space-y-6">
-        {/* Page Header đồng bộ với các trang khác */}
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <Button
@@ -222,14 +311,11 @@ export default function CreateSupportTicketPage() {
           </div>
         </div>
 
-        {/* Main Grid 12 cột chuẩn của hệ thống */}
         <form
           onSubmit={handleSubmit}
           className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12"
         >
-          {/* Cột trái (8/12): Form Cards */}
           <div className="space-y-6 lg:col-span-7 xl:col-span-8">
-            {/* Card 1: Chọn Dịch vụ & Phòng ban tiếp nhận */}
             <Card className="border-border shadow-sm">
               <CardHeader className="border-b pb-4">
                 <div className="flex items-center justify-between">
@@ -326,7 +412,6 @@ export default function CreateSupportTicketPage() {
               </CardContent>
             </Card>
 
-            {/* Card 2: Nội dung câu hỏi & Hình minh họa */}
             <Card className="border-border shadow-sm">
               <CardHeader className="border-b pb-4">
                 <div className="flex items-center justify-between">
@@ -336,11 +421,11 @@ export default function CreateSupportTicketPage() {
                     </div>
                     <div>
                       <CardTitle className="text-base font-semibold">
-                        Nội dung câu hỏi & Hình minh họa
+                        Nội dung câu hỏi & Hình ảnh minh họa
                       </CardTitle>
                       <CardDescription className="text-xs">
-                        Mô tả chi tiết tình huống gặp phải và đính kèm tệp minh
-                        họa (tối đa 3 file)
+                        Mô tả chi tiết tình huống gặp phải và gửi kèm ảnh chụp
+                        màn hình (bấm vào ảnh để phóng to như Zalo)
                       </CardDescription>
                     </div>
                   </div>
@@ -383,26 +468,26 @@ export default function CreateSupportTicketPage() {
                   </div>
                   <Textarea
                     id="ticket-description"
-                    rows={9}
+                    rows={8}
                     maxLength={4000}
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Mô tả chi tiết câu hỏi hoặc các bước dẫn đến lỗi, mã hợp đồng liên quan..."
-                    className="min-h-[220px] resize-y text-sm leading-relaxed"
+                    onPaste={handlePasteImages}
+                    placeholder="Mô tả chi tiết câu hỏi hoặc các bước dẫn đến lỗi, mã hợp đồng liên quan... (Bạn cũng có thể nhấn Ctrl+V để dán trực tiếp ảnh chụp màn hình)"
+                    className="min-h-[200px] resize-y text-sm leading-relaxed"
                   />
                 </div>
 
-                {/* Upload tệp đính kèm */}
-                <div className="space-y-2.5 pt-1">
+                <div className="space-y-3 pt-1">
                   <Label className="text-xs font-medium">
-                    Hình minh họa / Tài liệu đính kèm (*.gif, *.jpg, *.jpeg,
-                    *.png, *.pdf, *.zip, *.rar - Tối đa 3 file)
+                    Hình ảnh minh họa (*.png, *.jpg, *.jpeg, *.webp, *.gif — Tối
+                    đa 3 ảnh)
                   </Label>
                   <input
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept=".gif,.jpg,.jpeg,.png,.svg,.bmp,.pdf,.zip,.rar,.doc,.docx"
+                    accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
                     className="hidden"
                     onChange={handleSelectFiles}
                   />
@@ -410,32 +495,54 @@ export default function CreateSupportTicketPage() {
                     onClick={() => fileInputRef.current?.click()}
                     className="flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-border bg-secondary/20 px-4 py-5 text-center transition-colors hover:bg-secondary/40"
                   >
-                    <Upload className="size-5 text-muted-foreground" />
+                    <ImagePlus className="size-6 text-primary" />
                     <p className="mt-1.5 text-xs font-medium text-foreground">
-                      Nhấn để tải tệp minh họa lên ({attachmentNames.length}/3)
+                      Nhấn để chọn ảnh minh họa ({images.length}/3)
                     </p>
                     <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      Hỗ trợ ảnh chụp màn hình, PDF, DOCX, ZIP (tối đa 10MB/tệp)
+                      Chỉ nhận tệp hình ảnh (PNG, JPG, WEBP, GIF) • Bấm vào ảnh
+                      đã tải để xem phóng to như Zalo
                     </p>
                   </div>
 
-                  {attachmentNames.length > 0 && (
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      {attachmentNames.map((name) => (
+                  {images.length > 0 && (
+                    <div className="grid grid-cols-2 gap-3 pt-1 sm:grid-cols-3">
+                      {images.map((img, idx) => (
                         <div
-                          key={name}
-                          className="inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-xs text-foreground shadow-2xs"
+                          key={`${img.name}-${idx}`}
+                          className="group relative overflow-hidden rounded-xl border border-border bg-muted/30 shadow-xs"
                         >
-                          <Paperclip className="size-3.5 text-primary" />
-                          <span className="max-w-[240px] truncate">{name}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPreviewImage(img.dataUrl);
+                              setZoomScale(1);
+                            }}
+                            className="relative block h-36 w-full cursor-zoom-in overflow-hidden bg-slate-950/5"
+                            title="Bấm vào để xem ảnh phóng to"
+                          >
+                            <img
+                              src={img.dataUrl}
+                              alt={img.name}
+                              className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                            />
+                            <span className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 transition-opacity group-hover:opacity-100">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-black/75 px-2.5 py-1 text-[11px] font-medium text-white">
+                                <ZoomIn className="size-3.5" />
+                                Xem ảnh to
+                              </span>
+                            </span>
+                          </button>
+
                           <button
                             type="button"
                             onClick={() =>
-                              setAttachmentNames((prev) =>
-                                prev.filter((item) => item !== name),
+                              setImages((prev) =>
+                                prev.filter((_, i) => i !== idx),
                               )
                             }
-                            className="text-muted-foreground hover:text-destructive"
+                            className="absolute top-2 right-2 flex size-7 items-center justify-center rounded-full bg-black/70 text-white transition-colors hover:bg-rose-600"
+                            title="Xóa ảnh này"
                           >
                             <Trash2 className="size-3.5" />
                           </button>
@@ -448,7 +555,6 @@ export default function CreateSupportTicketPage() {
             </Card>
           </div>
 
-          {/* Cột phải (4/12): Thông tin điều phối & Liên hệ */}
           <div className="space-y-6 lg:col-span-5 xl:col-span-4 lg:sticky lg:top-6">
             <Card className="border-border shadow-sm">
               <CardHeader className="border-b pb-4">
@@ -481,20 +587,20 @@ export default function CreateSupportTicketPage() {
                   <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
                   <p>
                     <span className="font-semibold text-foreground">
-                      2. Phân công & Gán độ ưu tiên:
+                      2. Xử lý trực tiếp hoặc Phân công:
                     </span>{" "}
-                    Trưởng phòng đánh giá mức độ ưu tiên và giao cho chuyên viên
-                    trong phòng xử lý.
+                    Trưởng phòng có thể trực tiếp xử lý ngay hoặc phân công kèm
+                    độ ưu tiên cho chuyên viên trong phòng.
                   </p>
                 </div>
                 <div className="flex items-start gap-2.5">
                   <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
                   <p>
                     <span className="font-semibold text-foreground">
-                      3. Trao đổi trực tuyến tức thì:
+                      3. Trao đổi & Gửi ảnh như Zalo:
                     </span>{" "}
-                    Bạn có thể nhắn tin trực tiếp với Trưởng phòng ngay trong
-                    trang chi tiết phiếu hỗ trợ.
+                    Bạn có thể nhắn tin và gửi ảnh trực tiếp với Trưởng phòng
+                    ngay trong trang chi tiết phiếu hỗ trợ.
                   </p>
                 </div>
               </CardContent>
@@ -520,6 +626,59 @@ export default function CreateSupportTicketPage() {
           </div>
         </form>
       </div>
+
+      {previewImage && (
+        <div
+          onClick={() => setPreviewImage(null)}
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 p-4 backdrop-blur-xs"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="mb-3 flex items-center gap-2 rounded-full border border-white/15 bg-black/70 px-4 py-1.5 text-white shadow-lg"
+          >
+            <button
+              type="button"
+              onClick={() => setZoomScale((s) => Math.max(0.5, s - 0.25))}
+              className="rounded-full p-1.5 hover:bg-white/15"
+              title="Thu nhỏ"
+            >
+              <ZoomOut className="size-4" />
+            </button>
+            <span className="min-w-12 text-center text-xs font-semibold">
+              {Math.round(zoomScale * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => setZoomScale((s) => Math.min(3, s + 0.25))}
+              className="rounded-full p-1.5 hover:bg-white/15"
+              title="Phóng to"
+            >
+              <ZoomIn className="size-4" />
+            </button>
+            <div className="mx-1 h-4 w-px bg-white/20" />
+            <button
+              type="button"
+              onClick={() => setPreviewImage(null)}
+              className="rounded-full p-1.5 text-rose-400 hover:bg-white/15"
+              title="Đóng"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-[85vh] max-w-[92vw] items-center justify-center overflow-auto rounded-lg"
+          >
+            <img
+              src={previewImage}
+              alt="Xem ảnh phóng to"
+              style={{ transform: `scale(${zoomScale})` }}
+              className="max-h-[82vh] max-w-[90vw] rounded-lg object-contain transition-transform duration-150"
+            />
+          </div>
+        </div>
+      )}
     </>
   );
 }

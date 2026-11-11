@@ -102,7 +102,14 @@ INSERT INTO @grants VALUES
     -- Hỗ trợ: ticket của main được gửi tới 4 phòng (Kỹ thuật, Kinh doanh, Kế toán, Pháp chế); trưởng phòng phân công trong phòng mình.
     ('INTERNAL_SALE', 'ticket.handle'), ('INTERNAL_SALE_MANAGER', 'ticket.handle'), ('INTERNAL_SALE_MANAGER', 'ticket.manage.all'),
     ('INTERNAL_FINANCE', 'ticket.handle'), ('INTERNAL_FINANCE_MANAGER', 'ticket.handle'), ('INTERNAL_FINANCE_MANAGER', 'ticket.manage.all'),
-    ('INTERNAL_LEGAL', 'ticket.handle'), ('INTERNAL_LEGAL_MANAGER', 'ticket.handle'), ('INTERNAL_LEGAL_MANAGER', 'ticket.manage.all');
+    ('INTERNAL_LEGAL', 'ticket.handle'), ('INTERNAL_LEGAL_MANAGER', 'ticket.handle'), ('INTERNAL_LEGAL_MANAGER', 'ticket.manage.all'),
+    -- Scan & bản ký giấy (007-scan-permissions.sql): Phòng Hành Chính - Pháp Chế thao tác, BGD/Quản lý HCNS cấp key mở tệp.
+    ('INTERNAL_LEGAL', 'contract.signed_evidence.view'), ('INTERNAL_LEGAL', 'contract.signed_evidence.upload'), ('INTERNAL_LEGAL', 'contract.signed_evidence.review'),
+    ('INTERNAL_LEGAL', 'contract.scanned.view'), ('INTERNAL_LEGAL', 'contract.scanned.upload'), ('INTERNAL_LEGAL', 'contract.scanned.confirm'),
+    ('INTERNAL_LEGAL_MANAGER', 'contract.signed_evidence.view'), ('INTERNAL_LEGAL_MANAGER', 'contract.signed_evidence.upload'), ('INTERNAL_LEGAL_MANAGER', 'contract.signed_evidence.review'),
+    ('INTERNAL_LEGAL_MANAGER', 'contract.scanned.view'), ('INTERNAL_LEGAL_MANAGER', 'contract.scanned.upload'), ('INTERNAL_LEGAL_MANAGER', 'contract.scanned.confirm'),
+    ('INTERNAL_LEGAL_MANAGER', 'system.encryption_key.manage'),
+    ('INTERNAL_ADMIN', 'system.encryption_key.manage');
 
 DELETE rp FROM SYSTEM_ROLE_PERMISSION rp
 JOIN SYSTEM_ROLE r ON r.system_role_id = rp.system_role_id

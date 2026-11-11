@@ -117,6 +117,17 @@ public static class CustomerPortalEndpoints
             var customer = Current(c);
             return await s.AddCustomerMessageAsync(id, 0, "", "", TicketId(customer.Id), customer.Name, input, ct) is { } m ? Results.Ok(m) : throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ.");
         });
+        api.MapGet("/notifications", async (string? status, int? limit, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+        {
+            var (items, unreadCount) = await s.GetCustomerNotificationsAsync(TicketId(Current(c).Id), status ?? "all", Math.Clamp(limit ?? 20, 1, 50), ct);
+            return Results.Ok(new { items, unreadCount });
+        });
+        api.MapGet("/notifications/unread-count", async (HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Results.Ok(new { count = await s.GetCustomerUnreadNotificationCountAsync(TicketId(Current(c).Id), ct) }));
+        api.MapPatch("/notifications/{id:int}/read", async (int id, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            await s.MarkCustomerNotificationReadAsync(TicketId(Current(c).Id), id, ct) ? Results.NoContent() : throw new InternalAppException(404, "Không tìm thấy thông báo."));
+        api.MapPost("/notifications/mark-all-read", async (HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Results.Ok(new { changed = await s.MarkAllCustomerNotificationsReadAsync(TicketId(Current(c).Id), ct) }));
 
         // eSMS delivery report: outside the session/CSRF groups, accepted only from the provider's IPs.
         app.MapGet("/api/sms/esms/callback", async (HttpContext c, SmsCallbackProcessor processor, IOptions<EsmsOptions> options, ILogger<SmsCallbackProcessor> logger) =>

@@ -72,8 +72,8 @@ credentials, run commands, permissions, storage and verification.
 employee username index, and filters the unique customer email index to non-null values.
 `002-contract-review.sql` adds the customer review flow (CONTRACT_REVIEW_REQUEST, SMS_OUTBOX,
 SMS_PROVIDER_CALLBACK, review columns, document status 0..7 and foreign keys); 63 tables / 724 columns after it.
-`003-draft-content.sql` adds CONTRACT_TEMPLATE_FIELDS, CONTRACT_DOCUMENT_ITEMS and CONTRACT_DYNAMIC_VALUES,
-which the optimized schema dropped but the draft code still uses.
+`003-template-fields.sql` (owned by Hoang) adds CONTRACT_TEMPLATE_FIELDS when missing. CONTRACT_DOCUMENT_ITEMS and CONTRACT_DYNAMIC_VALUES
+are already in `MasterDB-Optimize.sql`; an older database without them needs them created from that file.
 `004-employee-admin.sql` makes employee email / phone / personal identifier filtered-unique, drops the
 display-name unique constraint, adds `employee_must_change_password`, and adds the `employee.manage`
 permission with the `INTERNAL_ADMIN` role for account administration.

@@ -22,6 +22,8 @@ public partial class MasterDbContext : DbContext
 
     public virtual DbSet<ContractAccessLink> ContractAccessLinks { get; set; }
 
+    public virtual DbSet<ContractCustomerOtpChallenge> ContractCustomerOtpChallenges { get; set; }
+
     public virtual DbSet<ContractApprovalRequest> ContractApprovalRequests { get; set; }
 
     public virtual DbSet<ContractReviewRequest> ContractReviewRequests { get; set; }
@@ -277,6 +279,25 @@ public partial class MasterDbContext : DbContext
                 .IsConcurrencyToken()
                 .HasColumnName("rowversion");
             entity.Property(e => e.TenantId).HasColumnName("tenant_id");
+        });
+
+        modelBuilder.Entity<ContractCustomerOtpChallenge>(entity =>
+        {
+            entity.ToTable("CONTRACT_CUSTOMER_OTP_CHALLENGE");
+            entity.HasKey(e => e.ContractCustomerOtpChallengeId);
+            entity.HasIndex(e => e.PublicChallengeId).IsUnique();
+            entity.HasIndex(e => new { e.ContractAccessLinkId, e.CreatedAt });
+            entity.Property(e => e.ContractCustomerOtpChallengeId).HasColumnName("contract_customer_otp_challenge_id");
+            entity.Property(e => e.ContractAccessLinkId).HasColumnName("contract_access_link_id");
+            entity.Property(e => e.ContractElectronicSignatureId).HasColumnName("contract_electronic_signature_id");
+            entity.Property(e => e.PublicChallengeId).HasMaxLength(64).IsUnicode(false).HasColumnName("public_challenge_id");
+            entity.Property(e => e.ProtectedOtp).HasMaxLength(512).IsUnicode(false).HasColumnName("protected_otp");
+            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at");
+            entity.Property(e => e.FailedAttemptCount).HasColumnName("failed_attempt_count");
+            entity.Property(e => e.VerifiedAt).HasColumnName("verified_at");
+            entity.Property(e => e.UsedAt).HasColumnName("used_at");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())").HasColumnName("created_at");
+            entity.Property(e => e.Rowversion).IsRowVersion().IsConcurrencyToken().HasColumnName("rowversion");
         });
 
         modelBuilder.Entity<ContractApprovalRequest>(entity =>

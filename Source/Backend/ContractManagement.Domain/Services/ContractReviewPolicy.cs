@@ -52,6 +52,10 @@ public static class ContractReviewPolicy
 
     public static string? CanCreateVersion(int documentStatus, string? latestReviewStatus, string? followupDecision, bool currentVersionLocked)
     {
+        if ((documentStatus is ContractDocumentStatus.Draft or ContractDocumentStatus.Negotiating) && !currentVersionLocked)
+            return ContractReviewStatus.IsOpen(latestReviewStatus)
+                ? "Hợp đồng đang chờ khách phản hồi; hãy chờ khách phản hồi trước khi tạo phiên bản mới."
+                : null;
         if (documentStatus != ContractDocumentStatus.Negotiating || !currentVersionLocked) return "Hồ sơ không ở trạng thái cần tạo phiên bản mới.";
         return latestReviewStatus == ContractReviewStatus.ChangesRequested
             || (latestReviewStatus == ContractReviewStatus.Rejected && followupDecision == ContractReviewStatus.Negotiate)

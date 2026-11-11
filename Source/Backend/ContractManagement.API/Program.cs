@@ -49,6 +49,7 @@ using ContractManagement.API.Domains.Recovery;
 using ContractManagement.API.Domains.Support;
 using ContractManagement.Infrastructure.Persistence.Master;
 using ContractManagement.Application.Features.Contracts.Signing;
+using ContractManagement.Application.Features.Internal;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -141,6 +142,9 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddContractManagementInfrastructure(
     builder.Configuration);
 builder.Services.AddMasterDatabase(builder.Configuration);
+builder.Services.AddSingleton(new InternalTemplateStorage(InternalTemplateStorage.ResolveRoot(
+    builder.Configuration["InternalStorage:Root"], builder.Environment.ContentRootPath, AppContext.BaseDirectory)));
+builder.Services.AddScoped<IInternalRepository, InternalRepository>();
 
 builder.Services.AddOptions<SmtpEmailOptions>()
     .Bind(builder.Configuration.GetSection(SmtpEmailOptions.SectionName))

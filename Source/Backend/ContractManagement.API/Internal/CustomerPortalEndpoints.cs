@@ -60,6 +60,19 @@ public static class CustomerPortalEndpoints
             c.Session.Clear(); c.Session.SetString(CustomerKey, id.ToString());
             return Results.Ok(await r.Get(id, ct));
         });
+        api.MapGet("/signing/{reviewId:long}", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.PortalState(Current(c).Id, reviewId, ct)));
+        api.MapPost("/signing/{reviewId:long}/otp/request", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.RequestPortalOtp(Current(c).Id, reviewId, ct)));
+        api.MapPost("/signing/{reviewId:long}/otp/verify", async (long reviewId, CustomerSigningOtpVerification input, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+        { await signing.VerifyPortalOtp(Current(c).Id, reviewId, input, ct); return Results.NoContent(); });
+        api.MapGet("/signing/{reviewId:long}/document", async (long reviewId, string challengeId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.File(await signing.PortalDocument(Current(c).Id, reviewId, challengeId, ct), "application/pdf", "contract-company-signed.pdf"));
+        api.MapGet("/signing/{reviewId:long}/final-document", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.File(await signing.PortalFinalDocument(Current(c).Id, reviewId, ct), "application/pdf", "signed-contract.pdf"));
+        api.MapPost("/signing/{reviewId:long}/sign", async (long reviewId, CustomerSigningRequest input, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.File(await signing.PortalSign(Current(c).Id, reviewId, input, c.Connection.RemoteIpAddress?.ToString(), c.Request.Headers.UserAgent.ToString(), ct),
+                "application/pdf", "signed-contract.pdf"));
         api.MapGet("/reviews", async (HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Reviews(Current(c).Id, ct)));
         api.MapGet("/reviews/{id:long}", async (long id, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Review(Current(c).Id, id, ct)));
         api.MapPost("/reviews/{id:long}/comments", async (long id, CommentInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>

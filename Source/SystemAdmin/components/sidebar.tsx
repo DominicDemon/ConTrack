@@ -8,6 +8,7 @@ import {
   Building2,
   ChevronLeft,
   FileText,
+  FileCheck2,
   Headset,
   HeartPulse,
   LogOut,
@@ -47,6 +48,12 @@ const navItems = [
     disabled: false,
   },
   {
+    label: "Theo dõi ký hợp đồng",
+    icon: FileCheck2,
+    href: "/contract-signing",
+    disabled: false,
+  },
+  {
     label: "Hỗ trợ & Ticket",
     icon: Headset,
     href: "/support-tickets",
@@ -82,6 +89,9 @@ export function Sidebar() {
   const visibleNavItems = navItems.filter((item) => {
     // System Admin không tham gia luồng yêu cầu hỗ trợ -> ẩn mục Hỗ trợ & Ticket
     if (isSysAdmin && item.href === "/support-tickets") {
+      return false;
+    }
+    if (!isSysAdmin && item.href === "/contract-signing") {
       return false;
     }
     return true;

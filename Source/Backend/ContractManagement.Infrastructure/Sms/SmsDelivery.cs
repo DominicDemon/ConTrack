@@ -33,7 +33,8 @@ public sealed class EsmsOptions
 
 public static class SmsPurpose
 {
-    public const string TemporaryPassword = "CUSTOMER_TEMP_PASSWORD", ReviewNotice = "CONTRACT_REVIEW_NOTICE";
+    public const string TemporaryPassword = "CUSTOMER_TEMP_PASSWORD", ReviewNotice = "CONTRACT_REVIEW_NOTICE",
+        ElectronicSigningOtp = "ELECTRONIC_SIGNING_OTP";
 }
 
 public sealed class EsmsSmsSender(HttpClient http, IOptions<EsmsOptions> options) : ISmsSender

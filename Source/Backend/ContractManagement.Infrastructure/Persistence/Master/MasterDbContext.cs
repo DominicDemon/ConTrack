@@ -1003,6 +1003,10 @@ public partial class MasterDbContext : DbContext
                 .HasColumnName("department_status");
             entity.Property(e => e.UpdatedAt).HasColumnName("updated_at");
             entity.Property(e => e.UpdatedBy).HasColumnName("updated_by");
+            entity.Property(e => e.DepartmentStaffRoleId).HasColumnName("department_staff_role_id");
+            entity.Property(e => e.DepartmentManagerRoleId).HasColumnName("department_manager_role_id");
+            entity.Property(e => e.DepartmentManagerEmployeeId).HasColumnName("department_manager_employee_id");
+            entity.HasIndex(e => e.DepartmentManagerEmployeeId, "UX_Department_Manager").IsUnique().HasFilter("([department_manager_employee_id] IS NOT NULL)");
         });
 
         modelBuilder.Entity<Employee>(entity =>
@@ -1011,15 +1015,13 @@ public partial class MasterDbContext : DbContext
 
             entity.ToTable("EMPLOYEE");
 
-            entity.HasIndex(e => e.EmployeeEmail, "UQ__EMPLOYEE__0A874BCF8C73A05F").IsUnique();
+            entity.HasIndex(e => e.EmployeeEmail, "UX_Employee_Email").IsUnique().HasFilter("([employee_email] IS NOT NULL)");
 
-            entity.HasIndex(e => e.EmployeeDisplayName, "UQ__EMPLOYEE__6A740DDF709E216C").IsUnique();
-
-            entity.HasIndex(e => e.EmployeePhone, "UQ__EMPLOYEE__A10A0FADFA021982").IsUnique();
+            entity.HasIndex(e => e.EmployeePhone, "UX_Employee_Phone").IsUnique().HasFilter("([employee_phone] IS NOT NULL)");
 
             entity.HasIndex(e => e.EmployeeCode, "UQ__EMPLOYEE__B0AA7345B6684A12").IsUnique();
 
-            entity.HasIndex(e => e.EmployeePersonalIdentifier, "UQ__EMPLOYEE__D31ECC04EE0D8255").IsUnique();
+            entity.HasIndex(e => e.EmployeePersonalIdentifier, "UX_Employee_PersonalIdentifier").IsUnique().HasFilter("([employee_personal_identifier] IS NOT NULL)");
 
             entity.Property(e => e.EmployeeId).HasColumnName("employee_id");
             entity.Property(e => e.CreatedAt)
@@ -1051,6 +1053,7 @@ public partial class MasterDbContext : DbContext
                 .HasColumnName("employee_gender");
             entity.Property(e => e.EmployeeHandPhoneVerifiedAt).HasColumnName("employee_hand_phone_verified_at");
             entity.Property(e => e.EmployeeLastLoginAt).HasColumnName("employee_last_login_at");
+            entity.Property(e => e.EmployeeMustChangePassword).HasColumnName("employee_must_change_password");
             entity.Property(e => e.EmployeeLastName)
                 .HasMaxLength(100)
                 .HasColumnName("employee_last_name");
@@ -1089,6 +1092,7 @@ public partial class MasterDbContext : DbContext
                 .ToTable("EMPLOYEE_DEPARTMENT");
 
             entity.HasIndex(e => new { e.EmployeeId, e.DepartmentId }, "EMPLOYEE_DEPARTMENT_index_1").IsUnique();
+            entity.HasIndex(e => e.EmployeeId, "UX_EmployeeDepartment_Employee").IsUnique();
 
             entity.Property(e => e.CreatedAt).HasColumnName("created_at");
             entity.Property(e => e.CreatedBy).HasColumnName("created_by");

@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace ContractManagement.Domain.Internal;
 
-public sealed record DraftField(string Key, string Label, bool Required = false);
+public sealed record DraftField(string Key, string Label, bool Required = false, string DataType = "TEXT", List<string>? Options = null, decimal? Min = null, decimal? Max = null);
 public sealed record DraftTerm(string Key, string Title, string Content, bool Editable = true);
 public sealed record TemplateDefinition(long Id, string Name, string Revision, bool IsDemo,
     List<DraftField> Fields, List<DraftTerm> Terms, bool IsImported = false);
@@ -11,6 +11,11 @@ public sealed record DraftItem(long? ProductId, string Name, decimal Quantity, d
 public sealed record DraftTotals(decimal Subtotal, decimal Discount, decimal Vat, decimal Total);
 public sealed class DraftContent
 {
+    public int FormatVersion { get; set; } = 1;
+    public string PartyType { get; set; } = "";
+    public long? CustomerBusinessId { get; set; }
+    public string PaymentMode { get; set; } = "PERCENT";
+    public List<DraftMilestone> Milestones { get; set; } = [];
     public long TemplateId { get; set; }
     public long CustomerId { get; set; }
     public string Name { get; set; } = "";
@@ -86,6 +91,7 @@ public static class InternalDraftPolicy
         input.MissingFields = template.Fields.Where(f => f.Required && string.IsNullOrWhiteSpace(input.Fields.GetValueOrDefault(f.Key))).Select(f => f.Label).ToList();
         if (input.Items.Count == 0) input.MissingFields.Add("Hạng mục hợp đồng");
         if (input.Terms.Count == 0 || input.Terms.Any(t => string.IsNullOrWhiteSpace(t.Content))) input.MissingFields.Add("Nội dung điều khoản");
+        DraftCompletionPolicy.Prepare(input, template);
         return input;
     }
 }

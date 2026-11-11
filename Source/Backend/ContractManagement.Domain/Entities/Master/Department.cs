@@ -22,4 +22,12 @@ public partial class Department
     public DateTime? UpdatedAt { get; set; }
 
     public long? UpdatedBy { get; set; }
+
+    /// <summary>Role given to staff of this department; null when the department has a manager only.</summary>
+    public long? DepartmentStaffRoleId { get; set; }
+
+    public long? DepartmentManagerRoleId { get; set; }
+
+    /// <summary>The single manager of this department (005-department-roles.sql).</summary>
+    public long? DepartmentManagerEmployeeId { get; set; }
 }

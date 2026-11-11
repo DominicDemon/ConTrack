@@ -159,6 +159,7 @@ builder.Services.AddScoped<RecoveryEmailVerificationService>();
 builder.Services.AddScoped<PasswordRecoveryService>();
 builder.Services.AddSingleton<RecoveryRequestLimiter>();
 builder.Services.AddSingleton<RecoveryTelemetry>();
+if (!builder.Environment.IsDevelopment() || !builder.Configuration.GetValue<bool>("LocalReview:DisableBackgroundWorkers"))
 builder.Services.AddHostedService<AccountRecoveryOutboxWorker>();
 
 builder.Services.AddOptions<CustomerOtpOptions>()
@@ -191,7 +192,9 @@ else
 {
     builder.Services.AddHttpClient<ICustomerOtpDeliveryProvider, HttpCustomerOtpDeliveryProvider>();
 }
+if (!builder.Environment.IsDevelopment() || !builder.Configuration.GetValue<bool>("LocalReview:DisableBackgroundWorkers"))
 builder.Services.AddHostedService<CustomerOtpDeliveryOutboxWorker>();
+if (!builder.Environment.IsDevelopment() || !builder.Configuration.GetValue<bool>("LocalReview:DisableBackgroundWorkers"))
 builder.Services.AddHostedService<NotificationDispatchWorker>();
 builder.Services.AddScoped<INotificationPublisher, NotificationPublisher>();
 builder.Services.AddScoped<INotificationResourcePolicy, ContractNotificationResourcePolicy>();
@@ -346,6 +349,7 @@ builder.Services.AddSingleton<
     ContractManagement.API.Domains.Payments.IPayOsGateway,
     ContractManagement.API.Domains.Payments.PayOsGateway>();
 builder.Services.AddScoped<ContractManagement.API.Domains.Services.Subscription.SubscriptionFulfillmentService>();
+if (!builder.Environment.IsDevelopment() || !builder.Configuration.GetValue<bool>("LocalReview:DisableBackgroundWorkers"))
 builder.Services.AddHostedService<ContractManagement.API.Domains.Services.Subscription.SubscriptionFulfillmentWorker>();
 builder.Services.AddScoped<
     ContractManagement.API.Domains.Interfaces.Subscription.IPublicSubscriptionService,

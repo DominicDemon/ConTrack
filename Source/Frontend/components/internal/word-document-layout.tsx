@@ -1,7 +1,7 @@
 "use client";
 import type { ReactNode } from "react";
 
-export type DocumentBlock = { id: string; location: string; text: string; tableId?: number | null; row?: number | null; cell?: number | null; colSpan?: number; verticalMerge?: string | null; images?: {mime:string;base64:string}[] };
+export type DocumentBlock = { id: string; location: string; text: string; tableId?: number | null; row?: number | null; cell?: number | null; colSpan?: number; verticalMerge?: string | null; heading?: boolean; images?: {mime:string;base64:string}[] };
 
 export default function WordDocumentLayout({ blocks, renderBlock, afterBlock }: { blocks: DocumentBlock[]; renderBlock?: (block: DocumentBlock) => ReactNode; afterBlock?: (block: DocumentBlock) => ReactNode }) {
   const render = renderBlock ?? ((block: DocumentBlock) => <p className="whitespace-pre-wrap min-h-5">{block.text.replace(/\{\{[A-Z][A-Z0-9_]*\}\}/g, "________________")}</p>);

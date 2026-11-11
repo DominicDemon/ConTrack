@@ -95,6 +95,20 @@ public sealed class InternalWordDocument(IConfiguration configuration)
     private static IEnumerable<Text> TextNodes(Paragraph paragraph) => paragraph.Descendants<Text>()
         .Where(text => ReferenceEquals(text.Ancestors<Paragraph>().FirstOrDefault(), paragraph));
 
+    private static readonly Regex ArticleHeading = new(@"^(Điều|ĐIỀU|Article|ARTICLE|Chương|CHƯƠNG|Phụ lục|PHỤ LỤC|Mục|MỤC)\s*[\dIVXLC]+\b", RegexOptions.Compiled);
+    /// <summary>A section title of the body: Word heading style / outline level, "Điều N ...", or a short all-caps line
+    /// (auto-numbered titles such as "ĐIỀU KHOẢN HỢP ĐỒNG" keep their number outside the text).</summary>
+    private static bool IsHeading(Paragraph paragraph, string text)
+    {
+        var value = text.Trim();
+        if (value.Length is < 3 or > 300 || value.Contains("{{")) return false;
+        var style = paragraph.ParagraphProperties?.ParagraphStyleId?.Val?.Value ?? "";
+        if (style.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) || style.Equals("Title", StringComparison.OrdinalIgnoreCase)
+            || paragraph.ParagraphProperties?.OutlineLevel?.Val?.Value is 0 or 1 || ArticleHeading.IsMatch(value)) return true;
+        return value.Length <= 150 && value.Any(char.IsLetter) && value == value.ToUpperInvariant()
+            && !Regex.IsMatch(value, "^(CỘNG HÒA|CỘNG HOÀ|ĐỘC LẬP)");
+    }
+
     private static List<(WordBlock Block, Paragraph Paragraph)> Paragraphs(WordprocessingDocument doc, bool includeImages = false)
     {
         var result = new List<(WordBlock, Paragraph)>();
@@ -112,7 +126,8 @@ public sealed class InternalWordDocument(IConfiguration configuration)
                 table is null ? null : table.Elements<TableRow>().ToList().IndexOf(row!),
                 row is null ? null : row.Elements<TableCell>().ToList().IndexOf(cell!),
                 cell?.TableCellProperties?.GridSpan?.Val?.Value ?? 1,
-                merge is null ? null : merge.Val?.Value == MergedCellValues.Restart ? "restart" : "continue"), paragraph));
+                merge is null ? null : merge.Val?.Value == MergedCellValues.Restart ? "restart" : "continue",
+                Heading: cell is null && location == "Nội dung" && IsHeading(paragraph, text)), paragraph));
             if (includeImages)
             {
                 var images = new List<WordImagePreview>();
@@ -377,7 +392,8 @@ public sealed class InternalWordDocument(IConfiguration configuration)
         }
     }
 
-    public static byte[] Fill(byte[] bytes, IReadOnlyDictionary<string, string> values)
+    /// <param name="keepUnknown">Manual Word content: a placeholder without a value stays as written instead of being blanked.</param>
+    public static byte[] Fill(byte[] bytes, IReadOnlyDictionary<string, string> values, bool keepUnknown = false)
     {
         using var stream = new MemoryStream();
         stream.Write(bytes);
@@ -389,7 +405,8 @@ public sealed class InternalWordDocument(IConfiguration configuration)
             foreach (Match match in Regex.Matches(original, @"\{\{([A-Z][A-Z0-9_]*)\}\}").Reverse())
             {
                 var current = string.Concat(TextNodes(paragraph).Select(t => t.Text));
-                var replacement = values.GetValueOrDefault(match.Groups[1].Value, "");
+                var replacement = values.TryGetValue(match.Groups[1].Value, out var value) && (!keepUnknown || !string.IsNullOrWhiteSpace(value))
+                    ? value : keepUnknown ? match.Value : "";
                 Replace(paragraph, current, current[..match.Index] + replacement + current[(match.Index + match.Length)..]);
             }
         }
@@ -398,10 +415,37 @@ public sealed class InternalWordDocument(IConfiguration configuration)
 
     public Task<byte[]> Pdf(byte[] bytes, CancellationToken ct) => Convert(bytes, ".docx", "pdf:writer_pdf_Export", ".pdf", ct);
 
+    // A fresh LibreOffice profile costs ~3-4 s per conversion, so conversions reuse a small pool of profiles.
+    // One profile serves one process at a time; the pool size also caps concurrent LibreOffice processes.
+    private static readonly SemaphoreSlim ProfileSlots = new(2, 2);
+    private static readonly System.Collections.Concurrent.ConcurrentBag<int> FreeProfiles = [0, 1];
+
     private async Task<byte[]> Convert(byte[] bytes, string extension, string format, string outputExtension, CancellationToken ct)
     {
         var executable = LibreOfficeContractTemplatePdfRenderer.ResolveExecutablePath(configuration["TemplatePdfRendering:ExecutablePath"])
             ?? throw new ArgumentException("Không tìm thấy LibreOffice. Cấu hình TemplatePdfRendering:ExecutablePath trên máy chủ.");
+        await ProfileSlots.WaitAsync(ct);
+        FreeProfiles.TryTake(out var slot);
+        // Per process: two API instances on one machine must not share a profile.
+        var profile = Path.Combine(Path.GetTempPath(), $"contrack-word-profile-{Environment.ProcessId}-{slot}");
+        var succeeded = false;
+        try
+        {
+            var result = await Convert(executable, profile, bytes, extension, format, outputExtension, ct);
+            succeeded = true;
+            return result;
+        }
+        finally
+        {
+            // A failed or killed run may leave the profile locked or damaged; the next run recreates it.
+            if (!succeeded) { try { Directory.Delete(profile, true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } }
+            FreeProfiles.Add(slot);
+            ProfileSlots.Release();
+        }
+    }
+
+    private static async Task<byte[]> Convert(string executable, string profile, byte[] bytes, string extension, string format, string outputExtension, CancellationToken ct)
+    {
         var root = Path.Combine(Path.GetTempPath(), "contrack-word-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var output = Path.Combine(root, "output");
@@ -412,7 +456,7 @@ public sealed class InternalWordDocument(IConfiguration configuration)
             await File.WriteAllBytesAsync(input, bytes, ct);
             var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var arg in new[] { "--headless", "--nologo", "--nodefault", "--norestore",
-                "-env:UserInstallation=" + new Uri(Path.Combine(root, "profile")).AbsoluteUri, "--convert-to", format, "--outdir", output, input })
+                "-env:UserInstallation=" + new Uri(profile).AbsoluteUri, "--convert-to", format, "--outdir", output, input })
                 start.ArgumentList.Add(arg);
             using var process = Process.Start(start) ?? throw new ArgumentException("Không khởi động được LibreOffice.");
             var stdout = process.StandardOutput.ReadToEndAsync(ct);

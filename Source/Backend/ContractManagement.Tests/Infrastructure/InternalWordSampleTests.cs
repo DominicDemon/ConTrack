@@ -60,7 +60,8 @@ public class InternalWordSampleTests
         var actor = await db.Employees.Where(e => e.EmployeeUsername == "sale.local").Select(e => e.EmployeeId).SingleAsync();
         var storage = new InternalTemplateStorage(Path.Combine(outputRoot, "storage"));
         var word = new InternalWordDocument(new ConfigurationBuilder().Build());
-        var service = new InternalWordTemplates(db, storage, word, new EphemeralDataProtectionProvider());
+        var service = new InternalWordTemplates(db, storage, word, new EphemeralDataProtectionProvider(),
+            new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions()));
         var files = Directory.GetFiles(sampleRoot, "20*.doc*").OrderBy(p => p).ToList();
         Assert.Equal(5, files.Count);
         foreach (var file in files)

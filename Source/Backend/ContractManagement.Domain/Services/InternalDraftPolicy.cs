@@ -93,7 +93,8 @@ public static class InternalDraftPolicy
         input.TemplateSnapshot = template;
         input.MissingFields = template.Fields.Where(f => f.Required && string.IsNullOrWhiteSpace(input.Fields.GetValueOrDefault(f.Key))).Select(f => f.Label).ToList();
         if (input.Items.Count == 0) input.MissingFields.Add("Hạng mục hợp đồng");
-        if (input.Terms.Count == 0 || input.Terms.Any(t => string.IsNullOrWhiteSpace(t.Content))) input.MissingFields.Add("Nội dung điều khoản");
+        // A fixed term is the template's own text (checked above); a title-only one, e.g. a Word signature heading, is complete.
+        if (input.Terms.Count == 0 || input.Terms.Any(t => t.Editable && string.IsNullOrWhiteSpace(t.Content))) input.MissingFields.Add("Nội dung điều khoản");
         DraftCompletionPolicy.Prepare(input, template);
         return input;
     }

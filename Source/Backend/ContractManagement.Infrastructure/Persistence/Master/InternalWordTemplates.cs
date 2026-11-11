@@ -2,16 +2,18 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Domain.Entities.Master;
 using ContractManagement.Domain.Internal;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
 public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateStorage storage, InternalWordDocument word,
-    IDataProtectionProvider protection)
+    IDataProtectionProvider protection, IMemoryCache cache)
 {
     private readonly IDataProtector protector = protection.CreateProtector("InternalWordTemplates.Preview.v1");
     private sealed record Receipt(long Actor, string Fingerprint, string SourceHash, string DocumentHash, DateTime Expires);
@@ -133,13 +135,14 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                 await Store(InternalWordDocument.Decode(input.Base64), ext, "INTERNAL_TEMPLATE_SOURCE", ext == ".doc" ? "application/msword" : InternalWordDocument.Mime, Path.GetFileName(input.FileName));
                 var key = await Store(document, ".docx", "INTERNAL_TEMPLATE_WORD", InternalWordDocument.Mime, input.Name + ".docx");
                 var fields = DraftCompletionPolicy.PartyFields.Concat(input.Fields).ToList();
-                var terms = InternalWordDocument.Blocks(document).Where(b => !string.IsNullOrWhiteSpace(b.Text))
-                    .Select(b => new DraftTerm("WORD_" + b.Id, b.Location + " " + b.Id, InternalDraftPolicy.Text(b.Text, 20000), false)).ToList();
-                // Large Word files remain a single immutable body in the draft data model.
+                var blocks = InternalWordDocument.Blocks(document);
+                var terms = Sections(blocks);
+                // A draft holds at most 100 terms: a file with more sections falls back to consecutive 20,000-character bodies.
                 if (terms.Count > 100)
                 {
                     var grouped = new List<DraftTerm>();
-                    foreach (var term in terms)
+                    foreach (var term in blocks.Where(b => !string.IsNullOrWhiteSpace(b.Text))
+                        .Select(b => new DraftTerm("WORD_" + b.Id, b.Location, InternalDraftPolicy.Text(b.Text, 20000), false)))
                     {
                         if (grouped.Count == 0 || grouped[^1].Content.Length + term.Content.Length + 1 > 20000)
                             grouped.Add(new("WORD_BODY_" + grouped.Count, "Nội dung Word " + (grouped.Count + 1), term.Content, false));
@@ -181,6 +184,43 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         });
     }
 
+    /// <summary>One term per section of the Word file: each heading (Điều N, an all-caps title, a Word heading style) starts
+    /// a term titled by it; text before the first heading and header/footer text form their own terms. Long sections continue.</summary>
+    public static List<DraftTerm> Sections(IEnumerable<WordBlock> blocks)
+    {
+        var terms = new List<DraftTerm>();
+        var group = "";
+        foreach (var block in blocks)
+        {
+            var text = block.Text.Trim();
+            if (text.Length == 0) continue;
+            var location = block.Location.Split(" · ")[0];
+            if (block.Heading)
+            {
+                // Consecutive title lines ("HỢP ĐỒNG" / "CUNG CẤP PHẦN MỀM") form one title rather than empty terms.
+                var heading = Regex.Replace(text, @"\s+", " ");
+                var merge = terms.Count > 0 && group == location && terms[^1].Content.Length == 0 && terms[^1].Title != "Phần mở đầu"
+                    && terms[^1].Title.Length + heading.Length < 200;
+                if (merge) heading = terms[^1].Title + " " + heading;
+                var title = heading.Length <= 200 ? heading : heading[..200] + "…";
+                var term = new DraftTerm(merge ? terms[^1].Key : "WORD_" + block.Id, title, title == heading ? "" : InternalDraftPolicy.Text(text, 20000), false);
+                if (merge) terms[^1] = term; else terms.Add(term);
+                group = location;
+                continue;
+            }
+            if (location != group || terms.Count == 0)
+            {
+                terms.Add(new("WORD_" + block.Id, location == "Nội dung" ? "Phần mở đầu" : location, "", false));
+                group = location;
+            }
+            var last = terms[^1];
+            if (last.Content.Length + text.Length + 1 > 20000)
+                terms.Add(new("WORD_" + block.Id, last.Title.TrimEnd('…') + " (tiếp)", InternalDraftPolicy.Text(text, 20000), false));
+            else terms[^1] = last with { Content = last.Content.Length == 0 ? text : last.Content + "\n" + text };
+        }
+        return terms;
+    }
+
     public async Task<byte[]> ReadWord(TemplateDefinition template, CancellationToken ct)
     {
         if (template.WordStorageKey is null || Path.GetFileName(template.WordStorageKey) != template.WordStorageKey)
@@ -205,9 +245,25 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             ["EXPIRE_DATE"] = content.ExpireDate?.ToString("dd/MM/yyyy") ?? "",
             ["SUBTOTAL"] = content.Totals.Subtotal.ToString("N2", culture), ["DISCOUNT"] = content.Totals.Discount.ToString("N2", culture),
             ["VAT"] = content.Totals.Vat.ToString("N2", culture), ["TOTAL_AMOUNT"] = content.Totals.Total.ToString("N2", culture),
-            ["PAYMENT_SCHEDULE"] = string.Join("; ", content.Milestones.Select(m => m.Title + ": " + m.Amount.ToString("N2", culture)))
+            ["PAYMENT_SCHEDULE"] = string.Join("; ", content.Milestones.Select(m => m.Title + ": " + m.Amount.ToString("N2", culture))),
+            ["CONTRACT_TOTAL_AMOUNT"] = content.Totals.Total.ToString("N2", culture), ["CONTRACT_CURRENCY"] = "VND",
         };
-        var filled = template.ManualWordContent ? bytes : InternalWordDocument.Fill(bytes, values);
-        return pdf ? await word.Pdf(filled, ct) : filled;
+        // Manual Word content keeps its own text; only placeholders that have a draft value are filled.
+        var filled = InternalWordDocument.Fill(bytes, values, keepUnknown: template.ManualWordContent);
+        if (!pdf) return filled;
+        // The print depends only on the placeholders the file uses: an edit to anything else reuses the last PDF of this
+        // template instead of starting LibreOffice (~2-3 s). One entry per template keeps memory bounded while typing.
+        var used = cache.GetOrCreate("word-placeholders:" + template.WordSha256, entry =>
+        {
+            entry.SlidingExpiration = TimeSpan.FromHours(1);
+            return InternalWordDocument.Blocks(bytes).SelectMany(b => Placeholder.Matches(b.Text).Select(m => m.Groups[1].Value)).ToHashSet();
+        })!;
+        var signature = template.ManualWordContent + "|" + string.Join("\u0001", used.Order().Select(k => k + "\u0002" + values.GetValueOrDefault(k)));
+        var lastKey = "word-pdf-last:" + template.WordSha256;
+        if (cache.TryGetValue(lastKey, out (string Signature, byte[] Pdf) last) && last.Signature == signature) return last.Pdf;
+        var result = await word.Pdf(filled, ct);
+        cache.Set(lastKey, (signature, result), new MemoryCacheEntryOptions { SlidingExpiration = TimeSpan.FromMinutes(10) });
+        return result;
     }
+    private static readonly Regex Placeholder = new(@"\{\{([A-Z][A-Z0-9_]*)\}\}", RegexOptions.Compiled);
 }

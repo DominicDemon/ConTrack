@@ -48,8 +48,8 @@ Role của phòng là role nội bộ duy nhất của nhân viên, nên quyền
 | KTTC – Kế Toán - Tài Chính (`INTERNAL_FINANCE[_MANAGER]`) | Hóa đơn & thanh toán, Hợp đồng (xem) | Duyệt thanh toán / công nợ |
 | HCNS – Hành Chính - Pháp Chế (`INTERNAL_LEGAL[_MANAGER]`) | Mẫu hợp đồng (xem), Hồ sơ pháp lý, Hợp đồng (xem) | Quản lý mẫu hợp đồng |
 
-Mọi người có **Tổng quan** (`/workspace`). Menu lấy từ `SystemAdmin/components/internal/internal-nav.ts`; màn chưa chuyển sang
-MASTER hiện "Sắp có". Đã chạy: Tổng quan, Hợp đồng nháp, Nhân viên & phân quyền, Phòng ban (`/org`),
+Mọi người có **Tổng quan** (`/workspace`). Menu lấy từ `SystemAdmin/components/internal/internal-nav.ts`; màn chưa có thì không hiện trong menu
+(quyền đã có trong `005`, thêm vào `NAV_ITEMS` khi làm xong màn). Đã chạy: Tổng quan, Hợp đồng nháp, Nhân viên & phân quyền, Phòng ban (`/org`),
 Khách hàng (`/crm`, quyền `customer.manage`), Sản phẩm và dịch vụ (`/catalog`: xem với `product.read`, thêm / sửa sản phẩm với `product.manage`).
 Hỗ trợ khách hàng: code nghiệp vụ ticket của main (`SupportTicketService`) giữ nguyên, nối qua `/api/internal/tickets` (3001, `/workspace/support-tickets`)
 và `/api/customer/support` (3000, `/portal/support`). Ticket gửi tới 4 phòng KTHUAT / KD / KTTC / HCNS; trưởng phòng (`ticket.manage.all`)

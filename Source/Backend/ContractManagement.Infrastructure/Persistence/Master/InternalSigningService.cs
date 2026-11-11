@@ -53,15 +53,16 @@ public sealed class InternalSigningService(
         InTransaction(async () =>
         {
             RequireManager(actor);
-            var name = request.SignerName.Trim();
-            var phone = PhoneNumber.Normalize(request.SignerPhone);
-            if (name.Length is < 2 or > 200) throw new ArgumentException("Nháº­p há» tÃªn ngÆ°á»i Ä‘áº¡i diá»‡n kÃ½.");
-            if (phone is null) throw new ArgumentException("Sá»‘ Ä‘iá»‡n thoáº¡i ngÆ°á»i Ä‘áº¡i diá»‡n khÃ´ng há»£p lá»‡.");
-
             var document = await db.ContractDocuments.SingleOrDefaultAsync(x => x.ContractDocumentId == documentId && x.TenantId == null, ct)
-                ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y há»“ sÆ¡ há»£p Ä‘á»“ng.");
+                ?? throw new InternalAppException(404, "Không tìm thấy hồ sơ hợp đồng.");
             if (document.ContractDocumentStatus != ContractDocumentStatus.PendingSignature || document.ContractDocumentCurrentVersionId is not long versionId)
-                throw new InternalAppException(409, "Há»“ sÆ¡ chÆ°a Ä‘Æ°á»£c duyá»‡t hoáº·c khÃ´ng cÃ²n á»Ÿ tráº¡ng thÃ¡i chá» kÃ½.");
+                throw new InternalAppException(409, "Hồ sơ chưa được khách hàng duyệt và quản lý phê duyệt, hoặc không còn ở trạng thái chờ ký.");
+
+            var name = request.SignerName?.Trim() ?? "";
+            var phone = PhoneNumber.Normalize(request.SignerPhone);
+            if (name.Length is < 2 or > 200) throw new ArgumentException("Nhập họ tên người đại diện ký (từ 2 đến 200 ký tự).");
+            if (phone is null) throw new ArgumentException("Nhập số điện thoại người đại diện hợp lệ.");
+
             if (await db.ContractElectronicSignatures.AnyAsync(x => x.ContractDocumentId == documentId && x.ContractVersionId == versionId, ct))
                 throw new InternalAppException(409, "PhiÃªn báº£n nÃ y Ä‘Ã£ cÃ³ luá»“ng kÃ½.");
             var version = await db.ContractVersions.SingleAsync(x => x.ContractVersionId == versionId && x.ContractDocumentId == documentId, ct);

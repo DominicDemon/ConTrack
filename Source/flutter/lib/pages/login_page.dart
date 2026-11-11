@@ -531,27 +531,37 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           ],
                         )
-                      : SizedBox(
-                          width: double.infinity,
-                          height: 56,
-                          child: ElevatedButton(
-                            onPressed: _showLoginBottomSheet,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: theme.colorScheme.primary,
-                              foregroundColor: theme.colorScheme.onPrimary,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
+                      : Column(
+                          children: [
+                            SizedBox(
+                              width: double.infinity,
+                              height: 56,
+                              child: ElevatedButton(
+                                onPressed: _showLoginBottomSheet,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: theme.colorScheme.primary,
+                                  foregroundColor: theme.colorScheme.onPrimary,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  elevation: 2,
+                                ),
+                                child: const Text(
+                                  "Đăng nhập ngay",
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
-                              elevation: 2,
                             ),
-                            child: const Text(
-                              "Đăng nhập ngay",
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            const SizedBox(height: 12),
+                            TextButton.icon(
+                              onPressed: () => Navigator.of(context).pushNamed('/scans/login'),
+                              icon: const Icon(Icons.document_scanner_outlined),
+                              label: const Text('Tải bản ký giấy'),
                             ),
-                          ),
+                          ],
                         ),
                 ),
               ],

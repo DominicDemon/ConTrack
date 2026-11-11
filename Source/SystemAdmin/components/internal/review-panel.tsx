@@ -3,29 +3,78 @@ import { focusIssue } from "../../../Shared/draft-validation";
 import DraftPreview from "./draft-preview";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, CopyPlus, Mail, MessageSquare, Send, XCircle, Handshake } from "lucide-react";
+import Link from "next/link";
+import { Check, CopyPlus, KeyRound, Mail, MessageSquare, Send, XCircle, Handshake, RefreshCw } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { internalApi, dateTime, documentStatusLabel, reviewStatusLabel, InternalApiError, type DraftRecord, type ReviewSummary, type ReviewComment } from "@/services/internal-api";
+import { internalApi, dateTime, documentStatusLabel, reviewStatusLabel, InternalApiError, type DraftRecord, type DraftVersionHistoryItem, type ReviewSummary, type ReviewComment, type InternalApprovalState, type SigningMonitorDetail } from "@/services/internal-api";
+import { useInternalUser } from "./internal-shell";
 import { internalStyles as ui } from "./internal-theme";
 import s from "./workspace.module.css";
 
 type Confirm = { title: string; description: string; action: string; note?: { label: string; required?: boolean; max: number }; expiry?: boolean; run: (note: string, linkExpiresAt: string) => Promise<unknown> };
 const inSevenDays = () => { const d = new Date(Date.now() + 7 * 864e5); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+const customerPortalLoginUrl = process.env.NEXT_PUBLIC_CUSTOMER_PORTAL_URL || "http://localhost:3000/portal/login";
 
 /** Customer review actions and history for a saved draft. All state transitions are re-checked by the API. */
 export default function ReviewPanel({ record, dirty, onChanged }: { record: DraftRecord; dirty: boolean; onChanged: () => void }) {
+  const user = useInternalUser();
   const [confirmed, setConfirmed] = useState(false);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
+  const [versions, setVersions] = useState<DraftVersionHistoryItem[]>([]);
+  const [approval, setApproval] = useState<InternalApprovalState | null>(null);
+  const [signingProgress, setSigningProgress] = useState<SigningMonitorDetail | null>(null);
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<Confirm | null>(null); const [note, setNote] = useState(""); const [busy, setBusy] = useState(false); const [expiry, setExpiry] = useState("");
   const [replyTo, setReplyTo] = useState<{ review: string; comment: ReviewComment } | null>(null); const [reply, setReply] = useState("");
-  const load = useCallback(() => internalApi<ReviewSummary[]>(`/contract-drafts/${record.id}/reviews`).then(setReviews).catch(e => setError(e.message)), [record.id]);
-  useEffect(() => { void load(); }, [load, record.rowVersion]);
+  const [signerName, setSignerName] = useState(record.content.fields.PROVIDER_REPRESENTATIVE_NAME ?? "");
+  const [signerTitle, setSignerTitle] = useState(record.content.fields.PROVIDER_REPRESENTATIVE_TITLE ?? "");
+  const [signerPhone, setSignerPhone] = useState(record.content.fields.PROVIDER_PHONE ?? "");
+  const fetchWorkflow = useCallback(async () => {
+    const [reviewRows, approvalState, versionRows] = await Promise.all([
+      internalApi<ReviewSummary[]>(`/contract-drafts/${record.id}/reviews`),
+      internalApi<InternalApprovalState | null>(`/contract-drafts/${record.id}/internal-approval`),
+      internalApi<DraftVersionHistoryItem[]>(`/contract-drafts/${record.id}/versions`),
+    ]);
+    let signingState: SigningMonitorDetail | null = null;
+    if (approvalState?.signingStarted && user.canManageAll) {
+      try { signingState = await internalApi<SigningMonitorDetail>(`/contract-signing-monitor/${record.id}`); }
+      catch { signingState = null; }
+    }
+    return { reviewRows, approvalState, signingState, versionRows };
+  }, [record.id, user.canManageAll]);
+  const load = useCallback(async () => {
+    try {
+      const state = await fetchWorkflow();
+      setReviews(state.reviewRows); setApproval(state.approvalState); setSigningProgress(state.signingState); setVersions(state.versionRows);
+    } catch (e) { setError((e as Error).message); }
+  }, [fetchWorkflow]);
+  useEffect(() => {
+    let active = true;
+    void fetchWorkflow().then(state => {
+      if (!active) return;
+      setReviews(state.reviewRows); setApproval(state.approvalState); setSigningProgress(state.signingState); setVersions(state.versionRows); setError("");
+    }).catch(e => { if (active) setError((e as Error).message); });
+    return () => { active = false; };
+  }, [fetchWorkflow, record.rowVersion]);
   const latest = reviews[0];
-  const canCreateVersion = record.status === 1 && record.locked && (latest?.status === "CHANGES_REQUESTED" || (latest?.status === "REJECTED" && latest.followupDecision === "NEGOTIATE"));
+  const canCreateVersion = (record.canEdit && !["SENT", "VIEWED"].includes(latest?.status ?? ""))
+    || (record.status === 1 && record.locked && (latest?.status === "CHANGES_REQUESTED" || (latest?.status === "REJECTED" && latest.followupDecision === "NEGOTIATE")));
   const awaitingDecision = record.status === 7 && latest?.status === "REJECTED" && !latest.followupDecision;
+  const awaitingInternalApproval = record.status === 2 && approval?.status === 0;
+  const canStartSigning = user.canManageAll && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
+  const customerApproved = latest?.status === "APPROVED";
+  const signingComplete = record.status === 4 || record.status === 5;
+  const companySigned = signingProgress?.signers.some(signer => signer.party === "Công ty" && signer.status === 1) ?? false;
+  const customerSigned = signingProgress?.signers.some(signer => signer.party === "Khách hàng" && signer.status === 1) ?? signingComplete;
+  const workflowSteps = [
+    { title: "Hoàn thiện bản nháp", detail: record.status === 0 ? (record.sendBlockedReason ?? "Điền đủ nội dung, thông tin khách hàng và điều khoản.") : "Phiên bản hợp đồng đã được lưu.", done: record.status !== 0, current: record.status === 0 },
+    { title: "Khách hàng duyệt nội dung", detail: customerApproved ? "Khách hàng đã đồng ý phiên bản này." : latest && ["SENT", "VIEWED"].includes(latest.status) ? "Đang chờ khách xem và phản hồi." : "Gửi phiên bản đã hoàn thiện để khách xác nhận nội dung.", done: customerApproved, current: !customerApproved && record.status === 1 },
+    { title: "Quản lý duyệt bản chốt", detail: approval?.status === 1 ? "Đã được quản lý phê duyệt." : awaitingInternalApproval ? "Đang chờ quản lý công ty duyệt." : "Chỉ mở sau khi khách hàng đồng ý.", done: approval?.status === 1, current: awaitingInternalApproval },
+    { title: "Công ty ký trước", detail: companySigned ? "Đại diện công ty đã ký." : approval?.signingStarted ? "Đang chờ đại diện công ty ký trong hàng đợi." : "Sau khi duyệt, tạo phiên ký và ký với tư cách công ty.", done: companySigned, current: record.status === 3 && !companySigned },
+    { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned },
+  ];
 
   function ask(c: Confirm) { setConfirmed(false); setConfirm(c); setNote(""); setExpiry(inSevenDays()); setError(""); setNotice(""); }
   async function run() {
@@ -33,9 +82,22 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     try { await confirm.run(note.trim(), confirm.expiry ? new Date(expiry).toISOString() : ""); setConfirm(null); await load(); onChanged(); }
     catch (e) { setError((e as Error).message); setConfirm(null); if(e instanceof InternalApiError && e.issues.length) focusIssue(e.issues[0].path); } finally { setBusy(false); }
   }
-  async function act(action: () => Promise<unknown>, done?: string) {
+  async function act<T>(action: () => Promise<T>, done?: string | ((result: T) => string)) {
     setBusy(true); setError(""); setNotice("");
-    try { await action(); if (done) setNotice(done); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+    try { const result = await action(); if (done) setNotice(typeof done === "string" ? done : done(result)); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+  }
+  async function resetCustomerPassword() {
+    await act(() => internalApi<{ smsSimulated: boolean; developmentPhone: string | null; developmentPassword: string | null }>(
+      `/customers/${record.content.customerId}/reset-temp-password`, "POST"), result => result.developmentPhone && result.developmentPassword
+        ? `SMS không gửi thật trong môi trường Development. Đăng nhập Portal tại ${customerPortalLoginUrl} bằng SĐT ${result.developmentPhone} và mật khẩu tạm ${result.developmentPassword}.`
+        : result.smsSimulated
+          ? "SMS đang ở chế độ giả lập nên khách không nhận được tin. Cấu hình eSMS thật để gửi mật khẩu."
+          : "Đã xếp yêu cầu gửi mật khẩu tạm. Trạng thái này chưa xác nhận SMS đã được giao.");
+  }
+  async function refreshWorkflow() {
+    setBusy(true); setError("");
+    try { await load(); onChanged(); }
+    finally { setBusy(false); }
   }
 
   const mailed = (r: ReviewSummary) => { if (r.linkEmailSent) setNotice("Đã gửi email có link cho khách."); else setError("Chưa gửi được email cho khách. Kiểm tra email trong hợp đồng hoặc cấu hình SMTP rồi bấm Gửi lại link."); };
@@ -45,7 +107,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     run: (n, linkExpiresAt) => internalApi<ReviewSummary>(`/contract-drafts/${record.id}/send-review`, "POST", { message: n || null, rowVersion: record.rowVersion, versionRowVersion: record.versionRowVersion, contentConfirmed: true, linkExpiresAt }).then(mailed) });
   const resendLink = () => latest && ask({ title: "Gửi lại link", action: "Gửi lại link", description: "Gửi link mới qua email cho khách. Link cũ sẽ không dùng được nữa.", expiry: true,
     run: (_, linkExpiresAt) => internalApi<ReviewSummary>(`/contract-reviews/${latest.id}/resend-link`, "POST", { linkExpiresAt, rowVersion: latest.rowVersion }).then(mailed) });
-  const newVersion = () => ask({ title: "Tạo phiên bản mới", action: "Tạo phiên bản", description: `Sao chép phiên bản ${record.versionNo} đã gửi thành phiên bản mới để chỉnh sửa và gửi lại.`,
+  const newVersion = () => ask({ title: "Tạo phiên bản mới", action: "Tạo phiên bản", description: `Tạo phiên bản ${Number(record.versionNo) + 1} từ nội dung hiện tại. Phiên bản ${record.versionNo} vẫn được giữ trong lịch sử.`,
     note: { label: "Ghi chú thay đổi (tùy chọn)", max: 1000 },
     run: n => internalApi(`/contract-drafts/${record.id}/versions`, "POST", { rowVersion: record.rowVersion, changeNote: n || null }) });
   const followup = (decision: "NEGOTIATE" | "CLOSE") => latest && ask({ title: decision === "NEGOTIATE" ? "Thương lượng tiếp" : "Đóng draft", action: decision === "NEGOTIATE" ? "Thương lượng tiếp" : "Đóng draft",
@@ -53,7 +115,35 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     note: { label: "Ghi chú (tùy chọn)", max: 2000 },
     run: n => internalApi(`/contract-reviews/${latest.id}/followup`, "POST", { decision, note: n || null, rowVersion: latest.rowVersion }) });
 
+  const decideApproval = (approve: boolean) => ask({
+    title: approve ? "Phê duyệt hợp đồng" : "Từ chối phê duyệt",
+    action: approve ? "Duyệt, chuyển sang ký" : "Từ chối phê duyệt",
+    description: approve
+      ? `Xác nhận đã kiểm tra hợp đồng ${record.code}, phiên bản ${record.versionNo}. Hồ sơ sẽ chuyển sang bước ký.`
+      : "Ghi rõ lý do để lưu vào nhật ký hồ sơ.",
+    note: approve
+      ? { label: "Ghi chú kiểm tra (tùy chọn)", max: 2000 }
+      : { label: "Lý do từ chối (bắt buộc)", required: true, max: 2000 },
+    run: comment => internalApi(`/contract-drafts/${record.id}/internal-approval`, "POST", { approve, comment: comment || null }),
+  });
+  async function startSigning() {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await internalApi(`/contract-drafts/${record.id}/start-signing`, "POST", {
+        signerName: signerName.trim(), signerPhone: signerPhone.trim(), signerTitle: signerTitle.trim() || null,
+      });
+      setNotice("Đã tạo phiên ký. Hợp đồng đang ở hàng đợi ký của công ty.");
+      await load(); onChanged();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
   return <section className={ui.card} style={{ margin: "0 0 16px" }} aria-label="Gửi khách xem">
+    <div className={s.workflowGuide} aria-label="Các bước ký hợp đồng">
+      <div className={s.workflowGuideHeader}><div><strong>Quy trình ký hợp đồng</strong><p>Khách duyệt nội dung → quản lý duyệt bản chốt → công ty ký trước → khách hàng ký sau.</p></div>{approval?.signingStarted && !signingComplete && <Link className={ui.secondaryButton} href="/workspace/contracts/company-signing">Mở hàng đợi ký công ty</Link>}</div>
+      <ol className={s.workflowSteps}>{workflowSteps.map((step, index) => <li key={step.title} className={`${s.workflowStep} ${step.done ? s.workflowStepDone : step.current ? s.workflowStepCurrent : ""}`}>
+        <span className={s.workflowStepNumber}>{step.done ? <Check size={14}/> : index + 1}</span><div><strong>{step.title}</strong><p>{step.detail}</p></div>
+      </li>)}</ol>
+    </div>
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <strong style={{ fontSize: 14 }}>Phiên bản {record.versionNo}</strong>
@@ -62,12 +152,22 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
         {record.locked && <span className={s.muted}>Đã khóa — chỉ xem</span>}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <button className={ui.secondaryButton} disabled={busy || dirty} title={dirty ? "Lưu nháp trước khi tải lại trạng thái" : "Tải trạng thái khách hàng và phê duyệt mới nhất"} onClick={() => void refreshWorkflow()}><RefreshCw size={15}/>Làm mới trạng thái</button>
         <button type="button" className={ui.primaryButton} disabled={busy || dirty || !!record.sendBlockedReason}
           aria-describedby="review-send-guidance" title={dirty ? "Lưu nháp trước khi gửi" : record.sendBlockedReason || undefined} onClick={send}><Send size={16}/>Gửi khách xem</button>
         {canCreateVersion && <button className={ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới</button>}
         {awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
           <button className={ui.secondaryButton} disabled={busy} onClick={() => followup("CLOSE")}><XCircle size={16}/>Đóng draft</button></>}
         {(latest?.status === "SENT" || latest?.status === "VIEWED") && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
+        {user.canManageAll && awaitingInternalApproval && <>
+          <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>Duyệt, chuyển sang ký</button>
+          <button className={ui.secondaryButton} disabled={busy || dirty} onClick={() => decideApproval(false)}><XCircle size={16}/>Từ chối</button>
+        </>}
+        {canStartSigning && <button className={ui.primaryButton} disabled={busy || dirty || !signerName.trim() || !signerPhone.trim()} onClick={() => void startSigning()}>
+          <Send size={16}/>Tạo phiên ký
+        </button>}
+        {latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất tin nhắn"
+          onClick={() => void resetCustomerPassword()}><KeyRound size={16}/>Cấp lại mật khẩu tạm</button>}
       </div>
     </div>
     <div id="review-send-guidance" className={s.muted} style={{ marginTop: 8 }} aria-live="polite">
@@ -78,9 +178,30 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     </div>
     {(record.issues ?? []).some(i => i.path.startsWith("milestones")) && <button type="button" className={ui.secondaryButton} onClick={() => focusIssue("milestones")}>Đi tới lịch thanh toán</button>}
     {(record.carriedComments?.length ?? 0) > 0 && <section className={ui.notice}><strong>Góp ý chuyển tiếp sang phiên bản này</strong>{record.carriedComments?.map(c => <div key={c.id}><p>{c.content} · chuyển từ bản trước · {c.resolved ? "Đã xử lý" : "Chưa xử lý"}</p>{!c.resolved && <button type="button" disabled={busy} className={ui.secondaryButton} onClick={() => void act(async () => { await internalApi(`/contract-comments/${c.id}/resolve`,"POST"); onChanged(); })}>Đánh dấu đã xử lý</button>}</div>)}</section>}
+    {record.canEdit && <p className={s.muted} style={{ marginTop: 8 }}>Khi bạn lưu nội dung đã thay đổi, hệ thống tự tạo phiên bản kế tiếp và giữ phiên bản trước trong lịch sử.</p>}
     {error && <p role="alert" className={ui.error} style={{ marginTop: 10 }}>{error}</p>}
     {notice && <p role="status" className={ui.notice} style={{ marginTop: 10 }}>{notice}</p>}
+    {approval && <div className={ui.notice} style={{ marginTop: 10 }}>
+      <strong>{approval.workflowName}:</strong>{" "}
+      {approval.status === 0 ? "Đang chờ công ty kiểm tra" : approval.status === 1 ? "Đã duyệt, hồ sơ chuyển sang bước ký" : "Đã từ chối phê duyệt"}
+      {approval.comment && <span> · {approval.comment}</span>}
+    </div>}
+    {canStartSigning && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 12 }}>
+      <label className={s.label}>Người đại diện công ty<input className={ui.field} maxLength={200} value={signerName} onChange={e => setSignerName(e.target.value)}/></label>
+      <label className={s.label}>Chức vụ<input className={ui.field} maxLength={100} value={signerTitle} onChange={e => setSignerTitle(e.target.value)}/></label>
+      <label className={s.label}>Số điện thoại<input className={ui.field} inputMode="tel" maxLength={30} value={signerPhone} onChange={e => setSignerPhone(e.target.value)}/></label>
+    </div>}
 
+    {versions.length > 0 && <details style={{ marginTop: 12 }} open>
+      <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Lịch sử phiên bản ({versions.length})</summary>
+      <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+        {versions.map(version => <div key={version.id} className={s.lineItem}>
+          <header><strong>Phiên bản {version.versionNo}{version.isCurrent ? " · Đang chỉnh sửa / gửi khách" : ""}</strong><span className={s.muted}>{dateTime(version.createdAt)}</span></header>
+          <p className={s.muted}>{version.changeNote || "Chưa có ghi chú thay đổi"}{version.locked ? " · Đã khóa sau khi gửi khách" : " · Có thể chỉnh sửa"}</p>
+          {version.snapshotHash && <p className={s.muted}>Mã kiểm tra nội dung: {version.snapshotHash}</p>}
+        </div>)}
+      </div>
+    </details>}
     {reviews.length > 0 && <details style={{ marginTop: 12 }} open={reviews.some(r => r.comments.some(c => c.fromCustomer && !c.resolved))}>
       <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Lịch sử gửi khách ({reviews.length})</summary>
       {reviews.map(r => <div key={r.id} className={s.lineItem} style={{ marginTop: 10 }}>

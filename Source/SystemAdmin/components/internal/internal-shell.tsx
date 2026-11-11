@@ -19,8 +19,8 @@ export default function InternalShell({ children }: { children: ReactNode }) {
       ? s.navActive
       : s.navLink;
   useEffect(() => { void internalApi<InternalUser>("/auth/me").then(setUser).catch(e => {
-    if (e instanceof InternalApiError && e.status === 401) router.replace("/"); else setError(e.message);
-  }); }, [router, attempt]);
+    if (e instanceof InternalApiError && e.status === 401) router.replace(`/internal-login?next=${encodeURIComponent(path)}`); else setError(e.message);
+  }); }, [router, path, attempt]);
   async function logout() { try { await internalApi("/auth/logout", "POST"); router.replace("/"); } catch (e) { setError((e as Error).message); } }
   return <InternalTheme>{!user ? <div className={s.empty}>{error || "Đang mở không gian làm việc…"}{error && <button className={ui.secondaryButton} onClick={() => { setError(""); retry(attempt + 1); }}>Thử lại</button>}</div> : user.mustChangePassword ? <ChangePassword user={user} onChanged={setUser} onLogout={logout}/> : <UserContext.Provider value={user}>
     <div className={s.shell}><aside className={s.sidebar}><div className={s.brand}><span className={s.brandMark}><FileText size={21}/></span>{APP_NAME}</div>

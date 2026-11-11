@@ -36,9 +36,18 @@ public sealed class TenantResolver : ITenantResolver
             tenantCode.Trim().ToLowerInvariant();
 
         var defaultConnectionString =
-            _configuration?.GetConnectionString("DefaultConnection")
-            ?? _configuration?.GetConnectionString("CentralDatabase")
-            ?? "server=localhost;database=MasterDB;uid=sa;pwd=123;TrustServerCertificate=True;Encrypt=False;";
+            _configuration?.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrWhiteSpace(defaultConnectionString))
+        {
+            defaultConnectionString =
+                _configuration?.GetConnectionString("CentralDatabase");
+        }
+
+        if (string.IsNullOrWhiteSpace(defaultConnectionString))
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:DefaultConnection or CentralDatabase must be configured.");
+        }
 
         try
         {
@@ -92,7 +101,7 @@ public sealed class TenantResolver : ITenantResolver
         }
         catch
         {
-            // Fallback to MasterDB default tenant if TENANT query fails.
+            // Fall back to the configured shared application database if tenant lookup fails.
         }
 
         return new ResolvedTenant(

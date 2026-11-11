@@ -77,11 +77,25 @@ public sealed record ProductOption(long Id, string Name, decimal Price);
 public sealed record EmployeeOption(long Id, string Name);
 public sealed record DraftSummary(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName, DateTime UpdatedAt, int MissingCount,
     int Status, string? LatestReviewStatus);
+public sealed record ContractArchiveEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
+    DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, int SignatureCount, DateTime? LastSignedAt);
+public sealed record SigningMonitorEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
+    DateTime UpdatedAt, int Status, long VersionNo, int SignatureCount, int SignedCount, bool CompanySigned, bool CustomerSigned,
+    string? LatestReviewStatus, DateTime? LastSignedAt);
+public sealed record SigningTimelineEvent(DateTime At, string Category, string Title, string? Detail, string State);
+public sealed record SigningMonitorDetail(long Id, string Code, string Name, string CustomerName, string EmployeeName,
+    DateTime CreatedAt, DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, string? SnapshotHash,
+    IReadOnlyList<SigningTimelineEvent> Timeline, IReadOnlyList<SigningSignerProgress> Signers,
+    IReadOnlyList<SigningArtifactInfo> Artifacts);
+public sealed record SigningSignerProgress(long Id, long VersionNo, string Party, string Role, string Name, string? Title, string? Email,
+    int Status, DateTime? SignedAt, string? DocumentHash, string? RejectReason);
+public sealed record SigningArtifactInfo(string FileName, string ContentType, long Size, string Sha256, int Role, bool Primary, DateTime AddedAt);
 public sealed record DraftRecord(long Id, string Code, long EmployeeId, string EmployeeName, string RowVersion, string VersionRowVersion, DateTime UpdatedAt, DraftContent Content,
     int Status, long VersionNo, bool Locked, bool CanEdit, string CustomerName, string CustomerPhoneMasked, string? LatestReviewStatus, string? SendBlockedReason,
     List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null);
 public sealed record CarriedDraftComment(long Id, string? TermKey, string Content, long? SourceCommentId, long? SourceVersionId, bool Resolved);
 public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion);
+public sealed record SigningDemoDraftResult(DraftRecord Draft, string CustomerPortalPhone, string CustomerPortalPassword);
 public sealed class InternalAppException(int status, string message, string? code = null) : Exception(message)
 {
     public int Status { get; } = status;
@@ -102,6 +116,9 @@ public interface IInternalRepository
     Task<bool> ProductsExist(IEnumerable<long> ids, CancellationToken ct);
     Task<List<EmployeeOption>> Employees(CancellationToken ct);
     Task<List<DraftSummary>> Drafts(long? owner, string? search, int? status, CancellationToken ct);
+    Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct);
+    Task<List<SigningMonitorEntry>> SigningMonitor(string? search, int? status, CancellationToken ct);
+    Task<SigningMonitorDetail?> SigningMonitorDetail(long id, CancellationToken ct);
     Task<DraftRecord?> Draft(long id, CancellationToken ct);
     Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct);
 }

@@ -12,8 +12,10 @@ const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   async rewrites() {
     const api = process.env.INTERNAL_API_ORIGIN || "http://127.0.0.1:5005";
+    const customerApi = process.env.CUSTOMER_API_ORIGIN || "http://127.0.0.1:5006";
     return [{ source: "/api/internal/:path*", destination: `${api}/api/internal/:path*` },
-      { source: "/api/customer/:path*", destination: `${api}/api/customer/:path*` }];
+      { source: "/api/customer/:path*", destination: `${customerApi}/api/customer/:path*` },
+      { source: "/api/public/:path*", destination: `${api}/:path*` }];
   },
   // Port 3000 is the customer portal only; internal screens live in SystemAdmin (3001). Static files (with a dot) pass through.
   async redirects() {

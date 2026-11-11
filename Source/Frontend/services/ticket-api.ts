@@ -39,6 +39,8 @@ export interface TicketMessageDto {
   ticketMessageType: string;
   ticketMessageAttachmentUrl?: string | null;
   ticketMessageAttachmentName?: string | null;
+  attachmentUrls?: string[];
+  attachmentNames?: string[];
   createdAt: string;
 }
 
@@ -103,6 +105,8 @@ export interface TicketDto {
   viewerRole?: "DEPARTMENT_HEAD" | "STAFF" | "CUSTOMER" | "SYSADMIN" | string | null;
   viewerEmployeeId?: number | null;
   viewerDepartmentId?: number | null;
+  attachmentUrls?: string[];
+  attachmentNames?: string[];
   assignments?: TicketAssignmentDto[];
   messages?: TicketMessageDto[];
 }
@@ -117,11 +121,15 @@ export interface CreateSupportTicketRequestDto {
   serviceName?: string;
   module?: string;
   attachmentNames?: string[];
+  attachmentUrls?: string[];
 }
 
 export interface CustomerReplyTicketRequestDto {
   messageContent: string;
   attachmentName?: string;
+  attachmentUrl?: string;
+  attachmentNames?: string[];
+  attachmentUrls?: string[];
 }
 
 const MOCK_CUSTOMER_TICKETS: TicketDto[] = [];

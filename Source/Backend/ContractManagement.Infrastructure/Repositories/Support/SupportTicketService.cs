@@ -374,11 +374,18 @@ END;
                 return null;
             }
 
-            var ticket = await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
-            if (ticket == null)
+            var dbTicket = await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var stateTicket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+
+            SupportTicketDto? ticket = null;
+            if (dbTicket != null && stateTicket != null)
             {
-                var state = await EnsureStateLoadedAsync(cancellationToken);
-                ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+                ticket = MergeTickets([dbTicket], [stateTicket]).FirstOrDefault();
+            }
+            else
+            {
+                ticket = stateTicket ?? dbTicket;
             }
 
             if (ticket is null) return null;
@@ -405,11 +412,18 @@ END;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
-            var ticket = await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
-            if (ticket == null)
+            var dbTicket = await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var stateTicket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+
+            SupportTicketDto? ticket = null;
+            if (dbTicket != null && stateTicket != null)
             {
-                var state = await EnsureStateLoadedAsync(cancellationToken);
-                ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+                ticket = MergeTickets([dbTicket], [stateTicket]).FirstOrDefault();
+            }
+            else
+            {
+                ticket = stateTicket ?? dbTicket;
             }
 
             if (ticket is null) return null;
@@ -537,11 +551,22 @@ END;
                         if (!string.IsNullOrWhiteSpace(request.AttachmentUrls?.FirstOrDefault())
                             || !string.IsNullOrWhiteSpace(request.AttachmentNames?.FirstOrDefault()))
                         {
+                            var rawUrl = request.AttachmentUrls?.FirstOrDefault() ?? request.AttachmentNames?.FirstOrDefault();
+                            var safeDbUrl = rawUrl != null && rawUrl.Length > 950
+                                ? (request.AttachmentNames?.FirstOrDefault() ?? "image-attachment.png")
+                                : rawUrl;
+                            var safeDbName = request.AttachmentNames?.FirstOrDefault();
+                            if (safeDbName != null && safeDbName.Length > 950)
+                            {
+                                safeDbName = safeDbName[..950];
+                            }
+
                             var initAtt = new TICKET_ATTACHMENTS
                             {
                                 ticket_message_id = initMsg.ticket_message_id,
-                                file_name_1 = request.AttachmentUrls?.FirstOrDefault() ?? request.AttachmentNames?.FirstOrDefault(),
-                                file_name_2 = request.AttachmentNames?.FirstOrDefault(),
+                                file_name_1 = safeDbUrl,
+                                file_name_2 = safeDbName,
+                                mime_type = "image/png",
                                 uploaded_at = DateTime.UtcNow
                             };
                             db.TICKET_ATTACHMENTS.Add(initAtt);
@@ -598,6 +623,8 @@ END;
                 DepartmentHeadEmployeeId = head?.EmployeeId,
                 DepartmentHeadName = head?.EmployeeFullName ?? head?.EmployeeAccount,
                 ViewerRole = "CUSTOMER",
+                AttachmentUrls = request.AttachmentUrls?.Where(u => !string.IsNullOrWhiteSpace(u)).ToList() ?? [],
+                AttachmentNames = request.AttachmentNames?.Where(n => !string.IsNullOrWhiteSpace(n)).ToList() ?? [],
                 Assignments = head != null ? [
                     new TicketEmployeeAssignmentDto
                     {
@@ -622,6 +649,8 @@ END;
                         TicketMessageType = "INITIAL",
                         TicketMessageAttachmentName = request.AttachmentNames?.FirstOrDefault(),
                         TicketMessageAttachmentUrl = request.AttachmentUrls?.FirstOrDefault(),
+                        AttachmentUrls = request.AttachmentUrls?.Where(u => !string.IsNullOrWhiteSpace(u)).ToList() ?? [],
+                        AttachmentNames = request.AttachmentNames?.Where(n => !string.IsNullOrWhiteSpace(n)).ToList() ?? [],
                         CreatedAt = DateTime.UtcNow
                     }
                 ]
@@ -705,12 +734,14 @@ END;
 
         var empDeptMap = await LoadEmployeeDepartmentMapAsync(db, cancellationToken);
 
-        // CHỈ trả về các NHÂN VIÊN (STAFF) thuộc đúng phòng ban đó (loại bỏ sysadmin và loại bỏ Trưởng phòng / phòng ban khác)
+        // Trả về cả Trưởng phòng (isManager = true) và các Nhân viên (STAFF) thuộc đúng phòng ban đó để Trưởng phòng có thể tự nhận xử lý hoặc giao cho nhân viên
         var filteredStaff = new List<DepartmentEmployeeDto>();
         foreach (var emp in allActiveEmployees)
         {
             var (role, empDeptId) = ClassifyEmployee(emp, empDeptMap);
-            if (!string.Equals(role, "STAFF", StringComparison.OrdinalIgnoreCase))
+            var isHead = string.Equals(role, "DEPARTMENT_HEAD", StringComparison.OrdinalIgnoreCase);
+            var isStaff = string.Equals(role, "STAFF", StringComparison.OrdinalIgnoreCase);
+            if (!isHead && !isStaff)
             {
                 continue;
             }
@@ -727,11 +758,14 @@ END;
                 EmployeeEmail = emp.EmployeeEmail,
                 DepartmentId = deptId.Value,
                 DepartmentName = deptName,
-                IsManager = false
+                IsManager = isHead
             });
         }
 
-        return filteredStaff;
+        return filteredStaff
+            .OrderByDescending(x => x.IsManager)
+            .ThenBy(x => x.EmployeeName)
+            .ToList();
     }
 
     public async Task<SupportTicketDto?> AssignToStaffAsync(
@@ -759,10 +793,13 @@ END;
                 _ => "Bình thường"
             };
 
+            var targetStaffId = request.StaffEmployeeId > 0 ? request.StaffEmployeeId : currentEmployeeId;
+            var isSelfAssign = targetStaffId == currentEmployeeId;
+
             TblEmployee? staff = null;
             if (db != null)
             {
-                staff = await db.TblEmployees.AsNoTracking().FirstOrDefaultAsync(e => e.EmployeeId == request.StaffEmployeeId, cancellationToken);
+                staff = await db.TblEmployees.AsNoTracking().FirstOrDefaultAsync(e => e.EmployeeId == targetStaffId, cancellationToken);
                 var ticketEntity = await db.TICKET_SUPPORT.FirstOrDefaultAsync(t => t.ticket_support_id == ticketId, cancellationToken);
 
                 if (ticketEntity != null && staff != null)
@@ -784,7 +821,9 @@ END;
                     };
                     db.TICKET_SUPPORT_EMPLOYEE.Add(assignment);
 
-                    var noteText = string.IsNullOrWhiteSpace(request.Note) ? "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng." : request.Note.Trim();
+                    var noteText = string.IsNullOrWhiteSpace(request.Note)
+                        ? (isSelfAssign ? "Trưởng phòng trực tiếp tiếp nhận và xử lý yêu cầu." : "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng.")
+                        : request.Note.Trim();
                     var assignHistory = new TICKET_HISTORY
                     {
                         ticket_support_id = ticketId,
@@ -793,7 +832,9 @@ END;
                         changed_by_user_id = currentEmployeeId,
                         old_status = "Open",
                         new_status = "In_Progress",
-                        notes = $"Trưởng phòng {currentEmployeeName} phân công cho nhân viên {staff.EmployeeFullName} (Độ ưu tiên: {priorityLabel}). Nội dung chỉ đạo: {noteText}",
+                        notes = isSelfAssign
+                            ? $"Trưởng phòng {currentEmployeeName} trực tiếp tiếp nhận xử lý yêu cầu (Độ ưu tiên: {priorityLabel}). Ghi chú: {noteText}"
+                            : $"Trưởng phòng {currentEmployeeName} phân công cho nhân viên {staff.EmployeeFullName} (Độ ưu tiên: {priorityLabel}). Nội dung chỉ đạo: {noteText}",
                         changed_at = DateTime.UtcNow
                     };
                     db.TICKET_HISTORY.Add(assignHistory);
@@ -803,7 +844,9 @@ END;
                         ticket_support_id = ticketId,
                         ticket_message_sender_employee_id = currentEmployeeId,
                         ticket_message_type = "ASSIGNMENT",
-                        ticket_message_content = $"[Phân công xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho nhân viên {staff.EmployeeFullName}.\nNội dung chỉ đạo: {noteText}",
+                        ticket_message_content = isSelfAssign
+                            ? $"[Trưởng phòng tự xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã trực tiếp tiếp nhận xử lý yêu cầu.\nGhi chú: {noteText}"
+                            : $"[Phân công xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho nhân viên {staff.EmployeeFullName}.\nNội dung chỉ đạo: {noteText}",
                         created_at = DateTime.UtcNow
                     };
                     db.TICKET_MESSAGE.Add(msg);
@@ -818,15 +861,17 @@ END;
 
             if (ticket != null)
             {
-                var staffName = staff?.EmployeeFullName ?? $"Nhân viên #{request.StaffEmployeeId}";
-                var noteText = string.IsNullOrWhiteSpace(request.Note) ? "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng." : request.Note.Trim();
+                var staffName = staff?.EmployeeFullName ?? (isSelfAssign ? currentEmployeeName : $"Nhân viên #{targetStaffId}");
+                var noteText = string.IsNullOrWhiteSpace(request.Note)
+                    ? (isSelfAssign ? "Trưởng phòng trực tiếp tiếp nhận và xử lý yêu cầu." : "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng.")
+                    : request.Note.Trim();
 
                 ticket.TicketStatus = "In_Progress";
                 if (!string.IsNullOrWhiteSpace(assignedPriority))
                 {
                     ticket.TicketPriority = assignedPriority;
                 }
-                ticket.AssignedEmployeeId = request.StaffEmployeeId;
+                ticket.AssignedEmployeeId = targetStaffId;
                 ticket.AssignedEmployeeName = staffName;
                 ticket.AssignedAt = DateTime.UtcNow;
                 ticket.UpdatedAt = DateTime.UtcNow;
@@ -836,7 +881,7 @@ END;
                 {
                     TicketSupportEmployeeId = ticket.Assignments.Count + 1,
                     TicketSupportId = ticketId,
-                    EmployeeId = request.StaffEmployeeId,
+                    EmployeeId = targetStaffId,
                     EmployeeName = staffName,
                     EmployeeEmail = staff?.EmployeeEmail,
                     AssignmentRole = "ASSIGNEE",
@@ -852,7 +897,9 @@ END;
                     SenderEmployeeId = currentEmployeeId,
                     SenderName = currentEmployeeName,
                     IsFromEmployee = true,
-                    TicketMessageContent = $"[Phân công xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho nhân viên {staffName}.\nNội dung chỉ đạo: {noteText}",
+                    TicketMessageContent = isSelfAssign
+                        ? $"[Trưởng phòng tự xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã trực tiếp tiếp nhận xử lý yêu cầu.\nGhi chú: {noteText}"
+                        : $"[Phân công xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho nhân viên {staffName}.\nNội dung chỉ đạo: {noteText}",
                     TicketMessageType = "ASSIGNMENT",
                     CreatedAt = DateTime.UtcNow
                 });
@@ -860,29 +907,32 @@ END;
                 state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
                 state.Tickets.Insert(0, ticket);
 
-                // Tạo thông báo riêng cho NHÂN VIÊN ĐƯỢC PHÂN CÔNG
-                state.AdminNotifications.Insert(0, new AdminNotificationDto
+                if (!isSelfAssign)
                 {
-                    NotificationId = state.NextNotificationId++,
-                    Title = $"Bạn được phân công xử lý Ticket [{ticket.TicketCode}]",
-                    Body = $"Trưởng phòng {currentEmployeeName} đã giao việc cho bạn: {ticket.TicketSubject}",
-                    SubjectType = "SupportTicket",
-                    SubjectId = ticket.TicketSupportId,
-                    TicketCode = ticket.TicketCode,
-                    TenantName = ticket.TenantName,
-                    TenantCode = ticket.TenantCode,
-                    Priority = ticket.TicketPriority,
-                    DepartmentId = ticket.DepartmentId,
-                    Department = ticket.Department,
-                    TargetEmployeeId = request.StaffEmployeeId,
-                    ActionKey = "assigned-ticket",
-                    CreatedAtUtc = DateTime.UtcNow
-                });
+                    // Tạo thông báo riêng cho NHÂN VIÊN ĐƯỢC PHÂN CÔNG
+                    state.AdminNotifications.Insert(0, new AdminNotificationDto
+                    {
+                        NotificationId = state.NextNotificationId++,
+                        Title = $"Bạn được phân công xử lý Ticket [{ticket.TicketCode}]",
+                        Body = $"Trưởng phòng {currentEmployeeName} đã giao việc cho bạn: {ticket.TicketSubject}",
+                        SubjectType = "SupportTicket",
+                        SubjectId = ticket.TicketSupportId,
+                        TicketCode = ticket.TicketCode,
+                        TenantName = ticket.TenantName,
+                        TenantCode = ticket.TenantCode,
+                        Priority = ticket.TicketPriority,
+                        DepartmentId = ticket.DepartmentId,
+                        Department = ticket.Department,
+                        TargetEmployeeId = targetStaffId,
+                        ActionKey = "assigned-ticket",
+                        CreatedAtUtc = DateTime.UtcNow
+                    });
+                }
 
                 await SaveStateAsync(state, cancellationToken);
             }
 
-            if (staff != null && ticket != null)
+            if (!isSelfAssign && staff != null && ticket != null)
             {
                 _ = SendStaffAssignmentNotificationAsync(ticket, staff, currentEmployeeName, request.Note);
             }
@@ -1062,12 +1112,35 @@ END;
             }
 
             var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
+                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
             if (ticket != null)
             {
                 if (!CanEmployeeViewTicket(ticket, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId))
                 {
                     return null;
+                }
+
+                // Nếu Trưởng phòng trực tiếp xử lý luôn mà chưa phân công nhân viên, gán Trưởng phòng là người xử lý
+                if (!ticket.AssignedEmployeeId.HasValue || ticket.AssignedEmployeeId <= 0)
+                {
+                    ticket.AssignedEmployeeId = currentEmployeeId;
+                    ticket.AssignedEmployeeName = currentEmployeeName;
+                    ticket.AssignedAt = DateTime.UtcNow;
+                    if (!ticket.Assignments.Any(a => a.EmployeeId == currentEmployeeId && a.AssignmentRole == "ASSIGNEE"))
+                    {
+                        ticket.Assignments.Add(new TicketEmployeeAssignmentDto
+                        {
+                            TicketSupportEmployeeId = ticket.Assignments.Count + 1,
+                            TicketSupportId = ticketId,
+                            EmployeeId = currentEmployeeId,
+                            EmployeeName = currentEmployeeName,
+                            AssignmentRole = "ASSIGNEE",
+                            AssignedAt = DateTime.UtcNow,
+                            AssignedByEmployeeId = currentEmployeeId,
+                            AssignedByName = currentEmployeeName
+                        });
+                    }
                 }
 
                 ticket.TicketResolution = resolutionText;
@@ -1088,6 +1161,8 @@ END;
                     CreatedAt = DateTime.UtcNow
                 });
 
+                state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
+                state.Tickets.Insert(0, ticket);
                 await SaveStateAsync(state, cancellationToken);
 
                 // Gửi email thông báo kết quả giải quyết cho khách hàng
@@ -1115,42 +1190,76 @@ END;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
-            var content = (request.MessageContent ?? request.Content ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(content)) return null;
+            var rawContent = (request.MessageContent ?? request.Content ?? string.Empty).Trim();
+            var attUrls = request.AttachmentUrls?.Where(u => !string.IsNullOrWhiteSpace(u)).ToList() ?? [];
+            if (!string.IsNullOrWhiteSpace(request.AttachmentUrl) && !attUrls.Contains(request.AttachmentUrl))
+            {
+                attUrls.Insert(0, request.AttachmentUrl);
+            }
+            var attNames = request.AttachmentNames?.Where(n => !string.IsNullOrWhiteSpace(n)).ToList() ?? [];
+            if (!string.IsNullOrWhiteSpace(request.AttachmentName) && !attNames.Contains(request.AttachmentName))
+            {
+                attNames.Insert(0, request.AttachmentName);
+            }
+
+            var firstUrl = attUrls.FirstOrDefault();
+            var firstName = attNames.FirstOrDefault();
+
+            if (string.IsNullOrWhiteSpace(rawContent) && string.IsNullOrWhiteSpace(firstUrl))
+            {
+                return null;
+            }
+            var content = string.IsNullOrWhiteSpace(rawContent) ? "[Hình ảnh đính kèm]" : rawContent;
 
             using (var scope = _scopeFactory.CreateScope())
             {
                 var db = scope.ServiceProvider.GetService<DbDtctechContext>();
                 if (db != null)
                 {
-                    var entity = new TICKET_MESSAGE
+                    try
                     {
-                        ticket_support_id = ticketId,
-                        ticket_message_sender_customer_id = employeeId > 0 ? employeeId : 1,
-                        ticket_message_content = content,
-                        ticket_message_type = "CUSTOMER_REPLY",
-                        created_at = DateTime.UtcNow
-                    };
-                    db.TICKET_MESSAGE.Add(entity);
-                    await db.SaveChangesAsync(cancellationToken);
-
-                    if (!string.IsNullOrWhiteSpace(request.AttachmentUrl))
-                    {
-                        var att = new TICKET_ATTACHMENTS
+                        var entity = new TICKET_MESSAGE
                         {
-                            ticket_message_id = entity.ticket_message_id,
-                            file_name_1 = request.AttachmentUrl,
-                            file_name_2 = request.AttachmentName,
-                            uploaded_at = DateTime.UtcNow
+                            ticket_support_id = ticketId,
+                            ticket_message_sender_customer_id = employeeId > 0 ? employeeId : 1,
+                            ticket_message_content = content,
+                            ticket_message_type = "CUSTOMER_REPLY",
+                            created_at = DateTime.UtcNow
                         };
-                        db.TICKET_ATTACHMENTS.Add(att);
+                        db.TICKET_MESSAGE.Add(entity);
                         await db.SaveChangesAsync(cancellationToken);
+
+                        if (!string.IsNullOrWhiteSpace(firstUrl) || !string.IsNullOrWhiteSpace(firstName))
+                        {
+                            var safeDbUrl = firstUrl != null && firstUrl.Length > 950
+                                ? (firstName ?? "image-attachment.png")
+                                : (firstUrl ?? firstName);
+                            var safeDbName = firstName != null && firstName.Length > 950
+                                ? firstName[..950]
+                                : firstName;
+
+                            var att = new TICKET_ATTACHMENTS
+                            {
+                                ticket_message_id = entity.ticket_message_id,
+                                file_name_1 = safeDbUrl,
+                                file_name_2 = safeDbName,
+                                mime_type = "image/png",
+                                uploaded_at = DateTime.UtcNow
+                            };
+                            db.TICKET_ATTACHMENTS.Add(att);
+                            await db.SaveChangesAsync(cancellationToken);
+                        }
+                    }
+                    catch
+                    {
+                        // Bỏ qua lỗi ghi DB nếu chuỗi đính kèm vượt giới hạn cột
                     }
                 }
             }
 
             var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
+                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
             if (ticket is null) return null;
 
             var msg = new SupportTicketMessageDto
@@ -1162,13 +1271,17 @@ END;
                 IsFromEmployee = false,
                 TicketMessageContent = content,
                 TicketMessageType = "CUSTOMER_REPLY",
-                TicketMessageAttachmentName = request.AttachmentName,
-                TicketMessageAttachmentUrl = request.AttachmentUrl,
+                TicketMessageAttachmentName = firstName,
+                TicketMessageAttachmentUrl = firstUrl,
+                AttachmentUrls = attUrls,
+                AttachmentNames = attNames,
                 CreatedAt = DateTime.UtcNow
             };
 
             ticket.Messages.Add(msg);
             ticket.UpdatedAt = DateTime.UtcNow;
+            state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
+            state.Tickets.Insert(0, ticket);
 
             // Tạo thông báo cho nhân viên được phân công (nếu đã phân công) hoặc Trưởng phòng của phòng ban đó
             var targetEmpId = ticket.AssignedEmployeeId ?? ticket.DepartmentHeadEmployeeId;
@@ -1214,7 +1327,15 @@ END;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
-            if (string.IsNullOrWhiteSpace(content)) return null;
+            var normalizedContent = (content ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(normalizedContent) && string.IsNullOrWhiteSpace(attachmentUrl))
+            {
+                return null;
+            }
+            if (string.IsNullOrWhiteSpace(normalizedContent))
+            {
+                normalizedContent = "[Hình ảnh đính kèm]";
+            }
 
             var roleInfo = await ResolveEmployeeRoleInfoAsync(employeeId, cancellationToken);
             // Chỉ Trưởng phòng (DEPARTMENT_HEAD) mới được nhắn tin trao đổi trực tiếp với khách hàng; Nhân viên được phân công (STAFF) và SYSADMIN không nhắn tin.
@@ -1224,7 +1345,8 @@ END;
             }
 
             var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
+            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
+                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
             if (ticket is null) return null;
 
             if (!CanEmployeeViewTicket(ticket, employeeId, roleInfo.Role, roleInfo.DepartmentId))
@@ -1237,28 +1359,43 @@ END;
                 var db = scope.ServiceProvider.GetService<DbDtctechContext>();
                 if (db != null)
                 {
-                    var entity = new TICKET_MESSAGE
+                    try
                     {
-                        ticket_support_id = ticketId,
-                        ticket_message_sender_employee_id = employeeId,
-                        ticket_message_content = content,
-                        ticket_message_type = isInternalNote ? "INTERNAL_NOTE" : "STAFF_REPLY",
-                        created_at = DateTime.UtcNow
-                    };
-                    db.TICKET_MESSAGE.Add(entity);
-                    await db.SaveChangesAsync(cancellationToken);
-
-                    if (!string.IsNullOrWhiteSpace(attachmentUrl))
-                    {
-                        var att = new TICKET_ATTACHMENTS
+                        var entity = new TICKET_MESSAGE
                         {
-                            ticket_message_id = entity.ticket_message_id,
-                            file_name_1 = attachmentUrl,
-                            file_name_2 = attachmentName,
-                            uploaded_at = DateTime.UtcNow
+                            ticket_support_id = ticketId,
+                            ticket_message_sender_employee_id = employeeId,
+                            ticket_message_content = normalizedContent,
+                            ticket_message_type = isInternalNote ? "INTERNAL_NOTE" : "STAFF_REPLY",
+                            created_at = DateTime.UtcNow
                         };
-                        db.TICKET_ATTACHMENTS.Add(att);
+                        db.TICKET_MESSAGE.Add(entity);
                         await db.SaveChangesAsync(cancellationToken);
+
+                        if (!string.IsNullOrWhiteSpace(attachmentUrl) || !string.IsNullOrWhiteSpace(attachmentName))
+                        {
+                            var safeDbUrl = attachmentUrl != null && attachmentUrl.Length > 950
+                                ? (attachmentName ?? "image-attachment.png")
+                                : (attachmentUrl ?? attachmentName);
+                            var safeDbName = attachmentName != null && attachmentName.Length > 950
+                                ? attachmentName[..950]
+                                : attachmentName;
+
+                            var att = new TICKET_ATTACHMENTS
+                            {
+                                ticket_message_id = entity.ticket_message_id,
+                                file_name_1 = safeDbUrl,
+                                file_name_2 = safeDbName,
+                                mime_type = "image/png",
+                                uploaded_at = DateTime.UtcNow
+                            };
+                            db.TICKET_ATTACHMENTS.Add(att);
+                            await db.SaveChangesAsync(cancellationToken);
+                        }
+                    }
+                    catch
+                    {
+                        // Bỏ qua lỗi ghi DB nếu chuỗi đính kèm vượt giới hạn cột
                     }
                 }
             }
@@ -1270,15 +1407,19 @@ END;
                 SenderEmployeeId = employeeId,
                 SenderName = employeeName,
                 IsFromEmployee = true,
-                TicketMessageContent = content,
+                TicketMessageContent = normalizedContent,
                 TicketMessageType = isInternalNote ? "INTERNAL_NOTE" : "STAFF_REPLY",
                 TicketMessageAttachmentName = attachmentName,
                 TicketMessageAttachmentUrl = attachmentUrl,
+                AttachmentUrls = !string.IsNullOrWhiteSpace(attachmentUrl) ? [attachmentUrl] : [],
+                AttachmentNames = !string.IsNullOrWhiteSpace(attachmentName) ? [attachmentName] : [],
                 CreatedAt = DateTime.UtcNow
             };
 
             ticket.Messages.Add(msg);
             ticket.UpdatedAt = DateTime.UtcNow;
+            state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
+            state.Tickets.Insert(0, ticket);
 
             await SaveStateAsync(state, cancellationToken);
             return msg;
@@ -1296,14 +1437,21 @@ END;
         AdminReplyTicketRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        var attUrl = !string.IsNullOrWhiteSpace(request.AttachmentUrl)
+            ? request.AttachmentUrl
+            : request.AttachmentUrls?.FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
+        var attName = !string.IsNullOrWhiteSpace(request.AttachmentName)
+            ? request.AttachmentName
+            : request.AttachmentNames?.FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+
         return await AddStaffMessageAsync(
             ticketId,
             systemAdminId,
             adminFullName,
-            request.MessageContent,
+            request.MessageContent ?? string.Empty,
             request.IsInternalNote ?? false,
-            null,
-            null,
+            attUrl,
+            attName,
             cancellationToken);
     }
 
@@ -2064,7 +2212,7 @@ END;
             {
                 if (dict.TryGetValue(t.TicketCode, out var existing))
                 {
-                    // Giữ lại thông tin tên khách hàng / tenant từ state nếu DB không lưu trực tiếp tên
+                    // Giữ lại thông tin tên khách hàng / tenant / hình ảnh đính kèm từ state nếu DB không lưu trực tiếp
                     if (string.IsNullOrWhiteSpace(t.TenantName) && !string.IsNullOrWhiteSpace(existing.TenantName))
                         t.TenantName = existing.TenantName;
                     if (string.IsNullOrWhiteSpace(t.TenantCode) && !string.IsNullOrWhiteSpace(existing.TenantCode))
@@ -2079,6 +2227,46 @@ END;
                         t.ServiceName = existing.ServiceName;
                     if ((string.IsNullOrWhiteSpace(t.Module) || t.Module == "Dịch vụ chung") && !string.IsNullOrWhiteSpace(existing.Module))
                         t.Module = existing.Module;
+                    if (t.AttachmentUrls.Count == 0 && existing.AttachmentUrls.Count > 0)
+                        t.AttachmentUrls = [.. existing.AttachmentUrls];
+                    if (t.AttachmentNames.Count == 0 && existing.AttachmentNames.Count > 0)
+                        t.AttachmentNames = [.. existing.AttachmentNames];
+
+                    // Đồng bộ hình ảnh đính kèm (Data URL) trong Messages từ state sang DB messages
+                    if (existing.Messages.Count > 0)
+                    {
+                        for (int i = 0; i < t.Messages.Count && i < existing.Messages.Count; i++)
+                        {
+                            var dbMsg = t.Messages[i];
+                            var stMsg = existing.Messages[i];
+                            if ((string.IsNullOrWhiteSpace(dbMsg.TicketMessageAttachmentUrl) || !dbMsg.TicketMessageAttachmentUrl.StartsWith("data:image", StringComparison.OrdinalIgnoreCase))
+                                && !string.IsNullOrWhiteSpace(stMsg.TicketMessageAttachmentUrl))
+                            {
+                                dbMsg.TicketMessageAttachmentUrl = stMsg.TicketMessageAttachmentUrl;
+                            }
+                            if (string.IsNullOrWhiteSpace(dbMsg.TicketMessageAttachmentName) && !string.IsNullOrWhiteSpace(stMsg.TicketMessageAttachmentName))
+                            {
+                                dbMsg.TicketMessageAttachmentName = stMsg.TicketMessageAttachmentName;
+                            }
+                            if (dbMsg.AttachmentUrls.Count == 0 && stMsg.AttachmentUrls.Count > 0)
+                            {
+                                dbMsg.AttachmentUrls = [.. stMsg.AttachmentUrls];
+                            }
+                            if (dbMsg.AttachmentNames.Count == 0 && stMsg.AttachmentNames.Count > 0)
+                            {
+                                dbMsg.AttachmentNames = [.. stMsg.AttachmentNames];
+                            }
+                        }
+
+                        // Nếu state có nhiều tin nhắn hơn DB (tin nhắn vừa gửi kèm ảnh), bổ sung các tin nhắn còn thiếu
+                        if (existing.Messages.Count > t.Messages.Count)
+                        {
+                            for (int i = t.Messages.Count; i < existing.Messages.Count; i++)
+                            {
+                                t.Messages.Add(existing.Messages[i]);
+                            }
+                        }
+                    }
                 }
                 dict[t.TicketCode] = t;
             }
@@ -2236,6 +2424,8 @@ END;
         ViewerRole = src.ViewerRole,
         ViewerEmployeeId = src.ViewerEmployeeId,
         ViewerDepartmentId = src.ViewerDepartmentId,
+        AttachmentUrls = [.. src.AttachmentUrls],
+        AttachmentNames = [.. src.AttachmentNames],
         Assignments = src.Assignments.Select(a => new TicketEmployeeAssignmentDto
         {
             TicketSupportEmployeeId = a.TicketSupportEmployeeId,
@@ -2262,6 +2452,8 @@ END;
             TicketMessageType = m.TicketMessageType,
             TicketMessageAttachmentUrl = m.TicketMessageAttachmentUrl,
             TicketMessageAttachmentName = m.TicketMessageAttachmentName,
+            AttachmentUrls = [.. m.AttachmentUrls],
+            AttachmentNames = [.. m.AttachmentNames],
             CreatedAt = m.CreatedAt
         }).ToList()
     };

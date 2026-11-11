@@ -5,22 +5,24 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Building2,
-  Calendar,
   CheckCheck,
   CheckCircle2,
   ClipboardCheck,
-  Clock,
   Copy,
   FileText,
   History,
-  Layers,
+  ImagePlus,
   Loader2,
   MessageCircle,
   Send,
   ShieldCheck,
+  Sparkles,
   User,
   UserCheck,
   UserPlus,
+  X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
@@ -49,16 +51,105 @@ import {
   DepartmentStaffDto,
   ticketApi,
   TicketDto,
+  TicketMessageDto,
   TicketPriority,
   TicketStatus,
   TICKET_PRIORITY_LABELS,
 } from "@/services/ticket-api";
+
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif",
+]);
 
 const QUICK_RESPONSES = [
   "Chào anh/chị, phòng ban chuyên môn đã tiếp nhận yêu cầu và đang tiến hành kiểm tra xử lý.",
   "Yêu cầu của anh/chị đã được xử lý hoàn tất trên hệ thống. Anh/chị vui lòng kiểm tra lại giúp em nhé.",
   "Anh/chị vui lòng cung cấp thêm ảnh chụp màn hình hoặc mã hợp đồng liên quan để bộ phận chuyên môn kiểm tra chi tiết hơn.",
 ];
+
+const QUICK_RESOLUTION_TEMPLATES = [
+  "Phòng ban chuyên môn đã trực tiếp kiểm tra và xử lý hoàn tất yêu cầu của Quý khách trên hệ thống. Quý khách vui lòng đăng nhập và kiểm tra lại dịch vụ.",
+  "Sự cố kỹ thuật liên quan đến dịch vụ của Quý khách đã được khắc phục triệt để. Hệ thống hiện hoạt động ổn định bình thường.",
+  "Yêu cầu điều chỉnh/hỗ trợ thông tin hợp đồng & dịch vụ của Quý khách đã được thực hiện thành công theo đúng đề nghị.",
+];
+
+function isRenderableImageUrl(url?: string | null): boolean {
+  if (!url) return false;
+  const trimmed = url.trim();
+  return (
+    trimmed.startsWith("data:image/") ||
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("blob:")
+  );
+}
+
+function getTicketImages(ticket: TicketDto | null): string[] {
+  if (!ticket) return [];
+  const raw =
+    ticket.attachmentUrls && ticket.attachmentUrls.length > 0
+      ? ticket.attachmentUrls
+      : ticket.attachmentUrl
+        ? [ticket.attachmentUrl]
+        : [];
+  return Array.from(new Set(raw.filter(isRenderableImageUrl)));
+}
+
+function getMessageImages(msg: TicketMessageDto): string[] {
+  const raw =
+    msg.attachmentUrls && msg.attachmentUrls.length > 0
+      ? msg.attachmentUrls
+      : msg.ticketMessageAttachmentUrl
+        ? [msg.ticketMessageAttachmentUrl]
+        : [];
+  return Array.from(new Set(raw.filter(isRenderableImageUrl)));
+}
+
+async function compressImageToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Không thể đọc file ảnh"));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (file.type === "image/gif" || file.size <= 350 * 1024) {
+        resolve(result);
+        return;
+      }
+      const img = new window.Image();
+      img.onerror = () => resolve(result);
+      img.onload = () => {
+        const maxDim = 1600;
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(result);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const compressed = canvas.toDataURL("image/jpeg", 0.84);
+        resolve(compressed);
+      };
+      img.src = result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 function formatZaloTime(dateStr?: string | null) {
   if (!dateStr) return "--:--";
@@ -85,7 +176,7 @@ function TicketStatusBadge({ status }: { status: TicketStatus | string }) {
         "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20",
     },
     [TicketStatus.InProgress]: {
-      label: "Đang xử lý (Đã phân công nhân viên)",
+      label: "Đang xử lý",
       className:
         "bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-500/10 dark:text-cyan-400 dark:border-cyan-500/20",
     },
@@ -141,6 +232,8 @@ function TicketPriorityBadge({
   );
 }
 
+type AdminTabType = "assign" | "resolve" | "chat" | "history";
+
 export default function AdminSupportTicketDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -149,12 +242,19 @@ export default function AdminSupportTicketDetailPage() {
 
   const [ticket, setTicket] = useState<TicketDto | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"workflow" | "chat" | "history">(
-    "workflow",
-  );
+  const [activeTab, setActiveTab] = useState<AdminTabType>("assign");
 
   const [replyMessage, setReplyMessage] = useState("");
+  const [pendingChatImages, setPendingChatImages] = useState<
+    { name: string; dataUrl: string }[]
+  >([]);
   const [sendingReply, setSendingReply] = useState(false);
+
+  const [lightboxImage, setLightboxImage] = useState<{
+    url: string;
+    title?: string;
+  } | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState(1);
 
   const [departmentStaff, setDepartmentStaff] = useState<DepartmentStaffDto[]>(
     [],
@@ -166,6 +266,7 @@ export default function AdminSupportTicketDetailPage() {
   );
   const [assignNote, setAssignNote] = useState("");
   const [assigning, setAssigning] = useState(false);
+  const [selfTaking, setSelfTaking] = useState(false);
 
   const [staffResolution, setStaffResolution] = useState("");
   const [staffCompleting, setStaffCompleting] = useState(false);
@@ -174,8 +275,10 @@ export default function AdminSupportTicketDetailPage() {
   const [resolving, setResolving] = useState(false);
 
   const chatBottomRef = useRef<HTMLDivElement | null>(null);
+  const chatImageInputRef = useRef<HTMLInputElement | null>(null);
   const prevMsgCountRef = useRef<number>(0);
   const initializedResolutionRef = useRef<boolean>(false);
+  const initializedTabRef = useRef<boolean>(false);
 
   const isSysAdmin =
     user?.supportRole === "SYSADMIN" ||
@@ -188,6 +291,17 @@ export default function AdminSupportTicketDetailPage() {
     }
   }, [isSysAdmin, router]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setLightboxImage(null);
+        setLightboxZoom(1);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const loadStaffList = useCallback(async () => {
     if (!ticketId || isSysAdmin) return;
     setLoadingStaff(true);
@@ -195,7 +309,7 @@ export default function AdminSupportTicketDetailPage() {
       const staff = await ticketApi.getDepartmentStaff(ticketId);
       setDepartmentStaff(staff);
     } catch {
-      toast.error("Không thể tải danh sách nhân viên trong phòng ban");
+      toast.error("Không thể tải danh sách nhân sự trong phòng ban");
     } finally {
       setLoadingStaff(false);
     }
@@ -222,6 +336,20 @@ export default function AdminSupportTicketDetailPage() {
             setHeadResolution(data.ticketResolution);
             setStaffResolution(data.ticketResolution);
           }
+          if (!initializedTabRef.current) {
+            initializedTabRef.current = true;
+            const role = data.viewerRole || user?.supportRole || "STAFF";
+            if (role !== "DEPARTMENT_HEAD") {
+              setActiveTab("resolve");
+            } else if (
+              data.ticketStatus === TicketStatus.PendingHeadApproval ||
+              data.ticketStatus === TicketStatus.Resolved
+            ) {
+              setActiveTab("resolve");
+            } else {
+              setActiveTab("assign");
+            }
+          }
         }
       } catch {
         if (!silent) {
@@ -234,14 +362,14 @@ export default function AdminSupportTicketDetailPage() {
         if (!silent) setLoading(false);
       }
     },
-    [ticketId, isSysAdmin],
+    [ticketId, isSysAdmin, user?.supportRole],
   );
 
   useEffect(() => {
     void loadTicket(false);
   }, [loadTicket]);
 
-  // Tự động đồng bộ tin nhắn và trạng thái mới mỗi 2 giây (không cần bấm Làm mới)
+  // Tự động đồng bộ tin nhắn và trạng thái mới mỗi 2 giây
   useEffect(() => {
     const timer = setInterval(() => {
       void loadTicket(true);
@@ -253,10 +381,10 @@ export default function AdminSupportTicketDetailPage() {
   const isDepartmentHead = effectiveRole === "DEPARTMENT_HEAD";
   const isStaff = !isDepartmentHead;
 
-  // Nếu là nhân viên được phân công (STAFF) thì không bao giờ ở tab chat
+  // Nhân viên phòng ban (STAFF) chỉ ở tab resolve hoặc history
   useEffect(() => {
-    if (isStaff && activeTab === "chat") {
-      setActiveTab("workflow");
+    if (isStaff && (activeTab === "chat" || activeTab === "assign")) {
+      setActiveTab("resolve");
     }
   }, [isStaff, activeTab]);
 
@@ -294,9 +422,10 @@ export default function AdminSupportTicketDetailPage() {
     toast.success(`Đã sao chép ${label}: ${text}`);
   };
 
+  // Trưởng phòng phân công cho nhân viên (hoặc cho chính mình)
   const handleAssignToStaff = async () => {
     if (!selectedStaffId) {
-      toast.error("Vui lòng chọn nhân viên trong phòng ban để phân công.");
+      toast.error("Vui lòng chọn nhân sự phụ trách xử lý.");
       return;
     }
     setAssigning(true);
@@ -306,15 +435,63 @@ export default function AdminSupportTicketDetailPage() {
         priority: selectedPriority,
         note: assignNote.trim(),
       });
-      toast.success(
-        `Đã phân công nhân viên xử lý (Độ ưu tiên: ${TICKET_PRIORITY_LABELS[selectedPriority]})!`,
+      const chosenMember = departmentStaff.find(
+        (s) => String(s.employeeId) === selectedStaffId,
       );
-      setTicket(updated);
-      setAssignNote("");
+      if (chosenMember?.isManager) {
+        toast.success(
+          "Trưởng phòng đã trực tiếp tiếp nhận xử lý yêu cầu này!",
+        );
+        setTicket(updated);
+        setAssignNote("");
+        setActiveTab("resolve");
+      } else {
+        toast.success(
+          `Đã phân công nhân viên xử lý (Độ ưu tiên: ${TICKET_PRIORITY_LABELS[selectedPriority]})!`,
+        );
+        setTicket(updated);
+        setAssignNote("");
+      }
     } catch {
-      toast.error("Không thể phân công nhân viên xử lý.");
+      toast.error("Không thể thực hiện phân công xử lý.");
     } finally {
       setAssigning(false);
+    }
+  };
+
+  // Trưởng phòng bấm nút tự tiếp nhận xử lý trực tiếp ngay
+  const handleHeadSelfTakeOver = async () => {
+    const managerEntry =
+      departmentStaff.find((s) => s.isManager) ||
+      (ticket?.departmentHeadEmployeeId
+        ? {
+            employeeId: ticket.departmentHeadEmployeeId,
+            employeeName: ticket.departmentHeadName || "Trưởng phòng",
+            isManager: true,
+          }
+        : null);
+
+    setSelfTaking(true);
+    try {
+      if (managerEntry?.employeeId) {
+        const updated = await ticketApi.assignToStaff(ticketId, {
+          staffEmployeeId: Number(managerEntry.employeeId),
+          priority: selectedPriority,
+          note:
+            assignNote.trim() ||
+            "Trưởng phòng trực tiếp tiếp nhận và xử lý yêu cầu hỗ trợ.",
+        });
+        setTicket(updated);
+        setSelectedStaffId(String(managerEntry.employeeId));
+      }
+      toast.success(
+        "Đã chuyển sang trang Xử lý & Báo cho khách hàng để Trưởng phòng trực tiếp giải quyết!",
+      );
+      setActiveTab("resolve");
+    } catch {
+      setActiveTab("resolve");
+    } finally {
+      setSelfTaking(false);
     }
   };
 
@@ -362,14 +539,98 @@ export default function AdminSupportTicketDetailPage() {
     }
   };
 
+  const processChatImageFiles = async (fileList: FileList | File[]) => {
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+
+    const currentCount = pendingChatImages.length;
+    if (currentCount >= 3) {
+      toast.error("Mỗi lần gửi tối đa 3 hình ảnh.");
+      return;
+    }
+
+    const availableSlots = 3 - currentCount;
+    const validFiles: File[] = [];
+
+    for (const file of files) {
+      if (!ALLOWED_IMAGE_MIME_TYPES.has(file.type.toLowerCase())) {
+        toast.error(
+          `Chỉ hỗ trợ gửi hình ảnh (.png, .jpg, .jpeg, .webp, .gif). Không hỗ trợ file "${file.name}".`,
+        );
+        continue;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error(`Ảnh "${file.name}" vượt quá dung lượng 10MB.`);
+        continue;
+      }
+      validFiles.push(file);
+    }
+
+    const toProcess = validFiles.slice(0, availableSlots);
+    const added: { name: string; dataUrl: string }[] = [];
+
+    for (const file of toProcess) {
+      try {
+        const dataUrl = await compressImageToDataUrl(file);
+        added.push({ name: file.name || "image.png", dataUrl });
+      } catch {
+        toast.error(`Không thể xử lý ảnh "${file.name}".`);
+      }
+    }
+
+    if (added.length > 0) {
+      setPendingChatImages((prev) => [...prev, ...added]);
+    }
+  };
+
+  const handleChatImageInputChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    if (e.target.files && e.target.files.length > 0) {
+      await processChatImageFiles(e.target.files);
+      e.target.value = "";
+    }
+  };
+
+  const handlePasteChatImage = async (
+    e: React.ClipboardEvent<HTMLInputElement>,
+  ) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) imageFiles.push(file);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      await processChatImageFiles(imageFiles);
+    }
+  };
+
+  const removePendingChatImage = (index: number) => {
+    setPendingChatImages((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const handleSendReply = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!ticket || !replyMessage.trim() || !isDepartmentHead) return;
+    if (!ticket || !isDepartmentHead) return;
+    if (!replyMessage.trim() && pendingChatImages.length === 0) return;
 
     setSendingReply(true);
     try {
+      const imageUrls = pendingChatImages.map((img) => img.dataUrl);
+      const imageNames = pendingChatImages.map((img) => img.name);
+
       const newMsg = await ticketApi.replyMessage(ticket.ticketSupportId, {
         messageContent: replyMessage.trim(),
+        attachmentUrl: imageUrls[0] ?? null,
+        attachmentName: imageNames[0] ?? null,
+        attachmentUrls: imageUrls,
+        attachmentNames: imageNames,
       });
       setTicket((prev) => {
         if (!prev) return null;
@@ -379,11 +640,12 @@ export default function AdminSupportTicketDetailPage() {
         };
       });
       setReplyMessage("");
+      setPendingChatImages([]);
       setTimeout(() => {
         chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
       }, 50);
     } catch {
-      toast.error("Chỉ Trưởng phòng mới có quyền nhắn tin với khách hàng.");
+      toast.error("Không thể gửi tin nhắn cho khách hàng.");
     } finally {
       setSendingReply(false);
     }
@@ -391,6 +653,94 @@ export default function AdminSupportTicketDetailPage() {
 
   const serviceLabel =
     ticket?.serviceName || ticket?.module || "Dịch vụ chung";
+  const initialImages = getTicketImages(ticket);
+  const staffMembersOnly = departmentStaff.filter((s) => !s.isManager);
+  const managerMember = departmentStaff.find((s) => s.isManager);
+  const isAssignedToHead =
+    ticket?.assignedEmployeeId &&
+    ((managerMember &&
+      ticket.assignedEmployeeId === managerMember.employeeId) ||
+      (ticket.departmentHeadEmployeeId &&
+        ticket.assignedEmployeeId === ticket.departmentHeadEmployeeId));
+
+  // Khối hiển thị nội dung yêu cầu gốc + hình ảnh đính kèm của khách hàng
+  const renderCustomerRequestCard = () => {
+    if (!ticket) return null;
+    return (
+      <Card className="border-border shadow-xs">
+        <CardHeader className="border-b pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <FileText className="size-5" />
+              </div>
+              <div>
+                <CardTitle className="text-base font-bold">
+                  Nội dung yêu cầu hỗ trợ từ Khách hàng
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  Khách hàng:{" "}
+                  <span className="font-semibold text-foreground">
+                    {ticket.createdByName || ticket.tenantName || "Khách hàng"}
+                  </span>{" "}
+                  • Dịch vụ:{" "}
+                  <span className="font-semibold text-foreground">
+                    {serviceLabel}
+                  </span>{" "}
+                  • Gửi lúc: {formatZaloTime(ticket.createdAt)}
+                </CardDescription>
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-4">
+          <div className="rounded-xl border bg-slate-50/80 p-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground dark:bg-slate-900/50">
+            {ticket.ticketDescription}
+          </div>
+
+          {/* Hiển thị trực tiếp hình ảnh khách hàng đính kèm (Nhấn vào mở ảnh to kiểu Zalo) */}
+          {initialImages.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground">
+                Hình ảnh khách hàng đính kèm ({initialImages.length} ảnh — nhấn
+                vào ảnh để phóng to):
+              </p>
+              <div className="flex flex-wrap gap-3">
+                {initialImages.map((imgUrl, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setLightboxZoom(1);
+                      setLightboxImage({
+                        url: imgUrl,
+                        title:
+                          ticket.attachmentNames?.[idx] ||
+                          `Hình ảnh đính kèm #${idx + 1}`,
+                      });
+                    }}
+                    className="group relative overflow-hidden rounded-xl border border-slate-200 bg-slate-100 shadow-xs transition-all hover:ring-2 hover:ring-primary dark:border-slate-700 dark:bg-slate-800"
+                  >
+                    <img
+                      src={imgUrl}
+                      alt={`Ảnh đính kèm ${idx + 1}`}
+                      className="h-32 w-44 object-cover transition-transform duration-200 group-hover:scale-105"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/30">
+                      <span className="flex items-center gap-1 rounded-full bg-black/70 px-2.5 py-1 text-[11px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
+                        <ZoomIn className="size-3.5" />
+                        Xem ảnh lớn
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <>
@@ -419,7 +769,7 @@ export default function AdminSupportTicketDetailPage() {
             </Card>
           ) : (
             <>
-              {/* Thanh tiêu đề & Điều hướng tách trang con (Tabs) */}
+              {/* Thanh tiêu đề & Điều hướng tách thành các trang riêng biệt */}
               <div className="flex flex-col gap-4 rounded-xl border bg-card p-5 shadow-xs lg:flex-row lg:items-center lg:justify-between">
                 <div className="space-y-1.5">
                   <button
@@ -453,40 +803,64 @@ export default function AdminSupportTicketDetailPage() {
                   </h1>
                 </div>
 
-                {/* Thanh chuyển trang tách biệt (Không dồn tất cả vào 1 màn) */}
+                {/* Thanh chuyển trang tách biệt rõ ràng:
+                    - Trưởng phòng có 4 trang: (1) Phân công xử lý | (2) Xử lý & Báo khách hàng | (3) Nhắn tin với Khách hàng | (4) Thông tin & Lịch sử
+                    - Nhân viên có 2 trang: (1) Nội dung & Báo cáo kết quả | (2) Thông tin phiếu hỗ trợ */}
                 <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border bg-slate-100 p-1.5 dark:bg-slate-800">
+                  {isDepartmentHead && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("assign")}
+                      className={cn(
+                        "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all",
+                        activeTab === "assign"
+                          ? "bg-white text-blue-600 shadow-xs dark:bg-slate-900 dark:text-blue-400"
+                          : "text-slate-600 hover:text-slate-900 dark:text-slate-300",
+                      )}
+                    >
+                      <UserPlus className="size-4" />
+                      <span>1. Phân công xử lý</span>
+                    </button>
+                  )}
+
                   <button
                     type="button"
-                    onClick={() => setActiveTab("workflow")}
+                    onClick={() => setActiveTab("resolve")}
                     className={cn(
-                      "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all",
-                      activeTab === "workflow"
-                        ? "bg-white text-primary shadow-xs dark:bg-slate-900"
+                      "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all",
+                      activeTab === "resolve"
+                        ? "bg-white text-emerald-600 shadow-xs dark:bg-slate-900 dark:text-emerald-400"
                         : "text-slate-600 hover:text-slate-900 dark:text-slate-300",
                     )}
                   >
                     <ClipboardCheck className="size-4" />
                     <span>
                       {isDepartmentHead
-                        ? "1. Xử lý & Phân công"
+                        ? "2. Xử lý & Báo khách hàng"
                         : "1. Nội dung & Báo cáo kết quả"}
                     </span>
+                    {isDepartmentHead &&
+                      ticket.ticketStatus ===
+                        TicketStatus.PendingHeadApproval && (
+                        <span className="rounded-full bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+                          Có báo cáo
+                        </span>
+                      )}
                   </button>
 
-                  {/* CHỈ TRƯỞNG PHÒNG MỚI ĐƯỢC NHẮN TIN VỚI KHÁCH HÀNG (Nhân viên được phân công không có tab nhắn tin) */}
                   {isDepartmentHead && (
                     <button
                       type="button"
                       onClick={() => setActiveTab("chat")}
                       className={cn(
-                        "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all",
+                        "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all",
                         activeTab === "chat"
                           ? "bg-white text-blue-600 shadow-xs dark:bg-slate-900 dark:text-blue-400"
                           : "text-slate-600 hover:text-slate-900 dark:text-slate-300",
                       )}
                     >
                       <MessageCircle className="size-4" />
-                      <span>2. Nhắn tin với Khách hàng</span>
+                      <span>3. Nhắn tin với Khách hàng</span>
                       <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
                         {chatMessages.length}
                       </span>
@@ -497,7 +871,7 @@ export default function AdminSupportTicketDetailPage() {
                     type="button"
                     onClick={() => setActiveTab("history")}
                     className={cn(
-                      "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all",
+                      "inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all",
                       activeTab === "history"
                         ? "bg-white text-primary shadow-xs dark:bg-slate-900"
                         : "text-slate-600 hover:text-slate-900 dark:text-slate-300",
@@ -506,7 +880,7 @@ export default function AdminSupportTicketDetailPage() {
                     <History className="size-4" />
                     <span>
                       {isDepartmentHead
-                        ? "3. Thông tin & Lịch sử điều phối"
+                        ? "4. Lịch sử & Thông tin"
                         : "2. Thông tin phiếu hỗ trợ"}
                     </span>
                   </button>
@@ -514,71 +888,106 @@ export default function AdminSupportTicketDetailPage() {
               </div>
 
               {/* =========================================================
-                  TRANG 1: NỘI DUNG YÊU CẦU & XỬ LÝ NGHIỆP VỤ
+                  TRANG 1 (DÀNH CHO TRƯỞNG PHÒNG): PHÂN CÔNG XỬ LÝ
+                  (Trưởng phòng có thể chọn: Tự mình trực tiếp xử lý HOẶC Giao cho nhân viên phòng ban)
                  ========================================================= */}
-              {activeTab === "workflow" && (
+              {activeTab === "assign" && isDepartmentHead && (
                 <div className="space-y-6">
-                  {/* Card Nội dung câu hỏi từ Khách hàng */}
-                  <Card className="border-border shadow-xs">
-                    <CardHeader className="border-b pb-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
+                  {renderCustomerRequestCard()}
+
+                  <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                    {/* Cột trái (5/12): Trưởng phòng trực tiếp tiếp nhận & xử lý luôn */}
+                    <Card className="border-emerald-500/30 bg-emerald-500/5 shadow-xs lg:col-span-5">
+                      <CardHeader className="border-b border-emerald-200/50 pb-3 dark:border-emerald-900/50">
                         <div className="flex items-center gap-2.5">
-                          <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                            <FileText className="size-5" />
+                          <div className="flex size-9 items-center justify-center rounded-lg bg-emerald-600/10 text-emerald-600 dark:text-emerald-400">
+                            <Sparkles className="size-5" />
                           </div>
                           <div>
-                            <CardTitle className="text-base font-bold">
-                              Nội dung yêu cầu hỗ trợ từ Khách hàng
+                            <CardTitle className="text-base font-bold text-emerald-950 dark:text-emerald-200">
+                              Phương án 1: Trưởng phòng trực tiếp xử lý
                             </CardTitle>
                             <CardDescription className="text-xs">
-                              Khách hàng:{" "}
-                              <span className="font-semibold text-foreground">
-                                {ticket.createdByName ||
-                                  ticket.tenantName ||
-                                  "Khách hàng"}
-                              </span>{" "}
-                              • Dịch vụ:{" "}
-                              <span className="font-semibold text-foreground">
-                                {serviceLabel}
-                              </span>{" "}
-                              • Gửi lúc: {formatZaloTime(ticket.createdAt)}
+                              Không cần qua nhân viên, Trưởng phòng tự xử lý và
+                              phản hồi kết quả luôn cho khách hàng
                             </CardDescription>
                           </div>
                         </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="pt-4">
-                      <div className="rounded-xl border bg-slate-50/80 p-4 text-sm leading-relaxed whitespace-pre-wrap text-foreground dark:bg-slate-900/50">
-                        {ticket.ticketDescription}
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* NẾU LÀ TRƯỞNG PHÒNG: Chia 2 cột gọn gàng: (1) Phân công nhân viên & (2) Duyệt gửi kết quả */}
-                  {isDepartmentHead && (
-                    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                      {/* Bước 1: Phân công nhân viên trong phòng */}
-                      <Card className="border-blue-500/30 bg-blue-500/5 shadow-xs">
-                        <CardHeader className="border-b border-blue-200/50 pb-3 dark:border-blue-900/50">
-                          <div className="flex items-center gap-2.5">
-                            <div className="flex size-9 items-center justify-center rounded-lg bg-blue-600/10 text-blue-600 dark:text-blue-400">
-                              <UserPlus className="size-5" />
-                            </div>
-                            <div>
-                              <CardTitle className="text-base font-bold text-blue-950 dark:text-blue-200">
-                                Bước 1: Phân công nhân viên xử lý
-                              </CardTitle>
-                              <CardDescription className="text-xs">
-                                Giao yêu cầu cho nhân viên thuộc{" "}
-                                {ticket.department}
-                              </CardDescription>
-                            </div>
+                      </CardHeader>
+                      <CardContent className=" flex flex-col justify-between space-y-4 pt-4 text-sm">
+                        <div className="space-y-3">
+                          <div className="rounded-xl border border-emerald-200/70 bg-background/90 p-3.5 text-xs leading-relaxed text-muted-foreground dark:border-emerald-900/60">
+                            <p className="font-semibold text-foreground">
+                              Khi nào nên chọn phương án này?
+                            </p>
+                            <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                              <li>
+                                Yêu cầu cần phản hồi nhanh hoặc thuộc thẩm quyền
+                                quyết định trực tiếp của Trưởng phòng.
+                              </li>
+                              <li>
+                                Trưởng phòng nắm rõ nghiệp vụ và muốn giải quyết
+                                dứt điểm ngay mà không cần bàn giao cho nhân
+                                viên.
+                              </li>
+                            </ul>
                           </div>
-                        </CardHeader>
-                        <CardContent className="space-y-4 pt-4 text-sm">
+
+                          {isAssignedToHead && (
+                            <div className="flex items-center justify-between rounded-lg border border-emerald-300 bg-emerald-50/80 px-3 py-2 text-xs dark:border-emerald-800 dark:bg-emerald-950/50">
+                              <span className="font-medium text-emerald-800 dark:text-emerald-300">
+                                Trạng thái hiện tại:
+                              </span>
+                              <span className="font-bold text-emerald-700 dark:text-emerald-300">
+                                Trưởng phòng đang trực tiếp phụ trách
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-2.5 pt-2">
+                          <Button
+                            type="button"
+                            onClick={() => void handleHeadSelfTakeOver()}
+                            disabled={selfTaking}
+                            className="w-full gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+                          >
+                            {selfTaking ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="size-4" />
+                            )}
+                            <span>
+                              Trưởng phòng trực tiếp xử lý & Báo khách hàng
+                            </span>
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Cột phải (7/12): Phân công cho nhân viên trong phòng ban */}
+                    <Card className="border-blue-500/30 bg-blue-500/5 shadow-xs lg:col-span-7">
+                      <CardHeader className="border-b border-blue-200/50 pb-3 dark:border-blue-900/50">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex size-9 items-center justify-center rounded-lg bg-blue-600/10 text-blue-600 dark:text-blue-400">
+                            <UserPlus className="size-5" />
+                          </div>
+                          <div>
+                            <CardTitle className="text-base font-bold text-blue-950 dark:text-blue-200">
+                              Phương án 2: Phân công nhân viên phòng ban xử lý
+                            </CardTitle>
+                            <CardDescription className="text-xs">
+                              Giao yêu cầu kèm độ ưu tiên cho nhân viên thuộc{" "}
+                              {ticket.department}
+                            </CardDescription>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent className="space-y-4 pt-4 text-sm">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                           <div className="space-y-2">
                             <Label className="text-xs font-semibold">
-                              Nhân viên phụ trách trong phòng ban:
+                              Nhân sự phụ trách trong phòng ban:
                             </Label>
                             <Select
                               value={selectedStaffId}
@@ -593,18 +1002,23 @@ export default function AdminSupportTicketDetailPage() {
                                 <SelectValue
                                   placeholder={
                                     loadingStaff
-                                      ? "Đang tải danh sách nhân viên..."
-                                      : "Chọn nhân viên phụ trách"
+                                      ? "Đang tải danh sách nhân sự..."
+                                      : "Chọn nhân sự phụ trách"
                                   }
                                 />
                               </SelectTrigger>
                               <SelectContent>
-                                {departmentStaff.map((staff) => (
+                                {(staffMembersOnly.length > 0
+                                  ? departmentStaff
+                                  : departmentStaff
+                                ).map((staff) => (
                                   <SelectItem
                                     key={staff.employeeId}
                                     value={String(staff.employeeId)}
                                   >
-                                    {staff.employeeName}{" "}
+                                    {staff.isManager
+                                      ? `⭐ [Trưởng phòng] ${staff.employeeName}`
+                                      : `${staff.employeeName}`}{" "}
                                     {staff.employeeCode
                                       ? `(${staff.employeeCode})`
                                       : ""}
@@ -643,118 +1057,190 @@ export default function AdminSupportTicketDetailPage() {
                               </SelectContent>
                             </Select>
                           </div>
+                        </div>
 
-                          <div className="space-y-2">
-                            <Label className="text-xs font-semibold">
-                              Ghi chú chỉ đạo cho nhân viên:
-                            </Label>
-                            <Textarea
-                              value={assignNote}
-                              onChange={(e) => setAssignNote(e.target.value)}
-                              placeholder="Nhập hướng dẫn hoặc yêu cầu xử lý cho nhân viên..."
-                              className="min-h-[110px] resize-y bg-background text-sm"
-                              maxLength={500}
-                            />
+                        <div className="space-y-2">
+                          <Label className="text-xs font-semibold">
+                            Ghi chú chỉ đạo xử lý:
+                          </Label>
+                          <Textarea
+                            value={assignNote}
+                            onChange={(e) => setAssignNote(e.target.value)}
+                            placeholder="Nhập hướng dẫn hoặc yêu cầu xử lý chi tiết cho nhân viên..."
+                            className="min-h-[100px] resize-y bg-background text-sm"
+                            maxLength={500}
+                          />
+                        </div>
+
+                        {ticket.assignedEmployeeName && (
+                          <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-background/80 px-3 py-2 text-xs">
+                            <span className="text-muted-foreground">
+                              Nhân sự đang được giao phụ trách:
+                            </span>
+                            <span className="font-bold text-blue-700 dark:text-blue-400">
+                              {ticket.assignedEmployeeName}
+                            </span>
                           </div>
+                        )}
 
-                          {ticket.assignedEmployeeName && (
-                            <div className="flex items-center justify-between rounded-lg border border-blue-200 bg-background/80 px-3 py-2 text-xs">
-                              <span className="text-muted-foreground">
-                                Nhân viên đang phụ trách:
-                              </span>
-                              <span className="font-bold text-blue-700 dark:text-blue-400">
-                                {ticket.assignedEmployeeName}
-                              </span>
-                            </div>
-                          )}
+                        <div className="flex justify-end">
+                          <Button
+                            type="button"
+                            onClick={() => void handleAssignToStaff()}
+                            disabled={assigning || !selectedStaffId}
+                            className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
+                          >
+                            {assigning ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <UserPlus className="size-4" />
+                            )}
+                            <span>Xác nhận phân công</span>
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
+              )}
 
-                          <div className="flex justify-end">
-                            <Button
-                              type="button"
-                              onClick={() => void handleAssignToStaff()}
-                              disabled={assigning || !selectedStaffId}
-                              className="bg-blue-600 text-white hover:bg-blue-700 gap-2"
-                            >
-                              {assigning ? (
-                                <Loader2 className="size-4 animate-spin" />
-                              ) : (
-                                <UserPlus className="size-4" />
-                              )}
-                              <span>Xác nhận phân công</span>
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
+              {/* =========================================================
+                  TRANG 2: XỬ LÝ & BÁO KẾT QUẢ CHO KHÁCH HÀNG
+                  (Dành cho Trưởng phòng trực tiếp xử lý / duyệt báo cáo nhân viên,
+                   hoặc Nhân viên phòng ban gửi báo cáo hoàn thành lên Trưởng phòng)
+                 ========================================================= */}
+              {activeTab === "resolve" && (
+                <div className="space-y-6">
+                  {renderCustomerRequestCard()}
 
-                      {/* Bước 2: Duyệt báo cáo của nhân viên & Phản hồi kết quả cho khách hàng */}
-                      <Card className="border-emerald-500/30 bg-emerald-500/5 shadow-xs">
-                        <CardHeader className="border-b border-emerald-200/50 pb-3 dark:border-emerald-900/50">
+                  {/* GIAO DIỆN DÀNH CHO TRƯỞNG PHÒNG: TRỰC TIẾP XỬ LÝ HOẶC DUYỆT BÁO CÁO & GỬI KẾT QUẢ CHO KHÁCH HÀNG */}
+                  {isDepartmentHead && (
+                    <Card className="border-emerald-500/30 bg-emerald-500/5 shadow-xs">
+                      <CardHeader className="border-b border-emerald-200/50 pb-3 dark:border-emerald-900/50">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="flex items-center gap-2.5">
                             <div className="flex size-9 items-center justify-center rounded-lg bg-emerald-600/10 text-emerald-600 dark:text-emerald-400">
                               <CheckCircle2 className="size-5" />
                             </div>
                             <div>
                               <CardTitle className="text-base font-bold text-emerald-950 dark:text-emerald-200">
-                                Bước 2: Duyệt & Gửi kết quả cho Khách hàng
+                                Xử lý yêu cầu & Báo kết quả cho Khách hàng
                               </CardTitle>
                               <CardDescription className="text-xs">
-                                Kiểm tra báo cáo của nhân viên và đóng phiếu hỗ
-                                trợ
+                                Trưởng phòng có thể trực tiếp nhập kết quả xử lý
+                                hoặc duyệt báo cáo từ nhân viên để gửi thông báo
+                                hoàn tất cho khách hàng
                               </CardDescription>
                             </div>
                           </div>
-                        </CardHeader>
-                        <CardContent className="space-y-4 pt-4 text-sm">
-                          {ticket.ticketResolution && (
-                            <div className="rounded-lg border border-purple-200 bg-purple-50/80 p-3 text-xs text-purple-950 dark:border-purple-800 dark:bg-purple-950/40 dark:text-purple-200">
-                              <p className="font-bold">
-                                Báo cáo kết quả từ nhân viên{" "}
-                                {ticket.assignedEmployeeName || ""}:
-                              </p>
-                              <p className="mt-1 whitespace-pre-wrap">
-                                {ticket.ticketResolution}
-                              </p>
-                            </div>
-                          )}
 
-                          <div className="space-y-2">
-                            <Label className="text-xs font-semibold">
-                              Nội dung kết quả chính thức gửi tới Khách hàng:
-                            </Label>
-                            <Textarea
-                              value={headResolution}
-                              onChange={(e) =>
-                                setHeadResolution(e.target.value)
-                              }
-                              placeholder="Nhập phương án / kết quả giải quyết chính thức để thông báo cho khách hàng..."
-                              className="min-h-[130px] resize-y bg-background text-sm"
-                              maxLength={2000}
-                            />
-                          </div>
-
-                          <div className="flex justify-end">
-                            <Button
-                              type="button"
-                              onClick={() =>
-                                void handleSendResultToCustomer(headResolution)
-                              }
-                              disabled={resolving || !headResolution.trim()}
-                              className="bg-emerald-600 text-white hover:bg-emerald-700 gap-2"
+                          {ticket.assignedEmployeeName && (
+                            <Badge
+                              variant="outline"
+                              className="border-emerald-300 bg-background text-xs font-semibold text-emerald-700 dark:border-emerald-800 dark:text-emerald-300"
                             >
-                              {resolving ? (
-                                <Loader2 className="size-4 animate-spin" />
-                              ) : (
-                                <Send className="size-4" />
-                              )}
-                              <span>Gửi kết quả & Đóng Ticket</span>
-                            </Button>
+                              Người xử lý: {ticket.assignedEmployeeName}
+                            </Badge>
+                          )}
+                        </div>
+                      </CardHeader>
+
+                      <CardContent className="space-y-4 pt-4 text-sm">
+                        {/* Hiển thị báo cáo từ nhân viên nếu có */}
+                        {ticket.ticketResolution && (
+                          <div className="rounded-xl border border-purple-200 bg-purple-50/90 p-4 text-xs text-purple-950 dark:border-purple-800 dark:bg-purple-950/40 dark:text-purple-200">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="font-bold">
+                                📋 Báo cáo kết quả xử lý nội bộ{" "}
+                                {ticket.assignedEmployeeName
+                                  ? `từ ${ticket.assignedEmployeeName}`
+                                  : ""}
+                                :
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setHeadResolution(
+                                    ticket.ticketResolution || "",
+                                  )
+                                }
+                                className="rounded-md border border-purple-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-purple-700 hover:bg-purple-100 dark:border-purple-700 dark:bg-slate-900 dark:text-purple-300"
+                              >
+                                Sử dụng nguyên văn báo cáo này
+                              </button>
+                            </div>
+                            <p className="mt-2 whitespace-pre-wrap leading-relaxed">
+                              {ticket.ticketResolution}
+                            </p>
                           </div>
-                        </CardContent>
-                      </Card>
-                    </div>
+                        )}
+
+                        {/* Gợi ý mẫu phản hồi kết quả nhanh khi Trưởng phòng trực tiếp xử lý */}
+                        <div className="space-y-1.5">
+                          <Label className="text-xs font-semibold text-muted-foreground">
+                            Mẫu phản hồi kết quả nhanh (nhấn để điền nhanh):
+                          </Label>
+                          <div className="flex flex-wrap gap-1.5">
+                            {QUICK_RESOLUTION_TEMPLATES.map((tpl, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => setHeadResolution(tpl)}
+                                className="rounded-lg border border-emerald-200 bg-background px-3 py-1.5 text-left text-xs text-slate-700 transition-colors hover:border-emerald-400 hover:bg-emerald-50 dark:border-emerald-900 dark:text-slate-300 dark:hover:bg-emerald-950/50"
+                              >
+                                Mẫu {idx + 1}: {tpl.slice(0, 58)}...
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label className="text-xs font-semibold">
+                            Nội dung kết quả chính thức gửi tới Khách hàng:
+                          </Label>
+                          <Textarea
+                            value={headResolution}
+                            onChange={(e) => setHeadResolution(e.target.value)}
+                            placeholder="Nhập phương án / kết quả giải quyết chính thức để thông báo cho khách hàng và đóng yêu cầu hỗ trợ..."
+                            className="min-h-[150px] resize-y bg-background text-sm leading-relaxed"
+                            maxLength={2000}
+                          />
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setActiveTab("assign")}
+                            className="gap-1.5 text-xs"
+                          >
+                            <UserPlus className="size-3.5" />
+                            <span>Chuyển sang trang Phân công nhân viên</span>
+                          </Button>
+
+                          <Button
+                            type="button"
+                            onClick={() =>
+                              void handleSendResultToCustomer(headResolution)
+                            }
+                            disabled={resolving || !headResolution.trim()}
+                            className="gap-2 bg-emerald-600 text-white hover:bg-emerald-700"
+                          >
+                            {resolving ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <Send className="size-4" />
+                            )}
+                            <span>
+                              Gửi kết quả & Báo cho Khách hàng (Đóng Ticket)
+                            </span>
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
                   )}
 
-                  {/* NẾU LÀ NHÂN VIÊN ĐƯỢC PHÂN CÔNG (STAFF): Chỉ hiển thị chỉ đạo của Trưởng phòng & Form Báo cáo kết quả (KHÔNG CÓ CHAT) */}
+                  {/* GIAO DIỆN DÀNH CHO NHÂN VIÊN ĐƯỢC PHÂN CÔNG (STAFF) */}
                   {isStaff && (
                     <Card className="border-purple-500/30 bg-purple-500/5 shadow-xs">
                       <CardHeader className="border-b border-purple-200/50 pb-3 dark:border-purple-900/50">
@@ -775,7 +1261,6 @@ export default function AdminSupportTicketDetailPage() {
                         </div>
                       </CardHeader>
                       <CardContent className="space-y-4 pt-4 text-sm">
-                        {/* Hiển thị chỉ đạo của Trưởng phòng nếu có */}
                         {internalReports.length > 0 && (
                           <div className="space-y-2 rounded-lg border bg-background p-3.5">
                             <p className="text-xs font-bold text-muted-foreground">
@@ -817,7 +1302,7 @@ export default function AdminSupportTicketDetailPage() {
                             disabled={
                               staffCompleting || !staffResolution.trim()
                             }
-                            className="bg-purple-600 text-white hover:bg-purple-700 gap-2"
+                            className="gap-2 bg-purple-600 text-white hover:bg-purple-700"
                           >
                             {staffCompleting ? (
                               <Loader2 className="size-4 animate-spin" />
@@ -834,11 +1319,11 @@ export default function AdminSupportTicketDetailPage() {
               )}
 
               {/* =========================================================
-                  TRANG 2: NHẮN TIN TRỰC TUYẾN VỚI KHÁCH HÀNG (KIỂU ZALO REALTIME)
-                  (Chỉ dành cho Trưởng phòng - Nhân viên không có quyền nhắn tin)
+                  TRANG 3: NHẮN TIN TRỰC TUYẾN VỚI KHÁCH HÀNG (KIỂU ZALO REALTIME + GỬI ẢNH)
+                  (Chỉ dành cho Trưởng phòng)
                  ========================================================= */}
               {activeTab === "chat" && isDepartmentHead && (
-                <div className="flex h-[640px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm dark:border-slate-800">
+                <div className="flex h-[650px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm dark:border-slate-800">
                   {/* Header Zalo Chat */}
                   <div className="flex items-center justify-between border-b bg-white px-5 py-3.5 dark:bg-slate-900">
                     <div className="flex items-center gap-3">
@@ -854,8 +1339,8 @@ export default function AdminSupportTicketDetailPage() {
                         </p>
                         <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
                           <span className="size-1.5 rounded-full bg-emerald-500" />
-                          Kênh trao đổi trực tiếp Trưởng phòng ↔ Khách hàng (Tự
-                          động làm mới tức thì)
+                          Kênh trao đổi trực tiếp Trưởng phòng ↔ Khách hàng (Hỗ
+                          trợ gửi ảnh & phóng to kiểu Zalo)
                         </p>
                       </div>
                     </div>
@@ -872,6 +1357,7 @@ export default function AdminSupportTicketDetailPage() {
                   <div className="flex-1 space-y-4 overflow-y-auto bg-[#eef0f5] p-5 dark:bg-slate-950">
                     {chatMessages.map((msg) => {
                       const isMine = msg.isFromEmployee;
+                      const msgImages = getMessageImages(msg);
                       return (
                         <div
                           key={msg.ticketMessageId}
@@ -905,9 +1391,51 @@ export default function AdminSupportTicketDetailPage() {
                               {msg.senderName}
                             </p>
 
-                            <p className="whitespace-pre-line text-sm leading-relaxed">
-                              {msg.ticketMessageContent}
-                            </p>
+                            {msg.ticketMessageContent && (
+                              <p className="whitespace-pre-line text-sm leading-relaxed">
+                                {msg.ticketMessageContent}
+                              </p>
+                            )}
+
+                            {/* Hiển thị trực tiếp hình ảnh trong bong bóng chat kiểu Zalo */}
+                            {msgImages.length > 0 && (
+                              <div
+                                className={cn(
+                                  "mt-2 grid gap-2",
+                                  msgImages.length === 1
+                                    ? "grid-cols-1"
+                                    : "grid-cols-2",
+                                )}
+                              >
+                                {msgImages.map((imgUrl, idx) => (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => {
+                                      setLightboxZoom(1);
+                                      setLightboxImage({
+                                        url: imgUrl,
+                                        title:
+                                          msg.attachmentNames?.[idx] ||
+                                          msg.ticketMessageAttachmentName ||
+                                          `Ảnh trao đổi #${idx + 1}`,
+                                      });
+                                    }}
+                                    className="group relative overflow-hidden rounded-xl border border-black/10 bg-black/5 text-left"
+                                  >
+                                    <img
+                                      src={imgUrl}
+                                      alt="Hình ảnh đính kèm"
+                                      className="max-h-64 w-auto max-w-full rounded-xl object-contain transition-transform duration-200 group-hover:scale-[1.02]"
+                                    />
+                                    <span className="absolute right-2 bottom-2 flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-[10px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
+                                      <ZoomIn className="size-3" />
+                                      Phóng to
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
 
                             <div
                               className={cn(
@@ -929,11 +1457,48 @@ export default function AdminSupportTicketDetailPage() {
                     <div ref={chatBottomRef} />
                   </div>
 
-                  {/* Phản hồi mẫu nhanh & Ô nhập tin nhắn kiểu Zalo */}
+                  {/* Phản hồi mẫu nhanh, xem trước ảnh & Ô nhập tin nhắn kiểu Zalo */}
                   <form
                     onSubmit={handleSendReply}
                     className="space-y-2.5 border-t bg-white p-3.5 dark:bg-slate-900"
                   >
+                    {/* Xem trước ảnh sắp gửi */}
+                    {pendingChatImages.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-blue-200 bg-blue-50/60 p-2.5 dark:border-slate-700 dark:bg-slate-800/70">
+                        {pendingChatImages.map((img, idx) => (
+                          <div
+                            key={idx}
+                            className="group relative size-16 overflow-hidden rounded-lg border border-slate-300 bg-white shadow-xs"
+                          >
+                            <img
+                              src={img.dataUrl}
+                              alt={img.name}
+                              onClick={() => {
+                                setLightboxZoom(1);
+                                setLightboxImage({
+                                  url: img.dataUrl,
+                                  title: img.name,
+                                });
+                              }}
+                              className="size-full cursor-pointer object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removePendingChatImage(idx)}
+                              className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-rose-600 text-white shadow-xs hover:bg-rose-700"
+                              title="Xóa ảnh"
+                            >
+                              <X className="size-3" />
+                            </button>
+                          </div>
+                        ))}
+                        <span className="text-xs text-muted-foreground">
+                          Đã chọn {pendingChatImages.length}/3 ảnh (Nhấn vào ảnh
+                          để xem lớn)
+                        </span>
+                      </div>
+                    )}
+
                     <div className="flex flex-wrap items-center gap-1.5">
                       {QUICK_RESPONSES.map((sample, idx) => (
                         <button
@@ -949,15 +1514,37 @@ export default function AdminSupportTicketDetailPage() {
 
                     <div className="flex items-center gap-2">
                       <input
+                        ref={chatImageInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                        multiple
+                        onChange={handleChatImageInputChange}
+                        className="hidden"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => chatImageInputRef.current?.click()}
+                        title="Gửi hình ảnh minh họa (chỉ nhận file ảnh)"
+                        className="flex size-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-slate-50 text-slate-600 transition-colors hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                      >
+                        <ImagePlus className="size-5" />
+                      </button>
+
+                      <input
                         type="text"
                         value={replyMessage}
                         onChange={(e) => setReplyMessage(e.target.value)}
-                        placeholder="Nhập tin nhắn gửi trực tiếp cho khách hàng... (Nhấn Enter để gửi ngay)"
+                        onPaste={handlePasteChatImage}
+                        placeholder="Nhập tin nhắn hoặc dán ảnh (Ctrl+V) để gửi cho khách hàng..."
                         className="h-10 flex-1 rounded-full border border-slate-300 bg-slate-50 px-4 text-sm focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
                       />
                       <Button
                         type="submit"
-                        disabled={sendingReply || !replyMessage.trim()}
+                        disabled={
+                          sendingReply ||
+                          (!replyMessage.trim() &&
+                            pendingChatImages.length === 0)
+                        }
                         className="h-10 rounded-full bg-blue-600 px-5 text-white hover:bg-blue-700"
                       >
                         {sendingReply ? (
@@ -973,7 +1560,7 @@ export default function AdminSupportTicketDetailPage() {
               )}
 
               {/* =========================================================
-                  TRANG 3: THÔNG TIN KHÁCH HÀNG & LỊCH SỬ ĐIỀU PHỐI PHÒNG BAN
+                  TRANG 4: THÔNG TIN KHÁCH HÀNG & LỊCH SỬ ĐIỀU PHỐI PHÒNG BAN
                  ========================================================= */}
               {activeTab === "history" && (
                 <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -1072,7 +1659,7 @@ export default function AdminSupportTicketDetailPage() {
                       <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-3">
                         <div className="flex items-center gap-2 text-muted-foreground">
                           <User className="size-4 text-emerald-600" />
-                          <span>Nhân viên xử lý:</span>
+                          <span>Người trực tiếp xử lý:</span>
                         </div>
                         <span className="font-semibold text-foreground">
                           {ticket.assignedEmployeeName || "Chưa phân công"}
@@ -1101,7 +1688,7 @@ export default function AdminSupportTicketDetailPage() {
                                 <Badge variant="outline" className="text-[10px]">
                                   {a.assignmentRole === "DEPARTMENT_HEAD"
                                     ? "Trưởng phòng"
-                                    : "Nhân viên xử lý"}
+                                    : "Người xử lý"}
                                 </Badge>
                               </div>
                             ))}
@@ -1116,6 +1703,77 @@ export default function AdminSupportTicketDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Modal phóng to xem ảnh kiểu Zalo Lightbox */}
+      {lightboxImage && (
+        <div
+          onClick={() => {
+            setLightboxImage(null);
+            setLightboxZoom(1);
+          }}
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 p-4 backdrop-blur-xs"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="mb-3 flex w-full max-w-4xl items-center justify-between rounded-xl bg-white/10 px-4 py-2.5 text-white backdrop-blur-md"
+          >
+            <span className="truncate text-sm font-medium">
+              {lightboxImage.title || "Xem hình ảnh đính kèm"}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setLightboxZoom((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))
+                }
+                className="flex size-8 items-center justify-center rounded-lg bg-white/15 hover:bg-white/25"
+                title="Thu nhỏ"
+              >
+                <ZoomOut className="size-4" />
+              </button>
+              <span className="min-w-12 text-center text-xs font-semibold">
+                {Math.round(lightboxZoom * 100)}%
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  setLightboxZoom((z) => Math.min(3, Number((z + 0.25).toFixed(2))))
+                }
+                className="flex size-8 items-center justify-center rounded-lg bg-white/15 hover:bg-white/25"
+                title="Phóng to"
+              >
+                <ZoomIn className="size-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLightboxImage(null);
+                  setLightboxZoom(1);
+                }}
+                className="ml-2 flex size-8 items-center justify-center rounded-lg bg-rose-600 text-white hover:bg-rose-700"
+                title="Đóng (Esc)"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          </div>
+
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex max-h-[82vh] max-w-[92vw] items-center justify-center overflow-auto rounded-xl"
+          >
+            <img
+              src={lightboxImage.url}
+              alt={lightboxImage.title || "Preview"}
+              style={{
+                transform: `scale(${lightboxZoom})`,
+                transformOrigin: "center center",
+              }}
+              className="max-h-[80vh] max-w-[90vw] rounded-lg object-contain transition-transform duration-150"
+            />
+          </div>
+        </div>
+      )}
     </>
   );
 }

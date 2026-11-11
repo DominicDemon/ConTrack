@@ -120,7 +120,7 @@ public static class InternalHost
             catch (ContractManagement.Domain.Internal.DraftValidationException e) { context.Response.StatusCode = 422; await context.Response.WriteAsJsonAsync(new { message = e.Message, code = "draft_validation", issues = e.Issues }); }
             catch (InternalAppException e) { context.Response.StatusCode = e.Status; await context.Response.WriteAsJsonAsync(new { message = e.Message, code = e.Code }); }
             catch (ArgumentException e) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = e.Message }); }
-            catch (BadHttpRequestException) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = "Dữ liệu gửi lên không hợp lệ." }); }
+            catch (BadHttpRequestException e) { app.Logger.LogWarning(e, "Bad HTTP request: {Message}", e.Message); context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = e.Message }); }
             catch (AntiforgeryValidationException) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = "Phiên bảo vệ đã hết hạn. Tải lại trang và thử lại." }); }
             catch (DbUpdateException e) { app.Logger.LogWarning(e, "Internal database write failed"); context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { message = "Dữ liệu trùng hoặc đã thay đổi. Kiểm tra rồi thử lại." }); }
             catch (Exception e) when (!context.RequestAborted.IsCancellationRequested)
@@ -358,6 +358,11 @@ public static class InternalHost
 public sealed class StringLongConverter : JsonConverter<long>
 {
     public override long Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-        reader.TokenType == JsonTokenType.String && long.TryParse(reader.GetString(), out var value) ? value : throw new JsonException("IDs must be strings.");
+        reader.TokenType switch
+        {
+            JsonTokenType.Number => reader.GetInt64(),
+            JsonTokenType.String when long.TryParse(reader.GetString(), out var value) => value,
+            _ => throw new JsonException("IDs must be numeric values or numeric strings.")
+        };
     public override void Write(Utf8JsonWriter writer, long value, JsonSerializerOptions options) => writer.WriteStringValue(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
 }

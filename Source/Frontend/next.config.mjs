@@ -12,7 +12,7 @@ const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   async rewrites() {
     const api = process.env.INTERNAL_API_ORIGIN || "http://127.0.0.1:5005";
-    const customerApi = process.env.CUSTOMER_API_ORIGIN || "http://127.0.0.1:5006";
+    const customerApi = process.env.CUSTOMER_API_ORIGIN || api;
     return [{ source: "/api/internal/:path*", destination: `${api}/api/internal/:path*` },
       { source: "/api/customer/:path*", destination: `${customerApi}/api/customer/:path*` },
       { source: "/api/public/:path*", destination: `${api}/:path*` }];

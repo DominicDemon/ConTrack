@@ -25,6 +25,11 @@ export default function ProtectedLayout({
   const user = useAuthStore((state) => state.user);
 
   useEffect(() => {
+    if (process.env.NEXT_PUBLIC_APPLICATION_MODE !== "Legacy") {
+      router.replace("/portal/contracts");
+      return;
+    }
+
     const checkAuth = async () => {
       try {
         const userData = await authApi.getMe();

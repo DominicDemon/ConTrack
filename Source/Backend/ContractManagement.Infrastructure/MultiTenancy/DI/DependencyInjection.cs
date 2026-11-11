@@ -7,6 +7,7 @@ using ContractManagement.Infrastructure.Persistence.Application;
 using ContractManagement.Infrastructure.Persistence.Application.Models;
 using ContractManagement.Infrastructure.Persistence.Central;
 using ContractManagement.Infrastructure.Persistence.Central.Entities;
+using ContractManagement.Infrastructure.Persistence.Master;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -42,7 +43,14 @@ public static class DependencyInjection
         var masterConnectionString = ResolveMasterConnectionString(configuration);
         var migrationsAssembly = typeof(DbDtctechContext).Assembly.GetName().Name;
 
-        // 1. CentralDbContext: Luôn kết nối vào MasterDB để tra cứu Tenant, gói dịch vụ SaaS & SystemAdmin
+        // 1. MasterDbContext & CentralDbContext: Kết nối vào MasterDB
+        services.AddDbContext<MasterDbContext>(options =>
+        {
+            options.UseSqlServer(
+                masterConnectionString,
+                sqlOptions => sqlOptions.EnableRetryOnFailure());
+        });
+
         services.AddDbContext<CentralDbContext>(options =>
         {
             options.UseSqlServer(

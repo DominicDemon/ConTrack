@@ -37,9 +37,7 @@ public static class InternalHost
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
         builder.Services.AddScoped<IEmployeeAdmin, EmployeeAdminRepository>();
         builder.Services.AddScoped<ICatalogAdmin, CatalogRepository>();
-        // Ticket workflow from main reads TICKET_* through the application context, here pointed at MASTER (no tenant in Internal mode).
-        builder.Services.AddDbContext<ContractManagement.Infrastructure.Persistence.Application.DbDtctechContext>(o =>
-            o.UseSqlServer(builder.Configuration.GetConnectionString("MasterDatabase"), sql => sql.EnableRetryOnFailure()));
+        // Toàn bộ Internal mode (bao gồm Hợp đồng nháp, Gửi khách xem, Phân quyền, Hỗ trợ khách hàng & SMS Outbox) dùng chung 1 DbContext duy nhất: MasterDbContext.
         builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
         builder.Services.AddScoped<IContractReviewRepository, ContractReviewRepository>();
         builder.Services.AddScoped<ICustomerPortalRepository, CustomerPortalRepository>();

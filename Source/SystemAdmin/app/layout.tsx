@@ -10,7 +10,7 @@ import { SidebarProvider } from "@/components/sidebar-context";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: `Quản trị hệ thống | ${APP_NAME} | Quản lý Hợp đồng`,
+  title: `Không gian làm việc nội bộ | ${APP_NAME} | Quản lý Hợp đồng`,
   description:
     "Nền tảng số hóa, lưu trữ và quản lý hợp đồng doanh nghiệp (Mua, Bán, Phụ lục, Bàn giao).",
   generator: "Next.js",

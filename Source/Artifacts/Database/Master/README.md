@@ -84,6 +84,8 @@ the `CONTRACT_INTERNAL_CHECK` step from the retired `INTERNAL_OFFICE` role to Ba
 `010-demo-template.sql` inserts the demo template `INTERNAL_DEMO_V1` (Hoang's former `--seed-internal` bootstrap content):
 CONTRACT_TEMPLATE plus 18 fields and 3 empty terms in CONTRACT_TEMPLATE_FIELDS (data type `TERM`, label = title,
 extra_options = default content). A template with no stored files is read straight from these rows.
+`011-customer-electronic-signing-otp.sql` (Nhat's branch, formerly `003-customer-electronic-signing-otp.sql`) adds
+CONTRACT_CUSTOMER_OTP_CHALLENGE, the OTP a customer confirms when signing a contract electronically.
 The schema is database first: the application never applies these scripts. Run them manually and
 idempotently (SSMS, or `sqlcmd -I` so QUOTED_IDENTIFIER is on for the filtered indexes).
 Employees, roles, permissions, customers and the `CONTRACT_INTERNAL_CHECK` approval workflow

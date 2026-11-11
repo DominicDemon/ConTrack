@@ -26,7 +26,8 @@ export default function CustomerContracts() {
         : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Hợp đồng</th><th>Phiên bản</th><th>Trạng thái</th><th>Ngày gửi</th><th><span className="sr-only">Mở</span></th></tr></thead>
           <tbody>{rows.map(r => <tr key={r.id}><td><Link href={`/portal/contracts/${r.id}`}>{r.contractName}</Link></td><td>{r.versionNo}</td>
             <td><span className={`${s.badge} ${isOpenReview(r.status) ? s.warning : ""}`}>{customerStatusLabel[r.status] ?? r.status}</span></td>
-            <td className={s.muted}>{dateTime(r.sentAt)}</td><td><Link href={`/portal/contracts/${r.id}`} aria-label={`Mở ${r.contractName}`}><ArrowUpRight size={18}/></Link></td></tr>)}</tbody></table></div>}
+            <td className={s.muted}>{dateTime(r.sentAt)}</td><td><Link href={`/portal/contracts/${r.id}`} aria-label={`Mở ${r.contractName}`}>
+              {r.status === "APPROVED" ? "Theo dõi và ký" : <ArrowUpRight size={18}/>}</Link></td></tr>)}</tbody></table></div>}
     </section>
   </div></>;
 }

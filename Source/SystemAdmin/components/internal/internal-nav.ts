@@ -1,4 +1,6 @@
 import {
+  Activity,
+  Archive,
   Building2,
   Contact,
   FileSignature,
@@ -22,6 +24,9 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Nhân viên & phân quyền", icon: UsersRound, href: "/workspace/admin/employees", permissions: ["employee.manage"] },
   { label: "Phòng ban", icon: Building2, href: "/workspace/admin/departments", permissions: ["department.manage"] },
   { label: "Hợp đồng nháp", icon: Files, href: "/workspace/contracts/drafts", permissions: ["draft.write"] },
+  { label: "Ký phía công ty", icon: FileSignature, href: "/workspace/contracts/company-signing", permissions: ["draft.manage.all"] },
+  { label: "Theo dõi ký", icon: Activity, href: "/workspace/contracts/signing", permissions: ["draft.manage.all"] },
+  { label: "Kho hợp đồng", icon: Archive, href: "/workspace/contracts/archive", permissions: ["draft.manage.all"] },
   { label: "Bản ký giấy", icon: FileSignature, href: "/workspace/signed-contracts", permissions: ["contract.signed_evidence.view"], exclude: "/workspace/signed-contracts/search" },
   { label: "Hợp đồng giấy scan", icon: ScanLine, href: "/workspace/scanned-contracts", permissions: ["contract.scanned.view"] },
   { label: "Tìm hợp đồng", icon: Search, href: "/workspace/signed-contracts/search", permissions: ["contract.signed_evidence.view", "contract.scanned.view"] },

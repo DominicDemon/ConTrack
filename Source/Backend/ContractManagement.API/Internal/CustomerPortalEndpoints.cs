@@ -93,6 +93,19 @@ public static class CustomerPortalEndpoints
             c.Session.Clear(); c.Session.SetString(CustomerKey, id.ToString());
             return Results.Ok(await r.Get(id, ct));
         });
+        api.MapGet("/signing/{reviewId:long}", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.PortalState(Current(c).Id, reviewId, ct)));
+        api.MapPost("/signing/{reviewId:long}/otp/request", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.RequestPortalOtp(Current(c).Id, reviewId, ct)));
+        api.MapPost("/signing/{reviewId:long}/otp/verify", async (long reviewId, CustomerSigningOtpVerification input, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+        { await signing.VerifyPortalOtp(Current(c).Id, reviewId, input, ct); return Results.NoContent(); });
+        api.MapGet("/signing/{reviewId:long}/document", async (long reviewId, string challengeId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.File(await signing.PortalDocument(Current(c).Id, reviewId, challengeId, ct), "application/pdf", "contract-company-signed.pdf"));
+        api.MapGet("/signing/{reviewId:long}/final-document", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.File(await signing.PortalFinalDocument(Current(c).Id, reviewId, ct), "application/pdf", "signed-contract.pdf"));
+        api.MapPost("/signing/{reviewId:long}/sign", async (long reviewId, CustomerSigningRequest input, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.File(await signing.PortalSign(Current(c).Id, reviewId, input, c.Connection.RemoteIpAddress?.ToString(), c.Request.Headers.UserAgent.ToString(), ct),
+                "application/pdf", "signed-contract.pdf"));
         api.MapGet("/reviews", async (HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Reviews(Current(c).Id, ct)));
         api.MapGet("/reviews/{id:long}", async (long id, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Review(Current(c).Id, id, ct)));
         api.MapPost("/reviews/{id:long}/comments", async (long id, CommentInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
@@ -117,6 +130,17 @@ public static class CustomerPortalEndpoints
             var customer = Current(c);
             return await s.AddCustomerMessageAsync(id, 0, "", "", TicketId(customer.Id), customer.Name, input, ct) is { } m ? Results.Ok(m) : throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ.");
         });
+        api.MapGet("/notifications", async (string? status, int? limit, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+        {
+            var (items, unreadCount) = await s.GetCustomerNotificationsAsync(TicketId(Current(c).Id), status ?? "all", Math.Clamp(limit ?? 20, 1, 50), ct);
+            return Results.Ok(new { items, unreadCount });
+        });
+        api.MapGet("/notifications/unread-count", async (HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Results.Ok(new { count = await s.GetCustomerUnreadNotificationCountAsync(TicketId(Current(c).Id), ct) }));
+        api.MapPatch("/notifications/{id:int}/read", async (int id, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            await s.MarkCustomerNotificationReadAsync(TicketId(Current(c).Id), id, ct) ? Results.NoContent() : throw new InternalAppException(404, "Không tìm thấy thông báo."));
+        api.MapPost("/notifications/mark-all-read", async (HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Results.Ok(new { changed = await s.MarkAllCustomerNotificationsReadAsync(TicketId(Current(c).Id), ct) }));
 
         // eSMS delivery report: outside the session/CSRF groups, accepted only from the provider's IPs.
         app.MapGet("/api/sms/esms/callback", async (HttpContext c, SmsCallbackProcessor processor, IOptions<EsmsOptions> options, ILogger<SmsCallbackProcessor> logger) =>

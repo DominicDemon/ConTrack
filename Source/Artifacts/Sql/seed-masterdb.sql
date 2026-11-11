@@ -7,6 +7,8 @@
 USE [MasterDB];
 GO
 
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
@@ -299,18 +301,22 @@ BEGIN
     INSERT INTO [CUSTOMER] (
         [customer_id], [customer_email], [customer_personal_phone], [customer_password_hash],
         [customer_display_name], [customer_personal_tax_identifier], [customer_status],
-        [customer_dob], [customer_gender], [customer_address], [created_at], [created_by]
+        [customer_dob], [customer_gender], [customer_address],
+        [customer_email_verified_at], [customer_personal_phone_verified_at],
+        [created_at], [created_by]
     )
     VALUES
-        (1, 'contact@abc-corp.vn',   '0912345001', @DefaultPasswordHash, N'Công ty Cổ phần Công nghệ ABC',     '0101234567', 1, '1988-04-12', 'MALE',   N'Tầng 12, Tòa nhà Keangnam, Nam Từ Liêm, Hà Nội', @Now, @EmpSysId),
-        (2, 'info@minhphat-group.vn','0912345002', @DefaultPasswordHash, N'Công ty TNHH Thương mại Minh Phát', '0309876543', 1, '1991-09-25', 'FEMALE', N'Số 45 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh',     @Now, @EmpSysId),
-        (3, 'support@vietstar.vn',   '0912345003', @DefaultPasswordHash, N'Tập đoàn Đầu tư Sao Việt',          '0105556668', 1, '1985-12-01', 'MALE',   N'Số 88 Láng Hạ, Đống Đa, Hà Nội',                @Now, @EmpSysId);
+        (1, 'contact@abc-corp.vn',   '0912345001', @DefaultPasswordHash, N'Công ty Cổ phần Công nghệ ABC',     '0101234567', 1, '1988-04-12', 'MALE',   N'Tầng 12, Tòa nhà Keangnam, Nam Từ Liêm, Hà Nội', @Now, @Now, @Now, @EmpSysId),
+        (2, 'info@minhphat-group.vn','0912345002', @DefaultPasswordHash, N'Công ty TNHH Thương mại Minh Phát', '0309876543', 1, '1991-09-25', 'FEMALE', N'Số 45 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh',     @Now, @Now, @Now, @EmpSysId),
+        (3, 'support@vietstar.vn',   '0912345003', @DefaultPasswordHash, N'Tập đoàn Đầu tư Sao Việt',          '0105556668', 1, '1985-12-01', 'MALE',   N'Số 88 Láng Hạ, Đống Đa, Hà Nội',                @Now, @Now, @Now, @EmpSysId);
     SET IDENTITY_INSERT [CUSTOMER] OFF;
 END
 ELSE
 BEGIN
     UPDATE [CUSTOMER]
     SET [customer_password_hash] = @DefaultPasswordHash,
+        [customer_personal_phone_verified_at] = ISNULL([customer_personal_phone_verified_at], @Now),
+        [customer_email_verified_at] = ISNULL([customer_email_verified_at], @Now),
         [customer_status] = 1
     WHERE [customer_email] IN ('contact@abc-corp.vn', 'info@minhphat-group.vn', 'support@vietstar.vn')
        OR [customer_password_hash] IS NULL;
@@ -541,7 +547,8 @@ END;
 COMMIT TRANSACTION;
 GO
 
--- Kiểm tra danh sách tài khoản EMPLOYEE và TENANT sau khi seed
+-- Kiểm tra danh sách tài khoản EMPLOYEE, CUSTOMER và TENANT sau khi seed
 SELECT [employee_id], [employee_code], [employee_username], [employee_email], [employee_display_name], [employee_status] FROM [EMPLOYEE];
+SELECT [customer_id], [customer_display_name], [customer_personal_phone], [customer_email], [customer_status], [customer_personal_phone_verified_at] FROM [CUSTOMER];
 SELECT [tenant_id], [tenant_code], [tenant_name], [tenant_status] FROM [TENANT];
 GO

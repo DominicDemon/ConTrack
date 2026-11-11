@@ -128,6 +128,25 @@ public interface ISupportTicketService
         int currentEmployeeId,
         CancellationToken cancellationToken = default);
 
+    Task<(IReadOnlyList<CustomerNotificationDto> Items, int UnreadCount)> GetCustomerNotificationsAsync(
+        int customerId,
+        string? status,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<int> GetCustomerUnreadNotificationCountAsync(
+        int customerId,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> MarkCustomerNotificationReadAsync(
+        int customerId,
+        int notificationId,
+        CancellationToken cancellationToken = default);
+
+    Task<int> MarkAllCustomerNotificationsReadAsync(
+        int customerId,
+        CancellationToken cancellationToken = default);
+
     Task<(string Role, int? DepartmentId, string? DepartmentName)> ResolveEmployeeRoleInfoAsync(
         int employeeId,
         CancellationToken cancellationToken = default);
@@ -143,6 +162,7 @@ public sealed class SupportTicketStoreState
     public int NextNotificationId { get; set; } = 100;
     public List<SupportTicketDto> Tickets { get; set; } = [];
     public List<AdminNotificationDto> AdminNotifications { get; set; } = [];
+    public List<CustomerNotificationDto> CustomerNotifications { get; set; } = [];
 }
 
 public sealed class SupportTicketService : ISupportTicketService
@@ -351,6 +371,8 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         // employeeId ở luồng khách là CUSTOMER.customer_id của người gửi; không có khách thì không ghi thay cho khách 1.
         if (employeeId <= 0) throw new ArgumentException("Thiếu khách hàng gửi yêu cầu hỗ trợ.");
+        SupportTicketDto createdTicket;
+        Employee? head = null;
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
@@ -363,7 +385,6 @@ public sealed class SupportTicketService : ISupportTicketService
                 ? request.ServiceName.Trim()
                 : request.Module?.Trim();
             Department? dept = null;
-            Employee? head = null;
             var ticketCode = $"TK-{DateTime.UtcNow:yyyyMMdd}-{Random.Shared.Next(1000, 9999)}";
             int? persistedTicketId = null;
 
@@ -372,6 +393,18 @@ public sealed class SupportTicketService : ISupportTicketService
                 var db = scope.ServiceProvider.GetService<MasterDbContext>();
                 if (db != null)
                 {
+                    if (string.IsNullOrWhiteSpace(tenantName) || string.IsNullOrWhiteSpace(tenantCode))
+                    {
+                        var customer = await db.Customers.AsNoTracking()
+                            .FirstOrDefaultAsync(c => c.CustomerId == employeeId, cancellationToken);
+                        if (customer != null)
+                        {
+                            if (string.IsNullOrWhiteSpace(tenantName))
+                                tenantName = customer.CustomerDisplayName ?? senderName;
+                            if (string.IsNullOrWhiteSpace(tenantCode))
+                                tenantCode = customer.CustomerPersonalPhone ?? string.Empty;
+                        }
+                    }
 
                     if (resolvedServiceId.HasValue && resolvedServiceId.Value > 0 && string.IsNullOrWhiteSpace(resolvedServiceName))
                     {
@@ -572,16 +605,16 @@ public sealed class SupportTicketService : ISupportTicketService
             state.AdminNotifications.Insert(0, notification);
 
             await SaveStateAsync(state, cancellationToken);
-
-            // Gửi email thông báo CHỈ cho Trưởng phòng của phòng ban đó
-            _ = SendNewTicketNotificationAsync(ticket, senderName, head);
-
-            return CloneTicketWithViewer(ticket, "CUSTOMER", employeeId, null);
+            createdTicket = ticket;
         }
         finally
         {
             StoreLock.Release();
         }
+
+        // Gửi email thông báo cho Trưởng phòng của phòng ban tiếp nhận (ngoài lock để không nghẽn xử lý khác)
+        await SendNewTicketNotificationAsync(createdTicket, senderName, head);
+        return CloneTicketWithViewer(createdTicket, "CUSTOMER", employeeId, null);
     }
 
     public async Task<IReadOnlyList<DepartmentEmployeeDto>> GetDepartmentStaffAsync(
@@ -663,10 +696,19 @@ public sealed class SupportTicketService : ISupportTicketService
         AssignTicketToStaffRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        SupportTicketDto? assignedTicket = null;
+        Employee? assignedStaff = null;
+        bool shouldEmailStaff = false;
+        string? assignmentNote = request.Note;
+        string roleForViewer = "STAFF";
+        int? deptForViewer = null;
+
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
             var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            roleForViewer = roleInfo.Role;
+            deptForViewer = roleInfo.DepartmentId;
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetService<MasterDbContext>();
 
@@ -817,19 +859,22 @@ public sealed class SupportTicketService : ISupportTicketService
                 }
 
                 await SaveStateAsync(state, cancellationToken);
+                assignedTicket = ticket;
+                assignedStaff = staff;
+                shouldEmailStaff = !isSelfAssign && staff != null;
             }
-
-            if (!isSelfAssign && staff != null && ticket != null)
-            {
-                _ = SendStaffAssignmentNotificationAsync(ticket, staff, currentEmployeeName, request.Note);
-            }
-
-            return ticket is null ? null : CloneTicketWithViewer(ticket, roleInfo.Role, currentEmployeeId, roleInfo.DepartmentId);
         }
         finally
         {
             StoreLock.Release();
         }
+
+        if (shouldEmailStaff && assignedTicket != null && assignedStaff != null)
+        {
+            await SendStaffAssignmentNotificationAsync(assignedTicket, assignedStaff, currentEmployeeName, assignmentNote);
+        }
+
+        return assignedTicket is null ? null : CloneTicketWithViewer(assignedTicket, roleForViewer, currentEmployeeId, deptForViewer);
     }
 
     public async Task<SupportTicketDto?> StaffCompleteAsync(
@@ -942,11 +987,18 @@ public sealed class SupportTicketService : ISupportTicketService
         HeadResolveTicketRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        SupportTicketDto? resolvedTicket = null;
+        string? noticeToEmail = null;
+        string roleForViewer = "STAFF";
+        int? deptForViewer = null;
+
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
             var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
             if (roleInfo.Role == "SYSADMIN") return null;
+            roleForViewer = roleInfo.Role;
+            deptForViewer = roleInfo.DepartmentId;
 
             var roleLabel = roleInfo.Role == "DEPARTMENT_HEAD" ? "Trưởng phòng" : "Nhân viên phụ trách";
             var targetStatus = request.CloseTicket ? "Resolved" : "In_Progress";
@@ -1046,18 +1098,29 @@ public sealed class SupportTicketService : ISupportTicketService
 
                 state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
                 state.Tickets.Insert(0, ticket);
+
+                var notifTitle = request.CloseTicket
+                    ? $"Có kết quả xử lý yêu cầu [{ticket.TicketCode}]"
+                    : $"Trưởng phòng cập nhật kết quả [{ticket.TicketCode}]";
+                var notifBody = $"{currentEmployeeName} ({ticket.Department}): {TruncatePreview(customerNotice, 160)}";
+                AddCustomerNotification(state, ticket, notifTitle, notifBody, request.CloseTicket ? "ticket-resolved" : "ticket-updated");
+
                 await SaveStateAsync(state, cancellationToken);
-
-                // Gửi email thông báo kết quả giải quyết cho khách hàng
-                _ = SendResolutionNoticeToCustomerAsync(ticket, customerNotice);
+                resolvedTicket = ticket;
+                noticeToEmail = customerNotice;
             }
-
-            return ticket is null ? null : CloneTicketWithViewer(ticket, roleInfo.Role, currentEmployeeId, roleInfo.DepartmentId);
         }
         finally
         {
             StoreLock.Release();
         }
+
+        if (resolvedTicket != null && !string.IsNullOrWhiteSpace(noticeToEmail))
+        {
+            await SendResolutionNoticeToCustomerAsync(resolvedTicket, noticeToEmail, currentEmployeeName, request.CloseTicket);
+        }
+
+        return resolvedTicket is null ? null : CloneTicketWithViewer(resolvedTicket, roleForViewer, currentEmployeeId, deptForViewer);
     }
 
     public async Task<SupportTicketMessageDto?> AddCustomerMessageAsync(
@@ -1072,6 +1135,9 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         // employeeId ở luồng khách là CUSTOMER.customer_id của người gửi; không có khách thì không ghi thay cho khách 1.
         if (employeeId <= 0) throw new ArgumentException("Thiếu khách hàng gửi tin nhắn.");
+        SupportTicketDto? updatedTicket = null;
+        SupportTicketMessageDto? createdMsg = null;
+
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
@@ -1180,14 +1246,20 @@ public sealed class SupportTicketService : ISupportTicketService
             });
 
             await SaveStateAsync(state, cancellationToken);
-            _ = SendCustomerReplyEmailsSafeAsync(ticket, msg);
-
-            return msg;
+            updatedTicket = ticket;
+            createdMsg = msg;
         }
         finally
         {
             StoreLock.Release();
         }
+
+        if (updatedTicket != null && createdMsg != null)
+        {
+            await SendCustomerReplyEmailsSafeAsync(updatedTicket, createdMsg);
+        }
+
+        return createdMsg;
     }
 
     public async Task<SupportTicketMessageDto?> AddStaffMessageAsync(
@@ -1200,6 +1272,9 @@ public sealed class SupportTicketService : ISupportTicketService
         string? attachmentName = null,
         CancellationToken cancellationToken = default)
     {
+        SupportTicketDto? updatedTicket = null;
+        SupportTicketMessageDto? createdMsg = null;
+
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
@@ -1288,13 +1363,31 @@ public sealed class SupportTicketService : ISupportTicketService
             state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
             state.Tickets.Insert(0, ticket);
 
+            if (!isInternalNote)
+            {
+                AddCustomerNotification(
+                    state,
+                    ticket,
+                    $"Phản hồi mới cho yêu cầu [{ticket.TicketCode}]",
+                    $"{employeeName} ({ticket.Department}): {TruncatePreview(normalizedContent, 160)}",
+                    "admin-replied-ticket");
+            }
+
             await SaveStateAsync(state, cancellationToken);
-            return msg;
+            updatedTicket = ticket;
+            createdMsg = msg;
         }
         finally
         {
             StoreLock.Release();
         }
+
+        if (!isInternalNote && updatedTicket != null && createdMsg != null)
+        {
+            await SendResolutionNoticeToCustomerAsync(updatedTicket, createdMsg.TicketMessageContent, employeeName, isClosed: false);
+        }
+
+        return createdMsg;
     }
 
     public async Task<SupportTicketMessageDto?> AddAdminMessageAsync(
@@ -1329,11 +1422,19 @@ public sealed class SupportTicketService : ISupportTicketService
         UpdateTicketStatusRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        SupportTicketDto? updatedTicket = null;
+        bool shouldNotifyCustomer = false;
+        string? resolutionNotice = null;
+        string roleForViewer = "STAFF";
+        int? deptForViewer = null;
+
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
             var roleInfo = await ResolveEmployeeRoleInfoAsync(systemAdminId, cancellationToken);
             if (roleInfo.Role == "SYSADMIN") return null;
+            roleForViewer = roleInfo.Role;
+            deptForViewer = roleInfo.DepartmentId;
 
             var normalizedStatus = NormalizeStatus(request.Status);
 
@@ -1345,6 +1446,7 @@ public sealed class SupportTicketService : ISupportTicketService
             {
                 return null;
             }
+            var wasResolved = string.Equals(ticket.TicketStatus, "Resolved", StringComparison.OrdinalIgnoreCase);
 
             using (var scope = _scopeFactory.CreateScope())
             {
@@ -1388,16 +1490,37 @@ public sealed class SupportTicketService : ISupportTicketService
             {
                 ticket.TicketResolvedAt = DateTime.UtcNow;
                 ticket.TicketClosedAt = DateTime.UtcNow;
+                if (!wasResolved)
+                {
+                    var notice = string.IsNullOrWhiteSpace(request.Resolution)
+                        ? "Yêu cầu hỗ trợ của bạn đã được xử lý hoàn tất."
+                        : request.Resolution.Trim();
+                    AddCustomerNotification(
+                        state,
+                        ticket,
+                        $"Có kết quả xử lý yêu cầu [{ticket.TicketCode}]",
+                        $"{adminFullName} ({ticket.Department}): {TruncatePreview(notice, 160)}",
+                        "ticket-resolved");
+                    shouldNotifyCustomer = true;
+                    resolutionNotice = notice;
+                }
             }
             ticket.UpdatedAt = DateTime.UtcNow;
 
             await SaveStateAsync(state, cancellationToken);
-            return CloneTicketWithViewer(ticket, roleInfo.Role, systemAdminId, roleInfo.DepartmentId);
+            updatedTicket = ticket;
         }
         finally
         {
             StoreLock.Release();
         }
+
+        if (shouldNotifyCustomer && updatedTicket != null && !string.IsNullOrWhiteSpace(resolutionNotice))
+        {
+            await SendResolutionNoticeToCustomerAsync(updatedTicket, resolutionNotice, adminFullName, isClosed: true);
+        }
+
+        return updatedTicket is null ? null : CloneTicketWithViewer(updatedTicket, roleForViewer, systemAdminId, deptForViewer);
     }
 
     public async Task<(IReadOnlyList<AdminNotificationDto> Items, int UnreadCount)> GetAdminNotificationsAsync(
@@ -1506,6 +1629,137 @@ public sealed class SupportTicketService : ISupportTicketService
         {
             StoreLock.Release();
         }
+    }
+
+    public async Task<(IReadOnlyList<CustomerNotificationDto> Items, int UnreadCount)> GetCustomerNotificationsAsync(
+        int customerId,
+        string? status,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        if (customerId <= 0) return ([], 0);
+        await StoreLock.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var scopedList = state.CustomerNotifications
+                .Where(n => n.CustomerId == customerId)
+                .OrderByDescending(n => n.CreatedAtUtc)
+                .ToList();
+
+            IEnumerable<CustomerNotificationDto> query = scopedList;
+            if (string.Equals(status, "unread", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(n => n.ReadAtUtc == null);
+            }
+            else if (string.Equals(status, "read", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(n => n.ReadAtUtc != null);
+            }
+
+            var unreadCount = scopedList.Count(n => n.ReadAtUtc == null);
+            var items = query.Take(Math.Clamp(limit, 1, 100)).ToList();
+            return (items, unreadCount);
+        }
+        finally
+        {
+            StoreLock.Release();
+        }
+    }
+
+    public async Task<int> GetCustomerUnreadNotificationCountAsync(int customerId, CancellationToken cancellationToken = default)
+    {
+        if (customerId <= 0) return 0;
+        await StoreLock.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            return state.CustomerNotifications.Count(n => n.CustomerId == customerId && n.ReadAtUtc == null);
+        }
+        finally
+        {
+            StoreLock.Release();
+        }
+    }
+
+    public async Task<bool> MarkCustomerNotificationReadAsync(int customerId, int notificationId, CancellationToken cancellationToken = default)
+    {
+        if (customerId <= 0) return false;
+        await StoreLock.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var notif = state.CustomerNotifications.FirstOrDefault(n => n.CustomerId == customerId && n.NotificationId == notificationId);
+            if (notif is null) return false;
+
+            if (notif.ReadAtUtc is null)
+            {
+                notif.ReadAtUtc = DateTime.UtcNow;
+                await SaveStateAsync(state, cancellationToken);
+            }
+            return true;
+        }
+        finally
+        {
+            StoreLock.Release();
+        }
+    }
+
+    public async Task<int> MarkAllCustomerNotificationsReadAsync(int customerId, CancellationToken cancellationToken = default)
+    {
+        if (customerId <= 0) return 0;
+        await StoreLock.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var count = 0;
+            foreach (var n in state.CustomerNotifications.Where(n => n.CustomerId == customerId && n.ReadAtUtc == null))
+            {
+                n.ReadAtUtc = DateTime.UtcNow;
+                count++;
+            }
+            if (count > 0)
+            {
+                await SaveStateAsync(state, cancellationToken);
+            }
+            return count;
+        }
+        finally
+        {
+            StoreLock.Release();
+        }
+    }
+
+    private static void AddCustomerNotification(
+        SupportTicketStoreState state,
+        SupportTicketDto ticket,
+        string title,
+        string body,
+        string actionKey)
+    {
+        var customerId = ticket.CustomerId ?? ticket.CreatedByEmployeeId ?? 0;
+        if (customerId <= 0) return;
+
+        state.CustomerNotifications.Insert(0, new CustomerNotificationDto
+        {
+            NotificationId = state.NextNotificationId++,
+            CustomerId = customerId,
+            SubjectType = "SupportTicket",
+            SubjectId = ticket.TicketSupportId,
+            TicketCode = ticket.TicketCode,
+            Department = ticket.Department,
+            Priority = ticket.TicketPriority,
+            Title = title,
+            Body = body,
+            ActionKey = actionKey,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+    }
+
+    private static string TruncatePreview(string text, int maxLength)
+    {
+        var trimmed = (text ?? string.Empty).Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength] + "…";
     }
 
     public async Task<(string Role, int? DepartmentId, string? DepartmentName)> ResolveEmployeeRoleInfoAsync(
@@ -2419,25 +2673,34 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         try
         {
-            // Chỉ gửi thông báo cho Trưởng phòng của phòng ban được khách hàng chọn (không gửi cho sysadmin)
-            if (head == null || !SmtpEmailOptions.IsEmailAddress(head.EmployeeEmail))
+            // Chỉ gửi thông báo cho Trưởng phòng của phòng ban được khách hàng chọn (fallback HandlerEmail nếu trưởng phòng chưa có email hợp lệ)
+            var recipient = head != null && SmtpEmailOptions.IsEmailAddress(head.EmployeeEmail)
+                ? head.EmployeeEmail!
+                : _configuration["SupportTicket:HandlerEmail"];
+
+            if (!SmtpEmailOptions.IsEmailAddress(recipient))
             {
+                _logger.LogWarning("Bỏ qua gửi email ticket mới {Code}: Trưởng phòng (#{HeadId}) chưa có email hợp lệ.", ticket.TicketCode, head?.EmployeeId);
                 return;
             }
 
+            var attachmentSummary = ticket.AttachmentNames.Count > 0
+                ? string.Join(", ", ticket.AttachmentNames)
+                : "Không có tệp đính kèm";
             var systemAdminUrl = BuildSystemAdminTicketUrl(ticket.TicketSupportId);
             var emailMsg = SupportTicketEmailTemplate.BuildNewTicketEmail(
-                head.EmployeeEmail!,
+                recipient!,
                 ticket,
                 senderName,
-                "Không có tệp đính kèm",
+                attachmentSummary,
                 systemAdminUrl);
 
             await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
+            _logger.LogInformation("Đã gửi email thông báo ticket mới {Code} tới Trưởng phòng ({Recipient}).", ticket.TicketCode, recipient);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Lỗi khi xử lý gửi email thông báo ticket mới {Code} tới Trưởng phòng.", ticket.TicketCode);
+            _logger.LogWarning(ex, "Lỗi khi gửi email thông báo ticket mới {Code} tới Trưởng phòng.", ticket.TicketCode);
         }
     }
 
@@ -2445,66 +2708,71 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         try
         {
-            if (staff.EmployeeEmail != null && SmtpEmailOptions.IsEmailAddress(staff.EmployeeEmail))
+            if (!SmtpEmailOptions.IsEmailAddress(staff.EmployeeEmail))
             {
-                var subject = $"[ConTrack Support] Bạn được phân công xử lý Ticket {ticket.TicketCode}";
-                var textBody = $"Trưởng phòng {headName} đã phân công bạn xử lý Ticket {ticket.TicketCode}: {ticket.TicketSubject}";
-                var htmlBody = $@"<div style='font-family: Arial, sans-serif; padding: 20px;'>
-                        <h2>Phân công công việc hỗ trợ</h2>
-                        <p>Xin chào <strong>{staff.EmployeeDisplayName}</strong>,</p>
-                        <p>Trưởng phòng <strong>{headName}</strong> đã phân công bạn xử lý Ticket hỗ trợ sau:</p>
-                        <ul>
-                            <li><strong>Mã Ticket:</strong> {ticket.TicketCode}</li>
-                            <li><strong>Tiêu đề:</strong> {ticket.TicketSubject}</li>
-                            <li><strong>Khách hàng:</strong> {ticket.CreatedByName} ({ticket.TenantName})</li>
-                            <li><strong>Mức độ ưu tiên:</strong> {ticket.TicketPriority}</li>
-                            <li><strong>Ghi chú phân công:</strong> {note ?? "Không có"}</li>
-                        </ul>
-                        <p>Vui lòng đăng nhập vào hệ thống để tiếp nhận và xử lý.</p>
-                    </div>";
-                var emailMsg = new EmailMessage(staff.EmployeeEmail, subject, textBody, htmlBody);
-                await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
+                _logger.LogWarning("Bỏ qua gửi email phân công ticket {Code}: Nhân viên #{EmpId} chưa có email hợp lệ.", ticket.TicketCode, staff.EmployeeId);
+                return;
             }
+
+            var systemAdminUrl = BuildSystemAdminTicketUrl(ticket.TicketSupportId);
+            var emailMsg = SupportTicketEmailTemplate.BuildStaffAssignmentEmail(
+                staff.EmployeeEmail!,
+                ticket,
+                staff.EmployeeDisplayName ?? staff.EmployeeUsername ?? "Nhân viên",
+                headName,
+                note,
+                systemAdminUrl);
+
+            await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
+            _logger.LogInformation("Đã gửi email phân công ticket {Code} tới nhân viên #{EmpId} ({Recipient}).", ticket.TicketCode, staff.EmployeeId, staff.EmployeeEmail);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Không thể gửi email phân công cho nhân viên {EmpId}.", staff.EmployeeId);
+            _logger.LogWarning(ex, "Không thể gửi email phân công ticket {Code} cho nhân viên {EmpId}.", ticket.TicketCode, staff.EmployeeId);
         }
     }
 
-    private async Task SendResolutionNoticeToCustomerAsync(SupportTicketDto ticket, string resolutionNotice)
+    private async Task SendResolutionNoticeToCustomerAsync(SupportTicketDto ticket, string resolutionNotice, string senderName, bool isClosed)
     {
         try
         {
-            // The ticket's own customer first; the configured address stays as main's fallback.
             string? customerEmail = null;
-            if (ticket.CustomerId is { } customerId)
+            if (ticket.CustomerId is { } customerId && customerId > 0)
             {
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetService<MasterDbContext>();
                 if (db != null)
-                    customerEmail = await db.Customers.AsNoTracking().Where(c => c.CustomerId == customerId).Select(c => c.CustomerEmail).FirstOrDefaultAsync();
+                {
+                    customerEmail = await db.Customers.AsNoTracking()
+                        .Where(c => c.CustomerId == customerId)
+                        .Select(c => c.CustomerEmail)
+                        .FirstOrDefaultAsync();
+                }
             }
-            if (!SmtpEmailOptions.IsEmailAddress(customerEmail)) customerEmail = _configuration["SupportTicket:CustomerNotificationEmail"];
-            if (string.IsNullOrWhiteSpace(customerEmail)) return;
+            if (!SmtpEmailOptions.IsEmailAddress(customerEmail))
+            {
+                customerEmail = _configuration["SupportTicket:CustomerNotificationEmail"];
+            }
+            if (!SmtpEmailOptions.IsEmailAddress(customerEmail))
+            {
+                _logger.LogWarning("Bỏ qua gửi email kết quả ticket {Code} cho khách hàng #{CustomerId}: chưa có email hợp lệ.", ticket.TicketCode, ticket.CustomerId);
+                return;
+            }
 
-            var subject = $"[ConTrack Support] Yêu cầu hỗ trợ {ticket.TicketCode} đã được giải quyết";
-            var textBody = $"Yêu cầu hỗ trợ {ticket.TicketCode} của bạn đã được giải quyết: {resolutionNotice}";
-            var htmlBody = $@"<div style='font-family: Arial, sans-serif; padding: 20px;'>
-                    <h2>Thông báo kết quả xử lý yêu cầu hỗ trợ</h2>
-                    <p>Xin chào <strong>{ticket.CreatedByName}</strong>,</p>
-                    <p>Yêu cầu hỗ trợ <strong>{ticket.TicketCode}</strong> của bạn đã được xử lý:</p>
-                    <div style='background: #f4f8fa; padding: 15px; border-left: 4px solid #0284c7; margin: 15px 0;'>
-                        {resolutionNotice}
-                    </div>
-                    <p>Nếu bạn có thêm câu hỏi, bạn có thể tiếp tục trao đổi trên hệ thống.</p>
-                </div>";
-            var emailMsg = new EmailMessage(customerEmail, subject, textBody, htmlBody);
+            var portalUrl = BuildCustomerPortalTicketUrl(ticket.TicketSupportId);
+            var emailMsg = SupportTicketEmailTemplate.BuildResolutionNoticeEmail(
+                customerEmail!,
+                ticket,
+                resolutionNotice,
+                senderName,
+                portalUrl,
+                isClosed);
             await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
+            _logger.LogInformation("Đã gửi email kết quả/phản hồi ticket {Code} tới khách hàng ({Recipient}).", ticket.TicketCode, customerEmail);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Không thể gửi email thông báo kết quả cho khách hàng.");
+            _logger.LogWarning(ex, "Không thể gửi email thông báo kết quả ticket {Code} cho khách hàng.", ticket.TicketCode);
         }
     }
 
@@ -2526,6 +2794,7 @@ public sealed class SupportTicketService : ISupportTicketService
             var systemAdminUrl = BuildSystemAdminTicketUrl(ticket.TicketSupportId);
             var emailMsg = SupportTicketEmailTemplate.BuildCustomerReplyEmail(emp.EmployeeEmail, ticket, message, systemAdminUrl);
             await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
+            _logger.LogInformation("Đã gửi email phản hồi từ khách hàng cho ticket {Code} tới {Recipient}.", ticket.TicketCode, emp.EmployeeEmail);
         }
         catch (Exception ex)
         {
@@ -2541,5 +2810,14 @@ public sealed class SupportTicketService : ISupportTicketService
 
         // 3001 now serves tickets inside the internal workspace; the old /support-tickets page used the legacy API.
         return $"{baseUrl.TrimEnd('/')}/workspace/support-tickets/{ticketSupportId}";
+    }
+
+    private string BuildCustomerPortalTicketUrl(int ticketSupportId)
+    {
+        var baseUrl = _configuration["SupportTicket:CustomerPortalBaseUrl"]
+            ?? _configuration["AccountRecovery:TenantFrontendBaseUrl"]
+            ?? "http://localhost:3000";
+
+        return $"{baseUrl.TrimEnd('/')}/portal/support/{ticketSupportId}";
     }
 }

@@ -116,6 +116,22 @@ public sealed class AdminNotificationDto
     public DateTime? ReadAtUtc { get; set; }
 }
 
+public sealed class CustomerNotificationDto
+{
+    public int NotificationId { get; set; }
+    public int CustomerId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
+    public string SubjectType { get; set; } = "SupportTicket";
+    public int SubjectId { get; set; }
+    public string TicketCode { get; set; } = string.Empty;
+    public string Department { get; set; } = string.Empty;
+    public string Priority { get; set; } = "Medium";
+    public string ActionKey { get; set; } = "ticket-resolved";
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime? ReadAtUtc { get; set; }
+}
+
 public sealed class CreateSupportTicketRequestDto
 {
     public string? TicketSubject { get; set; }

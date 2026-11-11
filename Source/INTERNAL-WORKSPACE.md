@@ -15,7 +15,7 @@ API mặc định `ApplicationMode=Internal`, dùng riêng `ConnectionStrings:Ma
 biến `ConnectionStrings__MasterDatabase` và `ApplicationMode`.
 
 Database là nguồn schema (database first); app không tự tạo bảng hay dữ liệu. Trước khi chạy,
-database MASTER phải có đủ schema (gồm `Artifacts/Database/Master/001`–`010`), tài khoản
+database MASTER phải có đủ schema (gồm `Artifacts/Database/Master/001`–`011`), tài khoản
 và quy trình duyệt `CONTRACT_INTERNAL_CHECK`, tất cả tạo trực tiếp bằng SQL.
 
 Từ thư mục `Source`:

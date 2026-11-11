@@ -52,6 +52,8 @@ public static class SupportTicketEmailTemplate
             subject: subject,
             bannerTitle: "YÊU CẦU HỖ TRỢ KHÁCH HÀNG MỚI",
             bannerSubtitle: $"Mã Ticket: #{ticket.TicketCode} • Mức độ ưu tiên: {priorityLabel}",
+            greetingHtml: $"Xin chào <strong>Người xử lý hỗ trợ ({ApplicationBranding.HtmlName} Admin)</strong>,",
+            introHtml: "Hệ thống vừa ghi nhận thông tin yêu cầu hỗ trợ từ khách hàng cần bạn kiểm tra và phân công xử lý:",
             ticket: ticket,
             senderDisplayName: senderDisplayName,
             messageTitle: "Nội dung mô tả sự cố / yêu cầu hỗ trợ",
@@ -59,7 +61,9 @@ public static class SupportTicketEmailTemplate
             attachmentSummary: attachmentSummary,
             vnTime: vnTime,
             utcTime: utcTime,
-            systemAdminTicketUrl: systemAdminTicketUrl);
+            ctaText: "Mở Bàn Làm Việc Xử Lý Ticket",
+            ctaUrl: systemAdminTicketUrl,
+            footerNote: $"Email này được gửi tự động từ hệ thống <strong>{ApplicationBranding.HtmlName}</strong> khi khách hàng gửi yêu cầu hỗ trợ.");
 
         return new EmailMessage(recipient, subject, textBody, htmlBody, LogoContentId);
     }
@@ -104,6 +108,8 @@ public static class SupportTicketEmailTemplate
             subject: subject,
             bannerTitle: "PHẢN HỒI MỚI TỪ KHÁCH HÀNG",
             bannerSubtitle: $"Mã Ticket: #{ticket.TicketCode} • {ticket.TenantName}",
+            greetingHtml: $"Xin chào <strong>Người xử lý hỗ trợ ({ApplicationBranding.HtmlName} Admin)</strong>,",
+            introHtml: "Khách hàng vừa gửi phản hồi mới cho yêu cầu hỗ trợ bạn đang phụ trách:",
             ticket: ticket,
             senderDisplayName: message.SenderName,
             messageTitle: "Nội dung phản hồi mới từ khách hàng",
@@ -111,7 +117,132 @@ public static class SupportTicketEmailTemplate
             attachmentSummary: message.TicketMessageAttachmentName,
             vnTime: vnTime,
             utcTime: utcTime,
-            systemAdminTicketUrl: systemAdminTicketUrl);
+            ctaText: "Mở Bàn Làm Việc Xử Lý Ticket",
+            ctaUrl: systemAdminTicketUrl,
+            footerNote: $"Email này được gửi tự động từ hệ thống <strong>{ApplicationBranding.HtmlName}</strong> khi khách hàng gửi phản hồi hỗ trợ.");
+
+        return new EmailMessage(recipient, subject, textBody, htmlBody, LogoContentId);
+    }
+
+    public static EmailMessage BuildStaffAssignmentEmail(
+        string recipient,
+        SupportTicketDto ticket,
+        string staffDisplayName,
+        string headName,
+        string? note,
+        string systemAdminTicketUrl)
+    {
+        var priorityLabel = GetPriorityLabel(ticket.TicketPriority);
+        var subject = $"[{ApplicationBranding.Name} Support] Bạn được phân công xử lý Ticket {ticket.TicketCode} ({priorityLabel})";
+        var (vnTime, utcTime) = FormatTimestamps(DateTime.UtcNow);
+        var safeNote = string.IsNullOrWhiteSpace(note) ? "Vui lòng tiếp nhận và xử lý yêu cầu hỗ trợ của khách hàng." : note.Trim();
+        var customerLabel = string.IsNullOrWhiteSpace(ticket.TenantName) ? (ticket.CreatedByName ?? "Khách hàng") : $"{ticket.CreatedByName} ({ticket.TenantName})";
+
+        var textBody = $"""
+            THÔNG BÁO PHÂN CÔNG XỬ LÝ YÊU CẦU HỖ TRỢ
+            Hệ thống Quản lý & Số hóa Hợp đồng Điện tử {ApplicationBranding.Name}
+
+            Xin chào {staffDisplayName},
+
+            Trưởng phòng {headName} vừa phân công bạn xử lý Ticket hỗ trợ #{ticket.TicketCode}:
+
+            - Mã Ticket: {ticket.TicketCode}
+            - Tiêu đề: {ticket.TicketSubject}
+            - Khách hàng: {customerLabel}
+            - Phòng ban: {ticket.Department}
+            - Mức độ ưu tiên: {priorityLabel}
+            - Thời gian phân công: {vnTime} GMT+7 ({utcTime} UTC)
+
+            Nội dung chỉ đạo / Ghi chú:
+            {safeNote}
+
+            Vui lòng truy cập trang Quản trị Hỗ trợ để tiếp nhận và xử lý:
+            {systemAdminTicketUrl}
+
+            Trân trọng,
+            Hệ thống Thông báo Tự động {ApplicationBranding.Name}
+            """;
+
+        var htmlBody = BuildHtmlLayout(
+            subject: subject,
+            bannerTitle: "PHÂN CÔNG XỬ LÝ TICKET HỖ TRỢ",
+            bannerSubtitle: $"Mã Ticket: #{ticket.TicketCode} • Mức độ ưu tiên: {priorityLabel}",
+            greetingHtml: $"Xin chào <strong>{WebUtility.HtmlEncode(staffDisplayName)}</strong>,",
+            introHtml: $"Trưởng phòng <strong>{WebUtility.HtmlEncode(headName)}</strong> đã phân công bạn tiếp nhận và xử lý yêu cầu hỗ trợ sau:",
+            ticket: ticket,
+            senderDisplayName: customerLabel,
+            messageTitle: "Nội dung chỉ đạo từ Trưởng phòng",
+            messageContent: safeNote,
+            attachmentSummary: null,
+            vnTime: vnTime,
+            utcTime: utcTime,
+            ctaText: "Mở Ticket Được Phân Công",
+            ctaUrl: systemAdminTicketUrl,
+            footerNote: $"Email này được gửi tự động từ hệ thống <strong>{ApplicationBranding.HtmlName}</strong> khi Trưởng phòng phân công xử lý ticket.");
+
+        return new EmailMessage(recipient, subject, textBody, htmlBody, LogoContentId);
+    }
+
+    public static EmailMessage BuildResolutionNoticeEmail(
+        string recipient,
+        SupportTicketDto ticket,
+        string resolutionNotice,
+        string senderName,
+        string customerPortalTicketUrl,
+        bool isClosed)
+    {
+        var priorityLabel = GetPriorityLabel(ticket.TicketPriority);
+        var subject = isClosed
+            ? $"[{ApplicationBranding.Name} Support] Yêu cầu hỗ trợ {ticket.TicketCode} đã có kết quả xử lý"
+            : $"[{ApplicationBranding.Name} Support] Cập nhật mới cho yêu cầu hỗ trợ {ticket.TicketCode}";
+        var (vnTime, utcTime) = FormatTimestamps(DateTime.UtcNow);
+        var customerName = string.IsNullOrWhiteSpace(ticket.CreatedByName) ? "Quý khách" : ticket.CreatedByName!;
+
+        var textBody = $"""
+            THÔNG BÁO KẾT QUẢ XỬ LÝ YÊU CẦU HỖ TRỢ
+            Hệ thống Quản lý & Số hóa Hợp đồng Điện tử {ApplicationBranding.Name}
+
+            Xin chào {customerName},
+
+            {(isClosed ? "Yêu cầu hỗ trợ của bạn đã được xử lý và gửi kết quả:" : "Bộ phận phụ trách vừa cập nhật phản hồi/kết quả cho yêu cầu hỗ trợ của bạn:")}
+
+            - Mã Ticket: {ticket.TicketCode}
+            - Tiêu đề: {ticket.TicketSubject}
+            - Phòng ban xử lý: {ticket.Department}
+            - Người phản hồi: {senderName}
+            - Thời gian cập nhật: {vnTime} GMT+7 ({utcTime} UTC)
+
+            Nội dung kết quả / phản hồi:
+            {resolutionNotice}
+
+            Vui lòng đăng nhập Cổng khách hàng {ApplicationBranding.Name} để xem chi tiết:
+            {customerPortalTicketUrl}
+
+            Trân trọng,
+            Bộ phận Hỗ trợ Khách hàng {ApplicationBranding.Name}
+            """;
+
+        var htmlBody = BuildHtmlLayout(
+            subject: subject,
+            bannerTitle: isClosed ? "KẾT QUẢ XỬ LÝ YÊU CẦU HỖ TRỢ" : "PHẢN HỒI YÊU CẦU HỖ TRỢ",
+            bannerSubtitle: $"Mã Ticket: #{ticket.TicketCode} • {ticket.Department}",
+            greetingHtml: $"Xin chào <strong>{WebUtility.HtmlEncode(customerName)}</strong>,",
+            introHtml: isClosed
+                ? $"<strong>{WebUtility.HtmlEncode(senderName)}</strong> ({WebUtility.HtmlEncode(ticket.Department)}) đã hoàn tất xử lý và gửi kết quả cho yêu cầu hỗ trợ của bạn:"
+                : $"<strong>{WebUtility.HtmlEncode(senderName)}</strong> ({WebUtility.HtmlEncode(ticket.Department)}) vừa cập nhật phản hồi mới cho yêu cầu hỗ trợ của bạn:",
+            ticket: ticket,
+            senderDisplayName: customerName,
+            messageTitle: isClosed ? "Kết quả xử lý từ bộ phận phụ trách" : "Nội dung phản hồi",
+            messageContent: resolutionNotice,
+            attachmentSummary: null,
+            vnTime: vnTime,
+            utcTime: utcTime,
+            ctaText: "Xem Chi Tiết Trên Cổng Khách Hàng",
+            ctaUrl: customerPortalTicketUrl,
+            footerNote: $"Email này được gửi tự động từ hệ thống <strong>{ApplicationBranding.HtmlName}</strong> khi bộ phận phụ trách phản hồi yêu cầu hỗ trợ của bạn.",
+            accentBg: "#ecfdf5",
+            accentBorder: "#10b981",
+            accentTitle: "#065f46");
 
         return new EmailMessage(recipient, subject, textBody, htmlBody, LogoContentId);
     }
@@ -120,6 +251,8 @@ public static class SupportTicketEmailTemplate
         string subject,
         string bannerTitle,
         string bannerSubtitle,
+        string greetingHtml,
+        string introHtml,
         SupportTicketDto ticket,
         string senderDisplayName,
         string messageTitle,
@@ -127,7 +260,12 @@ public static class SupportTicketEmailTemplate
         string? attachmentSummary,
         string vnTime,
         string utcTime,
-        string systemAdminTicketUrl)
+        string ctaText,
+        string ctaUrl,
+        string footerNote,
+        string accentBg = "#fffbeb",
+        string accentBorder = "#f59e0b",
+        string accentTitle = "#92400e")
     {
         var year = DateTime.UtcNow.Year;
         var priorityLabel = GetPriorityLabel(ticket.TicketPriority);
@@ -138,7 +276,7 @@ public static class SupportTicketEmailTemplate
         var safeBannerSubtitle = WebUtility.HtmlEncode(bannerSubtitle);
         var safeTicketCode = WebUtility.HtmlEncode(ticket.TicketCode);
         var safeTicketSubject = WebUtility.HtmlEncode(ticket.TicketSubject);
-        var safeTenantName = WebUtility.HtmlEncode(ticket.TenantName);
+        var safeTenantName = WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(ticket.TenantName) ? senderDisplayName : ticket.TenantName);
         var safeTenantCode = WebUtility.HtmlEncode(ticket.TenantCode);
         var safeSender = WebUtility.HtmlEncode(senderDisplayName);
         var safeDepartment = WebUtility.HtmlEncode(ticket.Department);
@@ -148,7 +286,11 @@ public static class SupportTicketEmailTemplate
         var safeAttachment = string.IsNullOrWhiteSpace(attachmentSummary)
             ? null
             : WebUtility.HtmlEncode(attachmentSummary);
-        var safeUrl = WebUtility.HtmlEncode(systemAdminTicketUrl);
+        var safeUrl = WebUtility.HtmlEncode(ctaUrl);
+        var safeCtaText = WebUtility.HtmlEncode(ctaText);
+        var tenantCodeHtml = string.IsNullOrWhiteSpace(safeTenantCode)
+            ? string.Empty
+            : $" <span style=\"font-family: monospace; color: #64748b;\">({safeTenantCode})</span>";
 
         var attachmentHtml = safeAttachment is null
             ? string.Empty
@@ -190,10 +332,10 @@ public static class SupportTicketEmailTemplate
                       <tr>
                         <td style="padding: 32px 28px 24px 28px;">
                           <p style="margin: 0 0 16px 0; font-size: 14px; line-height: 1.6; color: #334155;">
-                            Xin chào <strong>Người xử lý hỗ trợ ({{ApplicationBranding.HtmlName}} Admin)</strong>,
+                            {{greetingHtml}}
                           </p>
                           <p style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #475569;">
-                            Hệ thống vừa ghi nhận thông tin yêu cầu hỗ trợ từ khách hàng cần bạn kiểm tra và phản hồi:
+                            {{introHtml}}
                           </p>
 
                           <!-- Ticket Metadata Box -->
@@ -207,11 +349,11 @@ public static class SupportTicketEmailTemplate
                                 <td style="padding: 6px 0; font-size: 13px; color: #1d4ed8; font-family: monospace; font-weight: 700;">{{safeTicketCode}}</td>
                               </tr>
                               <tr>
-                                <td style="padding: 6px 0; font-size: 13px; color: #64748b;">Tổ chức / Tenant:</td>
-                                <td style="padding: 6px 0; font-size: 13px; color: #0f172a; font-weight: 600;">{{safeTenantName}} <span style="font-family: monospace; color: #64748b;">({{safeTenantCode}})</span></td>
+                                <td style="padding: 6px 0; font-size: 13px; color: #64748b;">Khách hàng:</td>
+                                <td style="padding: 6px 0; font-size: 13px; color: #0f172a; font-weight: 600;">{{safeTenantName}}{{tenantCodeHtml}}</td>
                               </tr>
                               <tr>
-                                <td style="padding: 6px 0; font-size: 13px; color: #64748b;">Người gửi:</td>
+                                <td style="padding: 6px 0; font-size: 13px; color: #64748b;">Người liên hệ:</td>
                                 <td style="padding: 6px 0; font-size: 13px; color: #0f172a;">{{safeSender}}</td>
                               </tr>
                               <tr>
@@ -239,8 +381,8 @@ public static class SupportTicketEmailTemplate
                           </div>
 
                           <!-- Message Content Box -->
-                          <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 16px 18px; margin-bottom: 24px;">
-                            <div style="font-size: 12px; font-weight: 700; color: #92400e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+                          <div style="background-color: {{accentBg}}; border-left: 4px solid {{accentBorder}}; border-radius: 8px; padding: 16px 18px; margin-bottom: 24px;">
+                            <div style="font-size: 12px; font-weight: 700; color: {{accentTitle}}; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
                               {{safeMessageTitle}}:
                             </div>
                             <div style="font-size: 14px; color: #1e293b; line-height: 1.6;">
@@ -251,7 +393,7 @@ public static class SupportTicketEmailTemplate
                           <!-- CTA Button -->
                           <div style="text-align: center; margin: 28px 0 18px 0;">
                             <a href="{{safeUrl}}" target="_blank" style="display: inline-block; padding: 14px 32px; background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); color: #ffffff; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 8px;">
-                              Mở Bàn Làm Việc Xử Lý Ticket
+                              {{safeCtaText}}
                             </a>
                           </div>
 
@@ -266,7 +408,7 @@ public static class SupportTicketEmailTemplate
                       <tr>
                         <td style="background-color: #f8fafc; padding: 18px 28px; text-align: center; border-top: 1px solid #e2e8f0;">
                           <p style="margin: 0; font-size: 12px; color: #64748b;">
-                            Email này được gửi tự động từ hệ thống <strong>{{ApplicationBranding.HtmlName}}</strong> khi khách hàng gửi yêu cầu hỗ trợ.
+                            {{footerNote}}
                           </p>
                           <p style="margin: 6px 0 0 0; font-size: 11px; color: #94a3b8;">
                             &copy; {{year}} DTC.,Ltd. All rights reserved.

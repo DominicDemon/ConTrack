@@ -10,6 +10,7 @@ import DraftPreview from "@/components/internal/draft-preview";
 import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
 import PortalHeader from "./portal-header";
+import PortalSigningPanel from "./portal-signing-panel";
 import { dateTime } from "@/services/internal-api";
 import { CustomerApiError, customerApi, customerStatusLabel, handleAuthError, isOpenReview, type CustomerReviewDetail, type ReviewComment } from "@/services/customer-api";
 
@@ -53,6 +54,7 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
     {review.message && <p className={ui.notice} style={{ marginBottom: 16 }}>Lời nhắn của nhân viên: {review.message}</p>}
     {error && <p role="alert" className={ui.error} style={{ marginBottom: 16 }}>{error}</p>}
     {!open && <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>{review.respondedAt ? `Bạn đã phản hồi lúc ${dateTime(review.respondedAt)}.` : "Lần gửi này không còn nhận phản hồi."}{review.customerNote ? ` Ghi chú: ${review.customerNote}` : ""}</p>}
+    {review.status === "APPROVED" && <PortalSigningPanel reviewId={id}/>}
     {open && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
       <button className={ui.primaryButton} disabled={busy} onClick={() => { setDecision("APPROVE"); setNote(""); }}><Check size={16}/>Đồng ý</button>
       <button className={ui.secondaryButton} disabled={busy} onClick={() => { setDecision("REQUEST_CHANGES"); setNote(""); }}><PenLine size={16}/>Yêu cầu sửa</button>

@@ -68,5 +68,7 @@
 		</array>
 		<key>UIStatusBarHidden</key>
 		<false/>
+		<key>NSCameraUsageDescription</key>
+		<string>Ứng dụng dùng camera để quét bản hợp đồng đã ký.</string>
 	</dict>
 </plist>

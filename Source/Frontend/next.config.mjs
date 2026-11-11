@@ -10,6 +10,11 @@ const nextConfig = {
   env: { NEXT_PUBLIC_APP_NAME: branding.name },
   output: "standalone",
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  experimental: {
+    // Scans go through the /api/internal proxy: up to 20 MB each, and OCR-related calls can take a while.
+    proxyClientMaxBodySize: 210 * 1024 * 1024,
+    proxyTimeout: 15 * 60 * 1000,
+  },
   async rewrites() {
     const api = process.env.INTERNAL_API_ORIGIN || "http://127.0.0.1:5005";
     return [{ source: "/api/internal/:path*", destination: `${api}/api/internal/:path*` },

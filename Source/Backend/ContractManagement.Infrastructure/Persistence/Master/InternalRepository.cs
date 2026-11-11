@@ -28,7 +28,10 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             join rp in db.SystemRolePermissions on r.SystemRoleId equals rp.SystemRoleId
             join p in db.SystemPermissions on rp.SystemPermissionId equals p.SystemPermissionId
             where er.EmployeeId == id && r.SystemRoleStatus == "ACTIVE" select p.SystemPermissionCode).Distinct().ToArrayAsync(ct);
-        return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions, employee.EmployeeMustChangePassword);
+        var department = await (from ed in db.EmployeeDepartments join d in db.Departments on ed.DepartmentId equals d.DepartmentId
+            where ed.EmployeeId == id select new { d.DepartmentName, d.DepartmentManagerEmployeeId }).FirstOrDefaultAsync(ct);
+        return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions, employee.EmployeeMustChangePassword,
+            department?.DepartmentName, department?.DepartmentManagerEmployeeId == id);
     }
     public async Task<List<TemplateDefinition>> Templates(CancellationToken ct)
     {

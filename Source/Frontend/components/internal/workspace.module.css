@@ -14,6 +14,12 @@
 .sidebar { background: var(--card); padding: 28px 20px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 32px; }
 .sidebar nav { display: grid; gap: 6px; }
 .navActive { display: flex; gap: 12px; align-items: center; background: var(--secondary); border-radius: 8px; padding: 13px 12px; color: var(--primary); font-weight: 600; font-size: 14px; }
+.navLink { display: flex; gap: 12px; align-items: center; border-radius: 8px; padding: 13px 12px; color: var(--muted-foreground); font-weight: 600; font-size: 14px; }
+.navLink:hover { background: var(--secondary); color: var(--primary); }
+.navSoon { display: flex; gap: 12px; align-items: center; border-radius: 8px; padding: 13px 12px; color: var(--muted-foreground); font-weight: 600; font-size: 14px; opacity: .6; cursor: default; }
+.soonTag { margin-left: auto; border-radius: 5px; padding: 2px 6px; background: var(--secondary); font-size: 10px; white-space: nowrap; }
+.portalNav { display: flex; gap: 6px; margin-right: auto; }
+@media (max-width: 600px) { .portalNav .navActive, .portalNav .navLink, .portalNav .navSoon { font-size: 12px; padding: 8px; gap: 6px; } .portalNav svg { display: none; } }
 .account { margin-top: auto; border-top: 1px solid var(--border); padding-top: 20px; display: grid; gap: 8px; }
 .main { min-width: 0; }
 .header { background: var(--card); min-height: 74px; padding: 18px 32px; display: flex; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--border); }

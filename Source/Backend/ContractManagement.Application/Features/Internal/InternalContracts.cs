@@ -2,17 +2,19 @@ using ContractManagement.Domain.Internal;
 
 namespace ContractManagement.Application.Features.Internal;
 
-public sealed record InternalUser(long Id, string Name, string Username, string[] Permissions, bool MustChangePassword = false)
+public sealed record InternalUser(long Id, string Name, string Username, string[] Permissions, bool MustChangePassword = false,
+    string? Department = null, bool IsManager = false)
 {
     public bool CanManageAll => Permissions.Contains("draft.manage.all");
     public bool CanWrite => Permissions.Contains("draft.write");
     public bool CanManageEmployees => Permissions.Contains(EmployeeAdminRules.ManagePermission);
 }
 public sealed record EmployeeAdminRow(long Id, string Code, string Username, string Name, string? Email, string? Phone, string Status,
-    bool MustChangePassword, DateTime? LastLoginAt, long[] RoleIds);
-public sealed record RoleOption(long Id, string Code, string Name, string[] Permissions);
-public sealed record CreateEmployeeInput(string? Code, string? Username, string? Name, string? Email, string? Phone, long[]? RoleIds);
-public sealed record EmployeeRolesInput(long[]? RoleIds);
+    bool MustChangePassword, DateTime? LastLoginAt, long? DepartmentId, bool IsManager);
+/// <summary>A department and the screens its staff / its manager get. StaffPermissions is null when the department has managers only (Ban Giám Đốc).</summary>
+public sealed record DepartmentOption(long Id, string Code, string Name, string[]? StaffPermissions, string[] ManagerPermissions, long? ManagerId, string? ManagerName);
+public sealed record CreateEmployeeInput(string? Code, string? Username, string? Name, string? Email, string? Phone, long? DepartmentId, bool Manager);
+public sealed record EmployeePositionInput(long? DepartmentId, bool Manager);
 public sealed record EmployeeStatusInput(bool Active);
 public sealed record EmployeeChangePasswordInput(string? CurrentPassword, string? NewPassword);
 /// <summary>The temporary password is returned once and never stored in clear text.</summary>
@@ -21,9 +23,9 @@ public sealed record TemporaryPasswordResult(EmployeeAdminRow Employee, string T
 public interface IEmployeeAdmin
 {
     Task<List<EmployeeAdminRow>> Employees(CancellationToken ct);
-    Task<List<RoleOption>> Roles(CancellationToken ct);
+    Task<List<DepartmentOption>> Departments(CancellationToken ct);
     Task<TemporaryPasswordResult> Create(CreateEmployeeInput input, InternalUser actor, CancellationToken ct);
-    Task<EmployeeAdminRow> SetRoles(long id, EmployeeRolesInput input, InternalUser actor, CancellationToken ct);
+    Task<EmployeeAdminRow> SetPosition(long id, EmployeePositionInput input, InternalUser actor, CancellationToken ct);
     Task<EmployeeAdminRow> SetStatus(long id, EmployeeStatusInput input, InternalUser actor, CancellationToken ct);
     Task<TemporaryPasswordResult> ResetPassword(long id, InternalUser actor, CancellationToken ct);
     Task ChangePassword(long employeeId, EmployeeChangePasswordInput input, CancellationToken ct);
@@ -52,16 +54,15 @@ public static class EmployeeAdminRules
         if (!UsernamePattern.IsMatch(username)) throw new ArgumentException("Tên đăng nhập gồm 3–100 ký tự chữ thường, số, dấu chấm, gạch dưới hoặc gạch ngang.");
         if (name.Length is 0 or > 200) throw new ArgumentException("Họ tên bắt buộc, tối đa 200 ký tự.");
         if (email is not null && (email.Length > 100 || !System.Net.Mail.MailAddress.TryCreate(email, out _))) throw new ArgumentException("Email không hợp lệ.");
-        return new(code, username, name, email, phone, RoleIds(input.RoleIds));
+        return new(code, username, name, email, phone, DepartmentId(input.DepartmentId), input.Manager);
     }
 
-    public static long[] RoleIds(long[]? ids) =>
-        ids is { Length: > 0 } ? ids.Distinct().ToArray() : throw new ArgumentException("Chọn ít nhất một vai trò.");
+    public static long DepartmentId(long? id) => id is > 0 ? id.Value : throw new ArgumentException("Chọn phòng ban.");
 
     /// <summary>Admins act on other accounts only, so the acting admin always keeps access and at least one admin remains.</summary>
     public static void RequireOther(InternalUser actor, long target)
     {
-        if (actor.Id == target) throw new InternalAppException(409, "Không thể tự đổi vai trò, khóa hoặc đặt lại mật khẩu cho chính mình.");
+        if (actor.Id == target) throw new InternalAppException(409, "Không thể tự đổi phòng ban, khóa hoặc đặt lại mật khẩu cho chính mình.");
     }
 
     public static string TemporaryPassword() =>

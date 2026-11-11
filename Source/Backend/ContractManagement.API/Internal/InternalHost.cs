@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using ContractManagement.API.Domains.Email;
+using ContractManagement.API.Domains.Support;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Infrastructure.Persistence.Master;
 using ContractManagement.Infrastructure.Sms;
@@ -35,6 +36,11 @@ public static class InternalHost
         builder.Services.AddScoped<InternalDraftService>();
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
         builder.Services.AddScoped<IEmployeeAdmin, EmployeeAdminRepository>();
+        builder.Services.AddScoped<ICatalogAdmin, CatalogRepository>();
+        // Ticket workflow from main reads TICKET_* through the application context, here pointed at MASTER (no tenant in Internal mode).
+        builder.Services.AddDbContext<ContractManagement.Infrastructure.Persistence.Application.DbDtctechContext>(o =>
+            o.UseSqlServer(builder.Configuration.GetConnectionString("MasterDatabase"), sql => sql.EnableRetryOnFailure()));
+        builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
         builder.Services.AddScoped<IContractReviewRepository, ContractReviewRepository>();
         builder.Services.AddScoped<ICustomerPortalRepository, CustomerPortalRepository>();
         builder.Services.AddScoped<SmsCallbackProcessor>();
@@ -107,7 +113,8 @@ public static class InternalHost
             if (string.IsNullOrWhiteSpace(input.Username) || input.Username.Length > 100 || string.IsNullOrEmpty(input.Password) || input.Password.Length > 200)
                 throw new InternalAppException(401, "Tên đăng nhập hoặc mật khẩu không đúng.");
             var user = await repository.Authenticate(input.Username.Trim(), input.Password, ct);
-            if (user is null || !(user.CanWrite || user.CanManageEmployees)) throw new InternalAppException(401, "Tên đăng nhập hoặc mật khẩu không đúng.");
+            // Any internal role gets in; each screen checks its own permission.
+            if (user is null || user.Permissions.Length == 0) throw new InternalAppException(401, "Tên đăng nhập hoặc mật khẩu không đúng.");
             context.Session.Clear(); context.Session.SetString(UserKey, user.Id.ToString());
             return Results.Ok(user);
         }).RequireRateLimiting("internal-login");
@@ -131,11 +138,75 @@ public static class InternalHost
             return await next(invocation);
         });
         admin.MapGet("/employees", async (IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.Employees(ct)));
-        admin.MapGet("/roles", async (IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.Roles(ct)));
+        admin.MapGet("/departments", async (IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.Departments(ct)));
         admin.MapPost("/employees", async (CreateEmployeeInput input, HttpContext c, IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.Create(input, Current(c), ct)));
-        admin.MapPut("/employees/{id:long}/roles", async (long id, EmployeeRolesInput input, HttpContext c, IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.SetRoles(id, input, Current(c), ct)));
+        admin.MapPut("/employees/{id:long}/position", async (long id, EmployeePositionInput input, HttpContext c, IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.SetPosition(id, input, Current(c), ct)));
         admin.MapPut("/employees/{id:long}/status", async (long id, EmployeeStatusInput input, HttpContext c, IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.SetStatus(id, input, Current(c), ct)));
         admin.MapPost("/employees/{id:long}/reset-password", async (long id, HttpContext c, IEmployeeAdmin a, CancellationToken ct) => Results.Ok(await a.ResetPassword(id, Current(c), ct)));
+        // Screen groups: any one permission opens the group; writes inside may require more (checked per endpoint).
+        RouteGroupBuilder Screen(string prefix, string denied, params string[] permissions) => api.MapGroup(prefix).AddEndpointFilter(async (invocation, next) =>
+        {
+            var c = invocation.HttpContext;
+            var user = await User(c, c.RequestServices.GetRequiredService<IInternalRepository>(), c.RequestAborted);
+            RequirePasswordChanged(user);
+            if (!permissions.Any(user.Permissions.Contains)) throw new InternalAppException(403, denied);
+            c.Items[UserKey] = user;
+            if (!HttpMethods.IsGet(c.Request.Method)) await c.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(c);
+            return await next(invocation);
+        });
+        var crm = Screen("/crm", "Bạn không có quyền quản lý khách hàng.", CatalogRules.CustomerManage);
+        crm.MapGet("/customers", async (string? search, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Customers(search, ct)));
+        crm.MapPost("/customers", async (CustomerInput input, HttpContext c, IInternalRepository r, ICatalogAdmin a, CancellationToken ct) =>
+            Results.Ok(await a.CustomerRow((await r.CreateCustomer(input, Current(c).Id, ct)).Id, ct)));
+        crm.MapPut("/customers/{id:long}", async (long id, CustomerUpdateInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.UpdateCustomer(id, input, Current(c), ct)));
+        crm.MapPut("/customers/{id:long}/status", async (long id, ActiveInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.SetCustomerStatus(id, input, Current(c), ct)));
+        crm.MapGet("/customers/{id:long}/businesses", async (long id, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Businesses(id, ct)));
+        crm.MapPost("/customers/{id:long}/businesses", async (long id, BusinessInput input, HttpContext c, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.CreateBusiness(id, input, Current(c).Id, ct)));
+        var catalog = Screen("/catalog", "Bạn không có quyền xem sản phẩm và dịch vụ.", CatalogRules.ProductRead, CatalogRules.ProductManage);
+        catalog.MapGet("/products", async (string? search, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Products(search, ct)));
+        catalog.MapGet("/categories", async (ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Categories(ct)));
+        catalog.MapGet("/services", async (ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Services(ct)));
+        catalog.MapPost("/products", async (ProductInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.SaveProduct(null, input, RequireProductManage(c), ct)));
+        catalog.MapPut("/products/{id:long}", async (long id, ProductInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.SaveProduct(id, input, RequireProductManage(c), ct)));
+        var org = Screen("/org", "Bạn không có quyền quản lý phòng ban.", CatalogRules.DepartmentManage);
+        org.MapGet("/departments", async (ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Departments(ct)));
+        org.MapPut("/departments/{id:long}", async (long id, DepartmentInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.UpdateDepartment(id, input, Current(c), ct)));
+        // Hỗ trợ khách hàng: same calls as main's AdminSupportTicketsController, with the employee from the internal session.
+        // The service scopes by department: the manager sees and assigns the department's tickets, staff see tickets assigned to them.
+        var tickets = Screen("/tickets", "Bạn không có quyền xử lý yêu cầu hỗ trợ.", "ticket.handle", "ticket.manage.all");
+        tickets.MapGet("", async (string? status, string? priority, string? department, string? keyword, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Results.Ok(await s.GetAllForAdminAsync(TicketActor(c).Id, status, priority, department, keyword, ct)));
+        tickets.MapGet("/{id:int}", async (int id, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            await s.GetByIdAsync(id, TicketActor(c).Id, ct) is { } t ? Results.Ok(t) : throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ hoặc bạn không có quyền truy cập."));
+        tickets.MapGet("/{id:int}/staff", async (int id, HttpContext c, ISupportTicketService s, CancellationToken ct) => Results.Ok(await s.GetDepartmentStaffAsync(id, TicketActor(c).Id, ct)));
+        tickets.MapPost("/{id:int}/assign", async (int id, AssignTicketToStaffRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Found(await s.AssignToStaffAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct)));
+        tickets.MapPost("/{id:int}/staff-complete", async (int id, StaffCompleteTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(input.Resolution)) throw new ArgumentException("Vui lòng nhập phương án/kết quả xử lý.");
+            return Found(await s.StaffCompleteAsync(id, TicketActor(c).Id, TicketActor(c).Name, input, ct));
+        });
+        tickets.MapPost("/{id:int}/resolve", async (int id, HeadResolveTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Found(await s.HeadResolveAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct)));
+        tickets.MapPost("/{id:int}/messages", async (int id, AdminReplyTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(input.MessageContent)) throw new ArgumentException("Vui lòng nhập nội dung phản hồi.");
+            return Found(await s.AddAdminMessageAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct));
+        });
+        tickets.MapPatch("/{id:int}/status", async (int id, UpdateTicketStatusRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Found(await s.UpdateTicketStatusAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct)));
+        // Ticket notifications of main's AdminNotificationsController: the service already scopes them to the head / assigned staff.
+        tickets.MapGet("/notifications", async (string? status, int? limit, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+        {
+            var (items, unreadCount) = await s.GetAdminNotificationsAsync(TicketActor(c).Id, status ?? "all", Math.Clamp(limit ?? 20, 1, 50), ct);
+            return Results.Ok(new { items, unreadCount });
+        });
+        tickets.MapGet("/notifications/unread-count", async (HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Results.Ok(new { count = await s.GetAdminUnreadNotificationCountAsync(TicketActor(c).Id, ct) }));
+        tickets.MapPatch("/notifications/{id:int}/read", async (int id, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            await s.MarkAdminNotificationReadAsync(TicketActor(c).Id, id, ct) ? Results.NoContent() : throw new InternalAppException(404, "Không tìm thấy thông báo."));
+        tickets.MapPost("/notifications/mark-all-read", async (HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Results.Ok(new { changed = await s.MarkAllAdminNotificationsReadAsync(TicketActor(c).Id, ct) }));
         var secured = api.MapGroup("").AddEndpointFilter(async (invocation, next) =>
         {
             var c = invocation.HttpContext;
@@ -190,6 +261,13 @@ public static class InternalHost
         await app.RunAsync();
     }
     private static InternalUser Current(HttpContext c) => (InternalUser)c.Items[UserKey]!;
+    private static (int Id, string Name) TicketActor(HttpContext c) { var user = Current(c); return (CustomerPortalEndpoints.TicketId(user.Id), user.Name); }
+    /// <summary>Assigning, closing, replying to the customer and changing status are the department head's (main's workflow; the service relies on the UI for assign).</summary>
+    private static (int Id, string Name) TicketManager(HttpContext c) => Current(c).Permissions.Contains("ticket.manage.all")
+        ? TicketActor(c) : throw new InternalAppException(403, "Chỉ trưởng phòng được phân công, trao đổi với khách hoặc đóng yêu cầu hỗ trợ.");
+    private static IResult Found<T>(T? value) where T : class => value is null ? throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ.") : Results.Ok(value);
+    private static InternalUser RequireProductManage(HttpContext c) => Current(c) is var user && user.Permissions.Contains(CatalogRules.ProductManage)
+        ? user : throw new InternalAppException(403, "Chỉ quản lý kinh doanh được thêm hoặc sửa sản phẩm.");
     private static void RequirePasswordChanged(InternalUser user)
     {
         if (user.MustChangePassword) throw new InternalAppException(403, "Bạn cần đổi mật khẩu tạm trước khi tiếp tục.", "PASSWORD_CHANGE_REQUIRED");

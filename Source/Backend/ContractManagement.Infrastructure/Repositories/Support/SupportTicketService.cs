@@ -157,7 +157,7 @@ public sealed class SupportTicketService : ISupportTicketService
     };
 
     private static SupportTicketStoreState? _cachedState;
-    private static bool _tablesEnsured = false;
+    // Database first: TICKET_* tables come from the MASTER script; the app never creates them at runtime.
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IEmailTransport _emailTransport;
@@ -193,106 +193,6 @@ public sealed class SupportTicketService : ISupportTicketService
         var centralDir = Path.Combine(rootPath, "central");
         Directory.CreateDirectory(centralDir);
         _storeFilePath = Path.Combine(centralDir, "support-tickets-store.json");
-    }
-
-    private static async Task EnsureDatabaseTablesAsync(DbDtctechContext db, CancellationToken ct)
-    {
-        if (_tablesEnsured) return;
-        try
-        {
-            const string sql = @"
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_TYPES')
-BEGIN
-    CREATE TABLE [TICKET_TYPES] (
-        [ticket_type_id] bigint PRIMARY KEY IDENTITY(1, 1),
-        [ticket_name] nvarchar(500) NULL
-    );
-END;
-
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_SUPPORT')
-BEGIN
-    CREATE TABLE [TICKET_SUPPORT] (
-        [ticket_support_id] bigint PRIMARY KEY IDENTITY(1, 1),
-        [customer_id] bigint NULL,
-        [department_id] bigint NULL,
-        [tenant_id] bigint NULL,
-        [product_id] bigint NULL,
-        [service_id] bigint NULL,
-        [ticket_code] varchar(30) NULL,
-        [ticket_title] nvarchar(1000) NULL,
-        [ticket_description] nvarchar(max) NULL,
-        [ticket_priority] varchar(20) NULL,
-        [ticket_status] varchar(30) NULL,
-        [ticket_resolution] nvarchar(max) NULL,
-        [ticket_resolved_at] datetime NULL,
-        [ticket_closed_at] datetime NULL,
-        [created_at] datetime NOT NULL,
-        [updated_at] datetime NULL
-    );
-END;
-
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_MESSAGE')
-BEGIN
-    CREATE TABLE [TICKET_MESSAGE] (
-        [ticket_message_id] bigint PRIMARY KEY IDENTITY(1, 1),
-        [ticket_support_id] bigint NOT NULL,
-        [ticket_message_sender_customer_id] bigint NULL,
-        [ticket_message_sender_employee_id] bigint NULL,
-        [ticket_message_content] nvarchar(max) NULL,
-        [ticket_message_type] varchar(20) NULL,
-        [created_at] datetime NULL
-    );
-END;
-
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_ATTACHMENTS')
-BEGIN
-    CREATE TABLE [TICKET_ATTACHMENTS] (
-        [ticket_attachment_id] bigint PRIMARY KEY IDENTITY(1, 1),
-        [ticket_message_id] bigint NULL,
-        [file_name_1] varchar(1000) NULL,
-        [file_name_2] varchar(1000) NULL,
-        [file_name_3] varchar(1000) NULL,
-        [file_size] int NULL,
-        [mime_type] varchar(20) NULL,
-        [uploaded_at] datetime NULL
-    );
-END;
-
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_HISTORY')
-BEGIN
-    CREATE TABLE [TICKET_HISTORY] (
-        [ticket_history_id] bigint PRIMARY KEY IDENTITY(1, 1),
-        [ticket_support_id] bigint NULL,
-        [employee_id_start] int NULL,
-        [employee_id_finished] int NULL,
-        [changed_by_user_id] int NULL,
-        [notes] nvarchar(500) NULL,
-        [old_status] varchar(20) NULL,
-        [new_status] varchar(20) NULL,
-        [changed_at] datetime NULL
-    );
-END;
-
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'TICKET_SUPPORT_EMPLOYEE')
-BEGIN
-    CREATE TABLE [TICKET_SUPPORT_EMPLOYEE] (
-        [ticket_support_employee_id] bigint PRIMARY KEY IDENTITY(1, 1),
-        [ticket_support_id] bigint NOT NULL,
-        [employee_id] bigint NOT NULL,
-        [ticket_support_employee_assignment_role] varchar(20) NULL,
-        [ticket_support_employee_assigned_at] datetime NULL,
-        [ticket_support_employee_unassigned_at] datetime NULL,
-        [ticket_support_employee_assigned_by_employee_id] bigint NULL
-    );
-END;
-";
-            await db.Database.ExecuteSqlRawAsync(sql, ct);
-            _tablesEnsured = true;
-        }
-        catch
-        {
-            // Fallback nếu provider không hỗ trợ raw SQL DDL
-        }
     }
 
     public async Task<IReadOnlyList<SupportTicketDto>> GetAllForAdminAsync(
@@ -436,6 +336,8 @@ END;
         CreateSupportTicketRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        // employeeId ở luồng khách là CUSTOMER.customer_id của người gửi; không có khách thì không ghi thay cho khách 1.
+        if (employeeId <= 0) throw new ArgumentException("Thiếu khách hàng gửi yêu cầu hỗ trợ.");
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
@@ -457,7 +359,6 @@ END;
                 var db = scope.ServiceProvider.GetService<DbDtctechContext>();
                 if (db != null)
                 {
-                    await EnsureDatabaseTablesAsync(db, cancellationToken);
 
                     if (resolvedServiceId.HasValue && resolvedServiceId.Value > 0 && string.IsNullOrWhiteSpace(resolvedServiceName))
                     {
@@ -492,7 +393,7 @@ END;
                     {
                         var entity = new TICKET_SUPPORT
                         {
-                            customer_id = employeeId > 0 ? employeeId : 1,
+                            customer_id = employeeId,
                             tenant_id = tenantId > 0 ? tenantId : 1,
                             department_id = resolvedDeptId,
                             product_id = request.ProductId,
@@ -526,7 +427,7 @@ END;
                         var initMsg = new TICKET_MESSAGE
                         {
                             ticket_support_id = entity.ticket_support_id,
-                            ticket_message_sender_customer_id = employeeId > 0 ? employeeId : 1,
+                            ticket_message_sender_customer_id = employeeId,
                             ticket_message_content = request.ResolvedDescription,
                             ticket_message_type = "INITIAL",
                             created_at = DateTime.UtcNow
@@ -578,7 +479,7 @@ END;
             var ticket = new SupportTicketDto
             {
                 TicketSupportId = ticketId,
-                CustomerId = employeeId > 0 ? employeeId : 1,
+                CustomerId = employeeId,
                 TenantId = tenantId,
                 TenantName = tenantName,
                 TenantCode = tenantCode,
@@ -615,7 +516,7 @@ END;
                     {
                         TicketMessageId = state.NextMessageId++,
                         TicketSupportId = ticketId,
-                        SenderCustomerId = employeeId > 0 ? employeeId : 1,
+                        SenderCustomerId = employeeId,
                         SenderName = senderName,
                         IsFromEmployee = false,
                         TicketMessageContent = request.ResolvedDescription,
@@ -1112,6 +1013,8 @@ END;
         CustomerReplyTicketRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        // employeeId ở luồng khách là CUSTOMER.customer_id của người gửi; không có khách thì không ghi thay cho khách 1.
+        if (employeeId <= 0) throw new ArgumentException("Thiếu khách hàng gửi tin nhắn.");
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
@@ -1126,7 +1029,7 @@ END;
                     var entity = new TICKET_MESSAGE
                     {
                         ticket_support_id = ticketId,
-                        ticket_message_sender_customer_id = employeeId > 0 ? employeeId : 1,
+                        ticket_message_sender_customer_id = employeeId,
                         ticket_message_content = content,
                         ticket_message_type = "CUSTOMER_REPLY",
                         created_at = DateTime.UtcNow
@@ -1511,7 +1414,6 @@ END;
                 return ("SYSADMIN", null, null);
             }
 
-            await EnsureDatabaseTablesAsync(db, ct);
 
             var emp = await db.TblEmployees
                 .AsNoTracking()
@@ -1629,7 +1531,7 @@ END;
         // Khách hàng nào gửi yêu cầu thì CHỈ xem được yêu cầu do chính khách hàng đó gửi
         if (customerId > 0)
         {
-            return t.CustomerId == customerId || t.CreatedByEmployeeId == customerId;
+            return t.CustomerId == customerId;
         }
         if (tenantId > 0 && t.TenantId == tenantId)
         {
@@ -1689,9 +1591,10 @@ END;
         }
     }
 
-    private static async Task<Dictionary<int, int>> LoadEmployeeDepartmentMapAsync(DbDtctechContext db, CancellationToken ct)
+    /// <summary>Phòng ban và trưởng phòng lấy từ dữ liệu (005-department-roles.sql): EMPLOYEE_DEPARTMENT + DEPARTMENT.department_manager_employee_id.</summary>
+    private static async Task<Dictionary<int, (int DepartmentId, bool IsHead)>> LoadEmployeeDepartmentMapAsync(DbDtctechContext db, CancellationToken ct)
     {
-        var map = new Dictionary<int, int>();
+        var map = new Dictionary<int, (int DepartmentId, bool IsHead)>();
         try
         {
             var conn = db.Database.GetDbConnection();
@@ -1700,17 +1603,12 @@ END;
             try
             {
                 using var cmd = conn.CreateCommand();
-                cmd.CommandText = "SELECT CAST([employee_id] AS INT), CAST([department_id] AS INT) FROM [EMPLOYEE_DEPARTMENT] WHERE [employee_id] IS NOT NULL AND [department_id] IS NOT NULL";
+                cmd.CommandText = "SELECT CAST(ed.[employee_id] AS INT), CAST(ed.[department_id] AS INT), CAST(CASE WHEN d.[department_manager_employee_id] = ed.[employee_id] THEN 1 ELSE 0 END AS BIT) "
+                    + "FROM [EMPLOYEE_DEPARTMENT] ed JOIN [DEPARTMENT] d ON d.[department_id] = ed.[department_id]";
                 using var reader = await cmd.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
                 {
-                    var empId = reader.GetInt32(0);
-                    var deptId = reader.GetInt32(1);
-                    // Nếu nhân viên được gán vào phòng chuyên môn (2, 3, 4, 5), ưu tiên phòng chuyên môn hơn phòng 1 (Ban Giám Đốc)
-                    if (!map.ContainsKey(empId) || (map[empId] == 1 && deptId > 1))
-                    {
-                        map[empId] = deptId;
-                    }
+                    map[reader.GetInt32(0)] = (reader.GetInt32(1), reader.GetBoolean(2));
                 }
             }
             finally
@@ -1720,62 +1618,26 @@ END;
         }
         catch
         {
-            // Fallback sẽ được xử lý trong ClassifyEmployee
+            // Không đọc được phòng ban: nhân viên được coi là chưa xếp phòng (ClassifyEmployee).
         }
         return map;
     }
 
-    private static (string Role, int? DepartmentId) ClassifyEmployee(TblEmployee emp, Dictionary<int, int> empDeptMap)
+    private static (string Role, int? DepartmentId) ClassifyEmployee(TblEmployee emp, Dictionary<int, (int DepartmentId, bool IsHead)> empDeptMap)
     {
-        var account = (emp.EmployeeAccount ?? string.Empty).Trim().ToLowerInvariant();
-        var code = (emp.EmployeeCode ?? string.Empty).Trim().ToUpperInvariant();
-        var displayName = (emp.EmployeeFullName ?? string.Empty).Trim().ToLowerInvariant();
+        // Chưa xếp phòng ban: không thuộc phòng nào, chỉ thấy ticket được giao đích danh.
+        if (!empDeptMap.TryGetValue(emp.EmployeeId, out var membership))
+        {
+            return ("STAFF", null);
+        }
 
-        // 1. System Admin: không tham gia luồng yêu cầu hỗ trợ
-        if (account == "sysadmin" || account == "admin" || code == "SYS001" || code == "ADM-SYSADMIN" || displayName.Contains("system admin") || displayName.Contains("quản trị hệ thống"))
+        // Ban Giám Đốc (phòng 1) không tham gia luồng yêu cầu hỗ trợ.
+        if (membership.DepartmentId == 1)
         {
             return ("SYSADMIN", null);
         }
 
-        // 2. Xác định phòng ban của nhân viên
-        int? deptId = empDeptMap.TryGetValue(emp.EmployeeId, out var mappedDept) && mappedDept > 1
-            ? mappedDept
-            : null;
-
-        if (!deptId.HasValue)
-        {
-            if (account.Contains("tech") || account == "test.manager" || displayName.Contains("kỹ thuật"))
-                deptId = 2;
-            else if (account.Contains("sale") || displayName.Contains("kinh doanh") || displayName.Contains("bán hàng"))
-                deptId = 3;
-            else if (account.Contains("account") || displayName.Contains("kế toán") || displayName.Contains("tài chính"))
-                deptId = 4;
-            else if (account.Contains("legal") || account.Contains("hr") || displayName.Contains("pháp chế") || displayName.Contains("hành chính"))
-                deptId = 5;
-        }
-
-        // 3. Xác định có phải Trưởng phòng hay Nhân viên
-        var isHead = account.StartsWith("head.")
-            || account.Contains("manager")
-            || account.Contains("truongphong")
-            || code.StartsWith("HEAD-")
-            || code == "EMP-MANAGER"
-            || displayName.Contains("trưởng phòng")
-            || displayName.Contains("truong phong")
-            || displayName.Contains("quản lý")
-            || displayName.Contains("giám đốc");
-
-        if (isHead && deptId.HasValue)
-        {
-            return ("DEPARTMENT_HEAD", deptId);
-        }
-
-        if (deptId.HasValue)
-        {
-            return ("STAFF", deptId);
-        }
-
-        return ("STAFF", 2);
+        return (membership.IsHead ? "DEPARTMENT_HEAD" : "STAFF", membership.DepartmentId);
     }
 
     private static async Task<TblEmployee?> FindDepartmentHeadAsync(DbDtctechContext db, int departmentId, CancellationToken ct)
@@ -1836,7 +1698,6 @@ END;
             var db = scope.ServiceProvider.GetService<DbDtctechContext>();
             if (db == null) return [];
 
-            await EnsureDatabaseTablesAsync(db, ct);
 
             var ticketEntities = await db.TICKET_SUPPORT
                 .AsNoTracking()
@@ -1893,7 +1754,6 @@ END;
             var db = scope.ServiceProvider.GetService<DbDtctechContext>();
             if (db == null) return null;
 
-            await EnsureDatabaseTablesAsync(db, ct);
 
             var entity = await db.TICKET_SUPPORT
                 .AsNoTracking()
@@ -2329,7 +2189,16 @@ END;
     {
         try
         {
-            var customerEmail = _configuration["SupportTicket:CustomerNotificationEmail"];
+            // The ticket's own customer first; the configured address stays as main's fallback.
+            string? customerEmail = null;
+            if (ticket.CustomerId is { } customerId)
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetService<DbDtctechContext>();
+                if (db != null)
+                    customerEmail = await db.CUSTOMER.AsNoTracking().Where(c => c.CustomerId == customerId).Select(c => c.CustomerEmail).FirstOrDefaultAsync();
+            }
+            if (!SmtpEmailOptions.IsEmailAddress(customerEmail)) customerEmail = _configuration["SupportTicket:CustomerNotificationEmail"];
             if (string.IsNullOrWhiteSpace(customerEmail)) return;
 
             var subject = $"[ConTrack Support] Yêu cầu hỗ trợ {ticket.TicketCode} đã được giải quyết";
@@ -2383,6 +2252,7 @@ END;
             ?? _configuration["AccountRecovery:SystemAdminFrontendBaseUrl"]
             ?? "http://localhost:3001";
 
-        return $"{baseUrl.TrimEnd('/')}/support-tickets/{ticketSupportId}";
+        // 3001 now serves tickets inside the internal workspace; the old /support-tickets page used the legacy API.
+        return $"{baseUrl.TrimEnd('/')}/workspace/support-tickets/{ticketSupportId}";
     }
 }

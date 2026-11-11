@@ -397,7 +397,7 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             var recipients = new HashSet<long> { doc.EmployeeId };
             if (approved) recipients.UnionWith(await (from er in db.EmployeeRoles join r in db.SystemRoles on er.SystemRoleId equals r.SystemRoleId
                 join e in db.Employees on er.EmployeeId equals e.EmployeeId
-                where r.SystemRoleCode == "INTERNAL_OFFICE" && r.SystemRoleStatus == "ACTIVE" && e.EmployeeStatus == "ACTIVE" select er.EmployeeId).ToListAsync(ct));
+                where r.SystemRoleCode == "INTERNAL_ADMIN" && r.SystemRoleStatus == "ACTIVE" && e.EmployeeStatus == "ACTIVE" select er.EmployeeId).ToListAsync(ct));
             var title = next.Review switch { ContractReviewStatus.Approved => "Khách đã đồng ý hợp đồng", ContractReviewStatus.ChangesRequested => "Khách yêu cầu sửa hợp đồng", _ => "Khách từ chối hợp đồng" };
             var notification = new Notification { NotificationEventkey = $"review:{reviewId}:{next.Review}", NotificationModulecode = "CONTRACT",
                 NotificationEventcode = "REVIEW_" + next.Review, NotificationSubjecttype = "CONTRACT_DOCUMENT", NotificationSubjectid = doc.ContractDocumentId,

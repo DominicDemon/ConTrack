@@ -7,13 +7,13 @@ public class EmployeeAdminRulesTests
     [Fact]
     public void NormalizesFormAndKeepsOptionalContactsNull()
     {
-        var form = EmployeeAdminRules.Normalize(new(" nv01 ", " Nguyen.A ", " Nguyễn Văn A ", " ", "+84 912 345 678", [2, 2, 3]));
+        var form = EmployeeAdminRules.Normalize(new(" nv01 ", " Nguyen.A ", " Nguyễn Văn A ", " ", "+84 912 345 678", 3, true));
         Assert.Equal("NV01", form.Code);
         Assert.Equal("nguyen.a", form.Username);
         Assert.Equal("Nguyễn Văn A", form.Name);
         Assert.Null(form.Email);
         Assert.Equal("0912345678", form.Phone);
-        Assert.Equal([2L, 3L], form.RoleIds!);
+        Assert.Equal(3L, form.DepartmentId); Assert.True(form.Manager);
     }
 
     [Theory]
@@ -23,13 +23,13 @@ public class EmployeeAdminRulesTests
     [InlineData("NV01", "nguyen.a", "Tên", "not-mail", null)]
     [InlineData("NV01", "nguyen.a", "Tên", null, "123")]
     public void RejectsInvalidForm(string code, string username, string name, string? email, string? phone) =>
-        Assert.Throws<ArgumentException>(() => EmployeeAdminRules.Normalize(new(code, username, name, email, phone, [1])));
+        Assert.Throws<ArgumentException>(() => EmployeeAdminRules.Normalize(new(code, username, name, email, phone, 1, false)));
 
     [Fact]
-    public void RequiresAtLeastOneRole()
+    public void RequiresDepartment()
     {
-        Assert.Throws<ArgumentException>(() => EmployeeAdminRules.RoleIds(null));
-        Assert.Throws<ArgumentException>(() => EmployeeAdminRules.RoleIds([]));
+        Assert.Throws<ArgumentException>(() => EmployeeAdminRules.DepartmentId(null));
+        Assert.Throws<ArgumentException>(() => EmployeeAdminRules.DepartmentId(0));
     }
 
     [Fact]

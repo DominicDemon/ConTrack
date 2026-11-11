@@ -54,7 +54,7 @@ public class InternalDraftTests
         var repository = new InternalRepository(db, new InternalTemplateStorage(root));
         var service = new InternalDraftService(repository);
         var saleId = await db.Employees.Where(e => e.EmployeeUsername == "sale").Select(e => e.EmployeeId).SingleAsync();
-        var officeId = await db.Employees.Where(e => e.EmployeeUsername == "admin").Select(e => e.EmployeeId).SingleAsync();
+        var officeId = await db.Employees.Where(e => e.EmployeeUsername == "manager").Select(e => e.EmployeeId).SingleAsync();
         var sale = (await repository.GetUser(saleId, default))!; var office = (await repository.GetUser(officeId, default))!;
         var template = (await repository.Templates(default)).First();
         var customer = await repository.CreateCustomer(new("TEST_" + Guid.NewGuid().ToString("N"), "0" + Random.Shared.NextInt64(100000000, 999999999), null, null, null, null), saleId, default);

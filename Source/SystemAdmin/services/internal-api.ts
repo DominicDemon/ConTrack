@@ -1,8 +1,7 @@
-export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean; canManageEmployees: boolean; mustChangePassword: boolean };
-/** Where a signed-in employee starts: account admins without draft rights go to employee management. */
-export const homePath = (user: InternalUser) => user.canWrite || !user.canManageEmployees ? "/workspace/contracts/drafts" : "/workspace/admin/employees";
-export type EmployeeAdminRow = { id: string; code: string; username: string; name: string; email: string | null; phone: string | null; status: "ACTIVE" | "LOCKED" | string; mustChangePassword: boolean; lastLoginAt: string | null; roleIds: string[] };
-export type RoleOption = { id: string; code: string; name: string; permissions: string[] };
+export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean; canManageEmployees: boolean; mustChangePassword: boolean; department: string | null; isManager: boolean };
+export type EmployeeAdminRow = { id: string; code: string; username: string; name: string; email: string | null; phone: string | null; status: "ACTIVE" | "LOCKED" | string; mustChangePassword: boolean; lastLoginAt: string | null; departmentId: string | null; isManager: boolean };
+/** staffPermissions is null when the department has a manager only (Ban Giám Đốc). */
+export type DepartmentOption = { id: string; code: string; name: string; staffPermissions: string[] | null; managerPermissions: string[]; managerId: string | null; managerName: string | null };
 export type TemporaryPasswordResult = { employee: EmployeeAdminRow; temporaryPassword: string };
 export type DraftField = { key: string; label: string; required: boolean; dataType?: "TEXT" | "NUMBER" | "DATE" | "SELECT"; options?: string[]; min?: number | null; max?: number | null };
 export type DraftTerm = { key: string; title: string; content: string; editable: boolean };
@@ -62,3 +61,8 @@ export function completePartyFields(template: TemplateDefinition): TemplateDefin
   ];
   return {...template,fields:[...template.fields,...required.filter(f => !template.fields.some(x => x.key === f.key))]};
 }
+export type CustomerRow = { id: string; name: string; phone: string; email: string | null; address: string | null; taxIdentifier: string | null; active: boolean; businessCount: number; createdAt: string; lastLoginAt: string | null };
+export type ProductRow = { id: string; code: string | null; name: string; unit: string | null; categoryId: number | null; categoryName: string | null; price: number | null; description: string | null };
+export type CategoryOption = { id: number; name: string };
+export type ServiceRow = { id: string; name: string; unit: string | null; price: number | null; typeName: string | null; active: boolean };
+export type DepartmentRow = { id: string; code: string; name: string; description: string | null; status: string; managerName: string | null; memberCount: number; staffRoleName: string | null; managerRoleName: string };

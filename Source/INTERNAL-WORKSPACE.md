@@ -1,14 +1,21 @@
 # Không gian hợp đồng nội bộ
 
+## Hai cổng
+
+- **3001 – nội bộ công ty** (`Source/SystemAdmin`, `/workspace`): nhân viên đăng nhập bằng username; menu theo phòng ban + chức vụ.
+- **3000 – khách hàng** (`Source/Frontend`, `/portal`): chỉ "Hợp đồng của tôi" và "Hỗ trợ" (sắp có).
+  Mọi đường dẫn khác của Frontend (trang tenant / nội bộ cũ) được `next.config.mjs` chuyển về `/portal/contracts`;
+  code cũ vẫn còn nhưng không truy cập được. Giữ lại `/portal`, `/public` (link hợp đồng cũ), `/api` và file tĩnh.
+
 ## Chạy local
 
-API mặc định `ApplicationMode=Internal`, dùng riêng `ConnectionStrings:MasterDatabase`.
-Máy hiện tại đã cấu hình Windows Authentication tới `localhost/ContractManagement_Master`
-trong `Backend/ContractManagement.API/appsettings.Development.json` (Git bỏ qua).
-Máy khác có thể cấu hình biến `ConnectionStrings__MasterDatabase`.
+API mặc định `ApplicationMode=Internal`, dùng riêng `ConnectionStrings:MasterDatabase`
+(`appsettings.json` trên main đặt `Legacy`; máy dev ghi đè `"ApplicationMode": "Internal"` trong
+`Backend/ContractManagement.API/appsettings.Development.json`, Git bỏ qua). Máy khác có thể cấu hình
+biến `ConnectionStrings__MasterDatabase` và `ApplicationMode`.
 
 Database là nguồn schema (database first); app không tự tạo bảng hay dữ liệu. Trước khi chạy,
-database MASTER phải có đủ schema (gồm `Artifacts/Database/Master/001`–`004`), tài khoản, vai trò, quyền
+database MASTER phải có đủ schema (gồm `Artifacts/Database/Master/001`–`005`), tài khoản
 và quy trình duyệt `CONTRACT_INTERNAL_CHECK`, tất cả tạo trực tiếp bằng SQL.
 
 Từ thư mục `Source`:
@@ -18,18 +25,39 @@ $env:ASPNETCORE_ENVIRONMENT = 'Development'
 dotnet run --project Backend/ContractManagement.API --no-launch-profile --urls http://127.0.0.1:5005
 ```
 
-Mở terminal thứ hai tại `Source/Frontend`:
+Mở thêm terminal: `npm run dev` tại `Source/SystemAdmin` (http://localhost:3001, nhân viên) và
+tại `Source/Frontend` (http://localhost:3000, khách hàng).
 
-```powershell
-npm install
-npm run dev
-```
-
-Truy cập http://localhost:3000. Tài khoản nhân viên (vai trò `INTERNAL_SALE` / `INTERNAL_OFFICE`)
-và khách hàng được tạo sẵn trong database. Mật khẩu lưu dạng hash ASP.NET Identity (`PasswordHasher`).
+Tài khoản nhân viên và khách hàng được tạo sẵn trong database. Mật khẩu lưu dạng hash ASP.NET Identity (`PasswordHasher`).
 Chưa có mẫu hợp đồng nào: tải mẫu lên qua nút “Tải lên hợp đồng mẫu” ở màn tạo nháp.
 Swagger (Development): http://localhost:5005/swagger.
 API được proxy cùng origin qua Next; đổi đích bằng `INTERNAL_API_ORIGIN` nếu cần.
+
+## Phòng ban & màn hình
+
+`005-department-roles.sql`: 5 phòng ban (mã và id giống `Artifacts/Sql/seed-masterdb.sql`). Mỗi phòng có một role
+nhân viên và một role quản lý (`DEPARTMENT.department_staff_role_id` / `department_manager_role_id`), đúng một quản lý
+(`department_manager_employee_id`, unique có lọc); mỗi nhân viên thuộc đúng một phòng (`EMPLOYEE_DEPARTMENT`, unique theo nhân viên).
+Role của phòng là role nội bộ duy nhất của nhân viên, nên quyền vẫn đọc qua `EMPLOYEE_ROLE` → `SYSTEM_ROLE_PERMISSION`.
+
+| Phòng | Nhân viên | Quản lý có thêm |
+|---|---|---|
+| BGD – Ban Giám Đốc (CEO, `INTERNAL_ADMIN`) | — (chỉ có quản lý) | Duyệt & ký hợp đồng, Nhân viên & phân quyền, Phòng ban, Nhật ký bảo mật |
+| KD – Kinh Doanh (`INTERNAL_SALE[_MANAGER]`) | Hợp đồng nháp của mình, Khách hàng, Sản phẩm (xem) | Nháp của cả phòng, Quản lý sản phẩm, Nhật ký hợp đồng |
+| KTHUAT – Kỹ Thuật & Hỗ Trợ (`INTERNAL_TECHNICAL[_MANAGER]`) | Ticket được giao, Sản phẩm (xem) | Mọi ticket của phòng, phân công |
+| KTTC – Kế Toán - Tài Chính (`INTERNAL_FINANCE[_MANAGER]`) | Hóa đơn & thanh toán, Hợp đồng (xem) | Duyệt thanh toán / công nợ |
+| HCNS – Hành Chính - Pháp Chế (`INTERNAL_LEGAL[_MANAGER]`) | Mẫu hợp đồng (xem), Hồ sơ pháp lý, Hợp đồng (xem) | Quản lý mẫu hợp đồng |
+
+Mọi người có **Tổng quan** (`/workspace`). Menu lấy từ `SystemAdmin/components/internal/internal-nav.ts`; màn chưa chuyển sang
+MASTER hiện "Sắp có". Đã chạy: Tổng quan, Hợp đồng nháp, Nhân viên & phân quyền, Phòng ban (`/org`),
+Khách hàng (`/crm`, quyền `customer.manage`), Sản phẩm và dịch vụ (`/catalog`: xem với `product.read`, thêm / sửa sản phẩm với `product.manage`).
+Hỗ trợ khách hàng: code nghiệp vụ ticket của main (`SupportTicketService`) giữ nguyên, nối qua `/api/internal/tickets` (3001, `/workspace/support-tickets`)
+và `/api/customer/support` (3000, `/portal/support`). Ticket gửi tới 4 phòng KTHUAT / KD / KTTC / HCNS; trưởng phòng (`ticket.manage.all`)
+thấy ticket của phòng, phân công, trao đổi với khách và đóng; nhân viên (`ticket.handle`) thấy ticket được giao và báo hoàn thành.
+Trưởng phòng lấy từ `department_manager_employee_id` (không đoán theo tên), `customer_id` là khách đăng nhập portal, app không tự tạo bảng `TICKET_*`.
+Trang ticket cũ của main (`(protected)/support-tickets` ở cả hai app) và controller `/api/support/tickets`, `/api/admin/tickets` vẫn còn nhưng chỉ chạy ở chế độ Legacy.
+`INTERNAL_OFFICE` cũ bị ngừng; bước duyệt `CONTRACT_INTERNAL_CHECK` và thông báo "khách đã đồng ý" chuyển sang Ban Giám Đốc.
+`draft.manage.all` hiện vẫn là toàn công ty (chỉ phòng KD có nháp).
 
 ## Luồng sử dụng
 
@@ -42,22 +70,23 @@ API được proxy cùng origin qua Next; đổi đích bằng `INTERNAL_API_ORI
 Chỉ mẫu, khách hàng và tên là bắt buộc khi lưu. Thông tin thiếu được đánh dấu.
 Mẫu tải lên chưa được coi là đã phê duyệt; thông tin pháp nhân phải do người dùng nhập.
 Khách và mẫu được chụp vào nháp, không tự cập nhật theo dữ liệu gốc về sau.
-Sale chỉ truy cập nháp của mình; văn phòng có quyền toàn công ty. Cả hai được tạo khách.
-Chưa có OTP ký, màn hành chính duyệt từng bước, thanh toán, ký hoặc xuất DOCX/PDF.
+Nhân viên kinh doanh chỉ truy cập nháp của mình; quản lý kinh doanh xem được tất cả. Cả hai được tạo khách.
+Chưa có OTP ký, màn Ban Giám Đốc duyệt / ký, thanh toán hoặc xuất DOCX/PDF.
 
 ## Nhân viên & phân quyền
 
-Nhân viên có quyền `employee.manage` (vai trò `INTERNAL_ADMIN`) thấy menu **Nhân viên & phân quyền**
+Ban Giám Đốc (quyền `employee.manage`) thấy menu **Nhân viên & phân quyền**
 (`/workspace/admin/employees`, API `/api/internal/admin/*`):
 
-- Tạo tài khoản: mã, tên đăng nhập, họ tên, email/SĐT tùy chọn, ít nhất một vai trò `INTERNAL`.
+- Tạo tài khoản: mã, tên đăng nhập, họ tên, email/SĐT tùy chọn, **phòng ban** và **chức vụ** (nhân viên / quản lý).
+  Hộp thoại hiện các màn hình chức vụ đó được dùng. Phòng đã có quản lý thì không chọn được chức vụ quản lý (API trả 409).
   Hệ thống sinh mật khẩu tạm 12 ký tự, chỉ hiện một lần, và bật `employee_must_change_password`.
-- Đổi vai trò, khóa / mở khóa (`employee_status` `ACTIVE` / `LOCKED`), cấp lại mật khẩu tạm.
+- Đổi phòng ban / chức vụ (`PUT /admin/employees/{id}/position`), khóa / mở khóa (`employee_status` `ACTIVE` / `LOCKED`), cấp lại mật khẩu tạm.
   Quyền được đọc lại ở mỗi request nên thay đổi có hiệu lực ngay; tài khoản bị khóa bị đăng xuất ở thao tác kế tiếp.
 - Admin không thao tác được trên tài khoản của chính mình, nên luôn còn ít nhất một admin.
 - Khi còn mật khẩu tạm, mọi API trừ `/auth/me`, `/auth/change-password`, `/auth/logout` trả 403
   `PASSWORD_CHANGE_REQUIRED`, và giao diện chỉ hiện màn đổi mật khẩu. Mật khẩu mới: tối thiểu 8 ký tự, có chữ và số.
-- Mỗi thao tác ghi `AUDIT_LOG` (`CREATE`, `CHANGE_ROLES`, `LOCK`, `UNLOCK`, `RESET_PASSWORD`, `CHANGE_PASSWORD`).
+- Mỗi thao tác ghi `AUDIT_LOG` (`CREATE`, `CHANGE_POSITION`, `LOCK`, `UNLOCK`, `RESET_PASSWORD`, `CHANGE_PASSWORD`).
 
 ## Gửi khách xem
 

@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
+/// <summary>Accounts are placed by department + position: the department's staff or manager role is the employee's only internal role.</summary>
 public sealed class EmployeeAdminRepository(MasterDbContext db) : IEmployeeAdmin
 {
     private const string InternalScope = "INTERNAL";
@@ -13,32 +14,35 @@ public sealed class EmployeeAdminRepository(MasterDbContext db) : IEmployeeAdmin
     public async Task<List<EmployeeAdminRow>> Employees(CancellationToken ct)
     {
         var employees = await db.Employees.AsNoTracking().OrderBy(e => e.EmployeeDisplayName).ToListAsync(ct);
-        var roles = await RoleIdsByEmployee(employees.Select(e => e.EmployeeId).ToList(), ct);
-        return employees.Select(e => Row(e, roles.GetValueOrDefault(e.EmployeeId, []))).ToList();
+        var departments = await db.EmployeeDepartments.AsNoTracking().ToDictionaryAsync(d => d.EmployeeId, d => d.DepartmentId, ct);
+        var managers = await ManagerIds(ct);
+        return employees.Select(e => Row(e, departments.TryGetValue(e.EmployeeId, out var d) ? d : null, managers.Contains(e.EmployeeId))).ToList();
     }
 
-    public async Task<List<RoleOption>> Roles(CancellationToken ct)
+    public async Task<List<DepartmentOption>> Departments(CancellationToken ct)
     {
-        var rows = await (from r in db.SystemRoles.AsNoTracking()
-            where r.SystemRoleScope == InternalScope && r.SystemRoleStatus == EmployeeAdminRules.Active
-            join rp in db.SystemRolePermissions on r.SystemRoleId equals rp.SystemRoleId into rps
-            from rp in rps.DefaultIfEmpty()
-            join p in db.SystemPermissions on rp.SystemPermissionId equals p.SystemPermissionId into ps
-            from p in ps.DefaultIfEmpty()
-            select new { r.SystemRoleId, r.SystemRoleCode, r.SystemRoleName, Permission = p == null ? null : p.SystemPermissionCode }).ToListAsync(ct);
-        return rows.GroupBy(r => (r.SystemRoleId, r.SystemRoleCode, r.SystemRoleName)).OrderBy(g => g.Key.SystemRoleName)
-            .Select(g => new RoleOption(g.Key.SystemRoleId, g.Key.SystemRoleCode, g.Key.SystemRoleName,
-                g.Where(x => x.Permission != null).Select(x => x.Permission!).Order().ToArray())).ToList();
+        var departments = await db.Departments.AsNoTracking().Where(d => d.DepartmentStatus == EmployeeAdminRules.Active && d.DepartmentManagerRoleId != null)
+            .OrderBy(d => d.DepartmentId).ToListAsync(ct);
+        var permissions = (await (from rp in db.SystemRolePermissions.AsNoTracking()
+                join p in db.SystemPermissions on rp.SystemPermissionId equals p.SystemPermissionId
+                select new { rp.SystemRoleId, p.SystemPermissionCode }).ToListAsync(ct))
+            .GroupBy(x => x.SystemRoleId).ToDictionary(g => g.Key, g => g.Select(x => x.SystemPermissionCode).Order().ToArray());
+        var managerIds = departments.Where(d => d.DepartmentManagerEmployeeId != null).Select(d => d.DepartmentManagerEmployeeId!.Value).ToList();
+        var names = await db.Employees.AsNoTracking().Where(e => managerIds.Contains(e.EmployeeId)).ToDictionaryAsync(e => e.EmployeeId, e => e.EmployeeDisplayName, ct);
+        return departments.Select(d => new DepartmentOption(d.DepartmentId, d.DepartmentCode, d.DepartmentName,
+            d.DepartmentStaffRoleId is { } s ? permissions.GetValueOrDefault(s, []) : null,
+            permissions.GetValueOrDefault(d.DepartmentManagerRoleId!.Value, []),
+            d.DepartmentManagerEmployeeId, d.DepartmentManagerEmployeeId is { } m ? names.GetValueOrDefault(m) : null)).ToList();
     }
 
     public async Task<TemporaryPasswordResult> Create(CreateEmployeeInput input, InternalUser actor, CancellationToken ct)
     {
         var form = EmployeeAdminRules.Normalize(input);
-        await RequireRoles(form.RoleIds!, ct);
         if (await db.Employees.AnyAsync(e => e.EmployeeUsername == form.Username, ct)) throw new InternalAppException(409, "Tên đăng nhập đã được dùng.");
         if (await db.Employees.AnyAsync(e => e.EmployeeCode == form.Code, ct)) throw new InternalAppException(409, "Mã nhân viên đã được dùng.");
         if (form.Email is not null && await db.Employees.AnyAsync(e => e.EmployeeEmail == form.Email, ct)) throw new InternalAppException(409, "Email đã được dùng cho nhân viên khác.");
         if (form.Phone is not null && await db.Employees.AnyAsync(e => e.EmployeePhone == form.Phone, ct)) throw new InternalAppException(409, "Số điện thoại đã được dùng cho nhân viên khác.");
+        var department = await Position(form.DepartmentId!.Value, form.Manager, null, ct);
 
         var now = DateTime.UtcNow;
         var password = EmployeeAdminRules.TemporaryPassword();
@@ -50,32 +54,30 @@ public sealed class EmployeeAdminRepository(MasterDbContext db) : IEmployeeAdmin
             await using var tx = await db.Database.BeginTransactionAsync(ct);
             db.Employees.Add(employee);
             await db.SaveChangesAsync(ct);
-            foreach (var roleId in form.RoleIds!)
-                db.EmployeeRoles.Add(new EmployeeRole { EmployeeId = employee.EmployeeId, SystemRoleId = roleId, SystemMemberRoleAssignedAt = now, CreatedAt = now, CreatedBy = actor.Id });
+            await Place(employee.EmployeeId, department, form.Manager, actor.Id, now, ct);
             ReviewData.Audit(db, "CREATE", "EMPLOYEE", employee.EmployeeId, "EMPLOYEE", actor.Id, now);
             await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
         });
-        return new(Row(employee, form.RoleIds!), password);
+        return new(Row(employee, department.DepartmentId, form.Manager), password);
     }
 
-    public async Task<EmployeeAdminRow> SetRoles(long id, EmployeeRolesInput input, InternalUser actor, CancellationToken ct)
+    public async Task<EmployeeAdminRow> SetPosition(long id, EmployeePositionInput input, InternalUser actor, CancellationToken ct)
     {
         EmployeeAdminRules.RequireOther(actor, id);
-        var roleIds = EmployeeAdminRules.RoleIds(input.RoleIds);
-        await RequireRoles(roleIds, ct);
+        var department = await Position(EmployeeAdminRules.DepartmentId(input.DepartmentId), input.Manager, id, ct);
         var employee = await Find(id, ct);
         var now = DateTime.UtcNow;
-        var current = await db.EmployeeRoles.Where(r => r.EmployeeId == id).ToListAsync(ct);
-        // Roles outside the internal scope (other modules) are left untouched.
-        var internalIds = await db.SystemRoles.Where(r => r.SystemRoleScope == InternalScope).Select(r => r.SystemRoleId).ToListAsync(ct);
-        db.EmployeeRoles.RemoveRange(current.Where(r => internalIds.Contains(r.SystemRoleId) && !roleIds.Contains(r.SystemRoleId)));
-        foreach (var roleId in roleIds.Where(r => current.All(c => c.SystemRoleId != r)))
-            db.EmployeeRoles.Add(new EmployeeRole { EmployeeId = id, SystemRoleId = roleId, SystemMemberRoleAssignedAt = now, CreatedAt = now, CreatedBy = actor.Id });
-        employee.UpdatedAt = now; employee.UpdatedBy = actor.Id;
-        ReviewData.Audit(db, "CHANGE_ROLES", "EMPLOYEE", id, "EMPLOYEE", actor.Id, now);
-        await db.SaveChangesAsync(ct);
-        return Row(employee, (await RoleIdsByEmployee([id], ct)).GetValueOrDefault(id, []));
+        await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await Place(id, department, input.Manager, actor.Id, now, ct);
+            employee.UpdatedAt = now; employee.UpdatedBy = actor.Id;
+            ReviewData.Audit(db, "CHANGE_POSITION", "EMPLOYEE", id, "EMPLOYEE", actor.Id, now);
+            await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        });
+        return Row(employee, department.DepartmentId, input.Manager);
     }
 
     public async Task<EmployeeAdminRow> SetStatus(long id, EmployeeStatusInput input, InternalUser actor, CancellationToken ct)
@@ -87,7 +89,7 @@ public sealed class EmployeeAdminRepository(MasterDbContext db) : IEmployeeAdmin
         employee.UpdatedAt = now; employee.UpdatedBy = actor.Id;
         ReviewData.Audit(db, input.Active ? "UNLOCK" : "LOCK", "EMPLOYEE", id, "EMPLOYEE", actor.Id, now);
         await db.SaveChangesAsync(ct);
-        return Row(employee, (await RoleIdsByEmployee([id], ct)).GetValueOrDefault(id, []));
+        return await Row(employee, ct);
     }
 
     public async Task<TemporaryPasswordResult> ResetPassword(long id, InternalUser actor, CancellationToken ct)
@@ -101,7 +103,7 @@ public sealed class EmployeeAdminRepository(MasterDbContext db) : IEmployeeAdmin
         employee.UpdatedAt = now; employee.UpdatedBy = actor.Id;
         ReviewData.Audit(db, "RESET_PASSWORD", "EMPLOYEE", id, "EMPLOYEE", actor.Id, now);
         await db.SaveChangesAsync(ct);
-        return new(Row(employee, (await RoleIdsByEmployee([id], ct)).GetValueOrDefault(id, [])), password);
+        return new(await Row(employee, ct), password);
     }
 
     public async Task ChangePassword(long employeeId, EmployeeChangePasswordInput input, CancellationToken ct)
@@ -124,19 +126,52 @@ public sealed class EmployeeAdminRepository(MasterDbContext db) : IEmployeeAdmin
     private async Task<Employee> Find(long id, CancellationToken ct) =>
         await db.Employees.SingleOrDefaultAsync(e => e.EmployeeId == id, ct) ?? throw new InternalAppException(404, "Không tìm thấy nhân viên.");
 
-    private async Task RequireRoles(long[] roleIds, CancellationToken ct)
+    /// <summary>Checks the department offers the position and, for a manager, that the seat is free (or already held by <paramref name="employeeId"/>).</summary>
+    private async Task<Department> Position(long departmentId, bool manager, long? employeeId, CancellationToken ct)
     {
-        var found = await db.SystemRoles.CountAsync(r => roleIds.Contains(r.SystemRoleId) && r.SystemRoleScope == InternalScope && r.SystemRoleStatus == EmployeeAdminRules.Active, ct);
-        if (found != roleIds.Length) throw new ArgumentException("Vai trò không tồn tại hoặc đã ngừng sử dụng.");
+        var department = await db.Departments.SingleOrDefaultAsync(d => d.DepartmentId == departmentId && d.DepartmentStatus == EmployeeAdminRules.Active && d.DepartmentManagerRoleId != null, ct)
+            ?? throw new ArgumentException("Phòng ban không tồn tại hoặc đã ngừng hoạt động.");
+        if (!manager && department.DepartmentStaffRoleId is null) throw new ArgumentException($"{department.DepartmentName} chỉ có chức vụ quản lý.");
+        if (manager && department.DepartmentManagerEmployeeId is { } current && current != employeeId)
+        {
+            var name = await db.Employees.Where(e => e.EmployeeId == current).Select(e => e.EmployeeDisplayName).FirstOrDefaultAsync(ct);
+            throw new InternalAppException(409, $"{department.DepartmentName} đã có quản lý: {name}. Chuyển người đó sang chức vụ nhân viên hoặc phòng khác trước.");
+        }
+        return department;
     }
 
-    private async Task<Dictionary<long, long[]>> RoleIdsByEmployee(List<long> ids, CancellationToken ct) =>
-        (await (from er in db.EmployeeRoles.AsNoTracking()
-                join r in db.SystemRoles on er.SystemRoleId equals r.SystemRoleId
-                where ids.Contains(er.EmployeeId) && r.SystemRoleScope == InternalScope
-                select new { er.EmployeeId, er.SystemRoleId }).ToListAsync(ct))
-            .GroupBy(x => x.EmployeeId).ToDictionary(g => g.Key, g => g.Select(x => x.SystemRoleId).ToArray());
+    /// <summary>Makes the employee a member of exactly this department, with its staff or manager role as the only internal role.</summary>
+    private async Task Place(long employeeId, Department department, bool manager, long actorId, DateTime now, CancellationToken ct)
+    {
+        var held = await db.Departments.Where(d => d.DepartmentManagerEmployeeId == employeeId && (d.DepartmentId != department.DepartmentId || !manager)).ToListAsync(ct);
+        foreach (var d in held) { d.DepartmentManagerEmployeeId = null; d.UpdatedAt = now; d.UpdatedBy = actorId; }
+        // Free the old seat first: UX_Department_Manager would reject the new seat while the old one is still held.
+        if (held.Count > 0 && manager) await db.SaveChangesAsync(ct);
+        if (manager) { department.DepartmentManagerEmployeeId = employeeId; department.UpdatedAt = now; department.UpdatedBy = actorId; }
 
-    private static EmployeeAdminRow Row(Employee e, long[] roleIds) => new(e.EmployeeId, e.EmployeeCode, e.EmployeeUsername, e.EmployeeDisplayName,
-        e.EmployeeEmail, e.EmployeePhone, e.EmployeeStatus, e.EmployeeMustChangePassword, e.EmployeeLastLoginAt, roleIds);
+        var memberships = await db.EmployeeDepartments.Where(d => d.EmployeeId == employeeId).ToListAsync(ct);
+        db.EmployeeDepartments.RemoveRange(memberships.Where(d => d.DepartmentId != department.DepartmentId));
+        if (memberships.All(d => d.DepartmentId != department.DepartmentId))
+            db.EmployeeDepartments.Add(new EmployeeDepartment { EmployeeId = employeeId, DepartmentId = department.DepartmentId, CreatedAt = now, CreatedBy = actorId });
+
+        var roleId = manager ? department.DepartmentManagerRoleId!.Value : department.DepartmentStaffRoleId!.Value;
+        // Roles outside the internal scope (other modules) are left untouched.
+        var current = await (from er in db.EmployeeRoles join r in db.SystemRoles on er.SystemRoleId equals r.SystemRoleId
+            where er.EmployeeId == employeeId && r.SystemRoleScope == InternalScope select er).ToListAsync(ct);
+        db.EmployeeRoles.RemoveRange(current.Where(r => r.SystemRoleId != roleId));
+        if (current.All(r => r.SystemRoleId != roleId))
+            db.EmployeeRoles.Add(new EmployeeRole { EmployeeId = employeeId, SystemRoleId = roleId, SystemMemberRoleAssignedAt = now, CreatedAt = now, CreatedBy = actorId });
+    }
+
+    private async Task<HashSet<long>> ManagerIds(CancellationToken ct) =>
+        (await db.Departments.AsNoTracking().Where(d => d.DepartmentManagerEmployeeId != null).Select(d => d.DepartmentManagerEmployeeId!.Value).ToListAsync(ct)).ToHashSet();
+
+    private async Task<EmployeeAdminRow> Row(Employee e, CancellationToken ct)
+    {
+        var department = await db.EmployeeDepartments.AsNoTracking().Where(d => d.EmployeeId == e.EmployeeId).Select(d => (long?)d.DepartmentId).FirstOrDefaultAsync(ct);
+        return Row(e, department, (await ManagerIds(ct)).Contains(e.EmployeeId));
+    }
+
+    private static EmployeeAdminRow Row(Employee e, long? departmentId, bool manager) => new(e.EmployeeId, e.EmployeeCode, e.EmployeeUsername, e.EmployeeDisplayName,
+        e.EmployeeEmail, e.EmployeePhone, e.EmployeeStatus, e.EmployeeMustChangePassword, e.EmployeeLastLoginAt, departmentId, manager);
 }

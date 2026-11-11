@@ -15,6 +15,11 @@ const nextConfig = {
     return [{ source: "/api/internal/:path*", destination: `${api}/api/internal/:path*` },
       { source: "/api/customer/:path*", destination: `${api}/api/customer/:path*` }];
   },
+  // Port 3000 is the customer portal only; internal screens live in SystemAdmin (3001). Static files (with a dot) pass through.
+  async redirects() {
+    return [{ source: "/", destination: "/portal/contracts", permanent: false },
+      { source: "/:path((?!portal(?:/|$)|public/|api/|_next/)[^.]*)", destination: "/portal/contracts", permanent: false }];
+  },
   async headers() {
     return ["/verify-recovery-email", "/forgot-password", "/reset-password"].map(source => ({ source, headers: [
       { key: "Referrer-Policy", value: "no-referrer" },

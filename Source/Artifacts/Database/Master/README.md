@@ -77,6 +77,10 @@ which the optimized schema dropped but the draft code still uses.
 `004-employee-admin.sql` makes employee email / phone / personal identifier filtered-unique, drops the
 display-name unique constraint, adds `employee_must_change_password`, and adds the `employee.manage`
 permission with the `INTERNAL_ADMIN` role for account administration.
+`005-department-roles.sql` seeds the 5 departments of `Artifacts/Sql/seed-masterdb.sql` (same codes and ids), adds
+`DEPARTMENT.department_staff_role_id` / `department_manager_role_id` / `department_manager_employee_id` (one manager per
+department, one department per employee), the per-page permissions and a staff + manager role per department, and moves
+the `CONTRACT_INTERNAL_CHECK` step from the retired `INTERNAL_OFFICE` role to Ban Giám Đốc (`INTERNAL_ADMIN`).
 The schema is database first: the application never applies these scripts. Run them manually and
 idempotently (SSMS, or `sqlcmd -I` so QUOTED_IDENTIFIER is on for the filtered indexes).
 Employees, roles, permissions, customers and the `CONTRACT_INTERNAL_CHECK` approval workflow

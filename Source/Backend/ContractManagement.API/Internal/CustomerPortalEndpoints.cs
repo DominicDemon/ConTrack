@@ -1,4 +1,5 @@
 using System.Net;
+using ContractManagement.API.Domains.Support;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Domain.Internal;
 using ContractManagement.Infrastructure.Sms;
@@ -99,6 +100,24 @@ public static class CustomerPortalEndpoints
         api.MapPost("/reviews/{id:long}/respond", async (long id, CustomerRespondInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
             Results.Ok(await r.Respond(Current(c).Id, id, input, c.Connection.RemoteIpAddress?.ToString(), c.Request.Headers.UserAgent.ToString(), ct)));
 
+        // Hỗ trợ: the customer is CUSTOMER.customer_id from the portal session; the service (from main) keeps the workflow. No tenant: DTC itself.
+        api.MapGet("/support/services", async (ISupportTicketService s, CancellationToken ct) => Results.Ok(await s.GetAvailableServicesAsync(ct)));
+        api.MapGet("/support/tickets", async (string? status, string? priority, string? keyword, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            Results.Ok(await s.GetAllForTenantAsync(0, "", TicketId(Current(c).Id), status, priority, keyword, ct)));
+        api.MapGet("/support/tickets/{id:int}", async (int id, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+            await s.GetByIdForCustomerAsync(id, 0, "", TicketId(Current(c).Id), ct) is { } t ? Results.Ok(t) : throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ."));
+        api.MapPost("/support/tickets", async (CreateSupportTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(input.ResolvedSubject) || string.IsNullOrWhiteSpace(input.ResolvedDescription)) throw new ArgumentException("Vui lòng nhập đầy đủ tiêu đề và nội dung yêu cầu hỗ trợ.");
+            var customer = Current(c);
+            return Results.Ok(await s.CreateCustomerTicketAsync(0, "", "", TicketId(customer.Id), customer.Name, input, ct));
+        });
+        api.MapPost("/support/tickets/{id:int}/messages", async (int id, CustomerReplyTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+        {
+            var customer = Current(c);
+            return await s.AddCustomerMessageAsync(id, 0, "", "", TicketId(customer.Id), customer.Name, input, ct) is { } m ? Results.Ok(m) : throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ.");
+        });
+
         // eSMS delivery report: outside the session/CSRF groups, accepted only from the provider's IPs.
         app.MapGet("/api/sms/esms/callback", async (HttpContext c, SmsCallbackProcessor processor, IOptions<EsmsOptions> options, ILogger<SmsCallbackProcessor> logger) =>
         {
@@ -113,4 +132,6 @@ public static class CustomerPortalEndpoints
     }
 
     private static CustomerSession Current(HttpContext c) => (CustomerSession)c.Items[CustomerKey]!;
+    /// <summary>The ticket service (from main) keys people by int.</summary>
+    internal static int TicketId(long id) => checked((int)id);
 }

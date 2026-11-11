@@ -27,7 +27,7 @@ public static class DraftCompletionPolicy
             if (f.DataType is not ("TEXT" or "NUMBER" or "DATE" or "SELECT") || f.Min > f.Max || (f.DataType == "SELECT" && (f.Options is not { Count: > 0 and <= 100 } || f.Options.Any(x => string.IsNullOrWhiteSpace(x) || x.Length > 200) || f.Options.Distinct().Count() != f.Options.Count)))
                 throw new ArgumentException("Kiểu hoặc giới hạn trường không hợp lệ: " + f.Label);
         }
-        ValidatePlaceholders(template.Terms, template.Fields);
+        if (!template.ManualWordContent) ValidatePlaceholders(template.Terms, template.Fields);
     }
     public static void ValidatePlaceholders(IEnumerable<DraftTerm> terms, IEnumerable<DraftField> fields)
     {
@@ -58,7 +58,7 @@ public static class DraftCompletionPolicy
             if (f.DataType == "DATE" && !DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _)) throw new ArgumentException("Ngày không hợp lệ: " + f.Label);
             if (f.DataType == "SELECT" && !(f.Options?.Contains(value) ?? false)) throw new ArgumentException("Lựa chọn không hợp lệ: " + f.Label);
         }
-        ValidatePlaceholders(c.Terms, template.Fields);
+        if (!template.ManualWordContent) ValidatePlaceholders(c.Terms, template.Fields);
         if (c.Milestones is null || c.Milestones.Count > 100 || c.Milestones.Select(x => x.Key).Distinct().Count() != c.Milestones.Count)
             throw new ArgumentException("Các đợt thanh toán phải có mã riêng, tối đa 100 đợt.");
         if (c.PaymentMode is not ("PERCENT" or "AMOUNT")) throw new ArgumentException("Cách phân bổ thanh toán không hợp lệ.");

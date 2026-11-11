@@ -22,6 +22,20 @@ public class InternalDraftTests
         Assert.Contains("Công ty", result.MissingFields);
     }
     [Fact]
+    public void PreviewAllowsUnselectedCustomerAndEmptyNameButSavingStillRequiresThem()
+    {
+        var input = Content(); input.CustomerId = 0; input.Name = "";
+        InternalDraftPolicy.Prepare(input, Template, forPreview: true);
+        Assert.Equal(0, input.CustomerId);
+        Assert.Equal("", input.Name);
+        Assert.Throws<ArgumentException>(() => InternalDraftPolicy.Prepare(input, Template));
+        input.TemplateId = 999;
+        Assert.Throws<ArgumentException>(() => InternalDraftPolicy.Prepare(input, Template, forPreview: true));
+        input.TemplateId = Template.Id; input.Terms.Clear();
+        Assert.Throws<ArgumentException>(() => InternalDraftPolicy.Prepare(input, Template, forPreview: true));
+    }
+
+    [Fact]
     public void RejectsConflictingDiscountsAndInvalidDates()
     {
         var input = Content(); input.Items = [input.Items[0] with { DiscountAmount = 5 }];

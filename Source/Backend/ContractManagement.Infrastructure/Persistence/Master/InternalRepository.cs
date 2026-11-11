@@ -35,15 +35,31 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     }
     public async Task<List<TemplateDefinition>> Templates(CancellationToken ct)
     {
-        var ids = await db.ContractTemplates.Where(t => t.IsActive && t.ContractTemplateDocumentType == 1).Select(t => t.ContractTemplateId).ToListAsync(ct);
+        var templates = await db.ContractTemplates.AsNoTracking().Where(t => t.IsActive && t.ContractTemplateDocumentType == 1).ToListAsync(ct);
         var result = new List<TemplateDefinition>();
-        foreach (var id in ids)
+        foreach (var t in templates)
         {
+            var id = t.ContractTemplateId;
             var file = await db.FileStorages.AsNoTracking().Where(f => f.FileStorageObjecttype == "INTERNAL_TEMPLATE" && f.FileStorageObjectid == id)
                 .OrderByDescending(f => f.FileStorageFileid).FirstOrDefaultAsync(ct);
-            if (file is not null) result.Add(DraftCompletionPolicy.UpgradeTemplate(await storage.Read(file, ct)));
+            if (file is not null) { result.Add(DraftCompletionPolicy.UpgradeTemplate(await storage.Read(file, ct))); continue; }
+            // An uploaded template whose definition file is missing is skipped, as before; only SQL-defined templates have no stored files.
+            if (await db.FileStorages.AnyAsync(f => f.FileStorageObjecttype.StartsWith("INTERNAL_TEMPLATE") && f.FileStorageObjectid == id, ct)) continue;
+            if (await FromDatabase(t, ct) is { } defined) result.Add(DraftCompletionPolicy.UpgradeTemplate(defined));
         }
         return result;
+    }
+    /// <summary>Database first: a template written by SQL (Artifacts/Database/Master/010-demo-template.sql) is CONTRACT_TEMPLATE plus
+    /// CONTRACT_TEMPLATE_FIELDS; rows with data type TERM are its terms in id order (label = title, extra_options = default content).</summary>
+    private async Task<TemplateDefinition?> FromDatabase(ContractTemplate t, CancellationToken ct)
+    {
+        var rows = await db.ContractTemplateFields.AsNoTracking().Where(f => f.ContractTemplateId == t.ContractTemplateId)
+            .OrderBy(f => f.ContractTemplateFieldId).ToListAsync(ct);
+        var terms = rows.Where(f => f.ContractTemplateFieldDataType == "TERM").Select(f => new DraftTerm(f.ContractTemplateFieldKey, f.ContractTemplateFieldLabel, f.ExtraOptions ?? "")).ToList();
+        if (terms.Count == 0) return null;
+        var fields = rows.Where(f => f.ContractTemplateFieldDataType != "TERM")
+            .Select(f => new DraftField(f.ContractTemplateFieldKey, f.ContractTemplateFieldLabel, f.IsRequired, f.ContractTemplateFieldDataType)).ToList();
+        return new(t.ContractTemplateId, t.ContractTemplateName, $"db-{(t.UpdatedDate ?? t.CreatedDate).Ticks}", true, fields, terms);
     }
     public async Task<List<CustomerOption>> Customers(string? search, CancellationToken ct)
     {

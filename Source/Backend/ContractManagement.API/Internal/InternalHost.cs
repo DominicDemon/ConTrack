@@ -39,6 +39,8 @@ public static class InternalHost
         builder.Services.AddScoped<ICatalogAdmin, CatalogRepository>();
         // Toàn bộ Internal mode (bao gồm Hợp đồng nháp, Gửi khách xem, Phân quyền, Hỗ trợ khách hàng & SMS Outbox) dùng chung 1 DbContext duy nhất: MasterDbContext.
         builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
+        builder.Services.AddScoped<InternalWordDocument>();
+        builder.Services.AddScoped<InternalWordTemplates>();
         builder.Services.AddScoped<IContractReviewRepository, ContractReviewRepository>();
         builder.Services.AddScoped<ICustomerPortalRepository, CustomerPortalRepository>();
         builder.Services.AddScoped<SmsCallbackProcessor>();
@@ -223,6 +225,33 @@ public static class InternalHost
             return await next(invocation);
         });
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
+        secured.MapPost("/contract-templates/word/extract", async (TemplateFileInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
+            Results.Ok(await service.Extract(input, Current(c).Id, ct)));
+        secured.MapPost("/contract-templates/word/preview", async (WordTemplateInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
+            Results.Ok(await service.Preview(input, Current(c).Id, ct))).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
+        secured.MapPost("/contract-templates/word/activate", async (WordActivation input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
+            Results.Ok(await service.Activate(input, Current(c).Id, ct))).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
+        secured.MapPost("/contract-drafts/word-preview", async (WordDraftPreview input, HttpContext c,
+            InternalDraftService drafts, IInternalRepository repository, InternalWordTemplates service, CancellationToken ct) =>
+        {
+            var template = input.DraftId.HasValue
+                ? (await drafts.Get(input.DraftId.Value, Current(c), ct)).Content.TemplateSnapshot
+                : (await repository.Templates(ct)).SingleOrDefault(t => t.Id == input.Content.TemplateId);
+            if (template is null) throw new ArgumentException("Không tìm thấy mẫu hợp đồng.");
+            var bytes = await service.Render(input.Content, template, input.Pdf, ct);
+            return Results.Ok(new { base64 = Convert.ToBase64String(bytes), contentType = input.Pdf ? "application/pdf" : InternalWordDocument.Mime });
+        });
+        secured.MapGet("/contract-templates/{id:long}/word-details", async (long id, IInternalRepository repository, InternalWordTemplates service, CancellationToken ct) => {
+            var template = (await repository.Templates(ct)).SingleOrDefault(t => t.Id == id)
+                ?? throw new ArgumentException("Không tìm thấy mẫu hợp đồng đang hoạt động.");
+            return Results.Ok(InternalWordDetails.Extract(await service.ReadWord(template, ct), template.Name));
+        });
+        secured.MapPost("/contract-templates/{id:long}/word-preview", async (long id, WordStoredPreview input, IInternalRepository repository, InternalWordTemplates service, CancellationToken ct) => {
+            var template = (await repository.Templates(ct)).SingleOrDefault(t => t.Id == id)
+                ?? throw new ArgumentException("Không tìm thấy mẫu hợp đồng đang hoạt động.");
+            var bytes = await service.PreviewStoredWord(template, input.Pdf, ct);
+            return Results.Ok(new { base64 = Convert.ToBase64String(bytes), contentType = input.Pdf ? "application/pdf" : InternalWordDocument.Mime });
+        });
         secured.MapPost("/contract-templates/extract", (TemplateFileInput input, IInternalTemplateImport importer) => Results.Ok(importer.Extract(input)));
         secured.MapPost("/contract-templates/import", async (TemplateImportInput input, HttpContext c, IInternalTemplateImport importer, CancellationToken ct) =>
             Results.Ok(await importer.Save(input, Current(c).Id, ct)));

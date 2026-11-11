@@ -1,0 +1,34 @@
+.dialog { display:flex; flex-direction:column; width:98vw; max-width:98vw; height:96dvh; max-height:96dvh; padding:18px; gap:12px; overflow:hidden; }
+.metadata { display:flex; flex-wrap:wrap; align-items:end; gap:12px; padding-right:24px; }
+.metadata label { display:grid; gap:4px; font-size:13px; flex:1; min-width:180px; }
+.select { width:100%; min-height:36px; border:1px solid var(--border); border-radius:6px; padding:6px 9px; background:var(--background); color:var(--foreground); }
+.workspace { flex:1; min-height:0; overflow:hidden; }
+.pane { height:100%; min-height:0; display:flex; flex-direction:column; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+.toolbar { flex-shrink:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--border); background:var(--background); }
+.toolbar strong { margin-right:auto; }
+.toolbar select { max-width:220px; }
+.selection { width:100%; font-size:12px; white-space:nowrap; text-overflow:ellipsis; overflow:hidden; }
+.scroll { flex:1; min-height:0; overflow:auto; padding:20px; background:#e7e9ec; }
+.paper { max-width:840px; min-height:100%; margin:0 auto; background:white; color:#17202c; padding:36px; box-shadow:0 1px 8px #00000014; font-family:"Times New Roman",serif; font-size:16px; line-height:1.6; }
+.paper textarea { display:block; width:100%; field-sizing:content; min-height:1.6em; border:0; border-radius:2px; background:transparent; color:inherit; padding:0 2px; margin:0; resize:none; font:inherit; line-height:inherit; overflow:hidden; outline:none; box-shadow:none; }
+.paper textarea:hover { background:#f4f7fb; }
+.paper textarea:focus { background:#eff6ff; outline:1px solid #93c5fd; }
+.paper table { table-layout:auto; }
+.paper td { min-width:45px; }
+.heading { font-weight:700; }
+.handle { width:12px; flex-shrink:0; display:grid; place-items:center; color:var(--muted-foreground); }
+.footer { display:flex; flex-wrap:wrap; align-items:center; gap:10px; flex-shrink:0; }
+.footer label { flex:1; font-size:13px; }
+.fields { max-height:220px; overflow:auto; padding:12px; border-bottom:1px solid var(--border); }
+.field { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:8px; }
+.field input { max-width:190px; }
+.tabs { display:none; gap:8px; }
+.mobilePane { height:100%; }
+.empty { text-align:center; padding:60px 20px; color:var(--muted-foreground); }
+@media(max-width:850px) {
+ .dialog { padding:12px; }
+ .tabs { display:flex; }
+ .paper { padding:18px; }
+ .scroll { padding:10px; }
+ .metadata label { min-width:140px; }
+}

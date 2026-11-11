@@ -56,7 +56,7 @@ back the schema transaction; a newly created empty database may remain.
 Mapping was reverse engineered from the initialized SQL Server database, with
 no connection string embedded in generated code. The one keyless join table,
 `EMPLOYEE_DEPARTMENT`, has a unique, non-null `(employee_id, department_id)` pair.
-`MasterDbContext.Keys.cs` uses that pair as its EF tracking key; it does not add a
+`MasterDbContext.cs` (`OnModelCreating`) uses that pair as its EF tracking key; it does not add a
 physical primary key. No foreign-key relationships have been invented.
 
 Do not run legacy migrations, `EnsureCreated` or `Migrate` against MASTER.
@@ -72,8 +72,8 @@ credentials, run commands, permissions, storage and verification.
 employee username index, and filters the unique customer email index to non-null values.
 `002-contract-review.sql` adds the customer review flow (CONTRACT_REVIEW_REQUEST, SMS_OUTBOX,
 SMS_PROVIDER_CALLBACK, review columns, document status 0..7 and foreign keys); 63 tables / 724 columns after it.
-`003-draft-content.sql` adds CONTRACT_TEMPLATE_FIELDS, CONTRACT_DOCUMENT_ITEMS and CONTRACT_DYNAMIC_VALUES,
-which the optimized schema dropped but the draft code still uses.
+`003-template-fields.sql` (owned by Hoang) adds CONTRACT_TEMPLATE_FIELDS when missing. CONTRACT_DOCUMENT_ITEMS and CONTRACT_DYNAMIC_VALUES
+are already in `MasterDB-Optimize.sql`; an older database without them needs them created from that file.
 `004-employee-admin.sql` makes employee email / phone / personal identifier filtered-unique, drops the
 display-name unique constraint, adds `employee_must_change_password`, and adds the `employee.manage`
 permission with the `INTERNAL_ADMIN` role for account administration.
@@ -81,6 +81,9 @@ permission with the `INTERNAL_ADMIN` role for account administration.
 `DEPARTMENT.department_staff_role_id` / `department_manager_role_id` / `department_manager_employee_id` (one manager per
 department, one department per employee), the per-page permissions and a staff + manager role per department, and moves
 the `CONTRACT_INTERNAL_CHECK` step from the retired `INTERNAL_OFFICE` role to Ban Giám Đốc (`INTERNAL_ADMIN`).
+`010-demo-template.sql` inserts the demo template `INTERNAL_DEMO_V1` (Hoang's former `--seed-internal` bootstrap content):
+CONTRACT_TEMPLATE plus 18 fields and 3 empty terms in CONTRACT_TEMPLATE_FIELDS (data type `TERM`, label = title,
+extra_options = default content). A template with no stored files is read straight from these rows.
 The schema is database first: the application never applies these scripts. Run them manually and
 idempotently (SSMS, or `sqlcmd -I` so QUOTED_IDENTIFIER is on for the filtered indexes).
 Employees, roles, permissions, customers and the `CONTRACT_INTERNAL_CHECK` approval workflow

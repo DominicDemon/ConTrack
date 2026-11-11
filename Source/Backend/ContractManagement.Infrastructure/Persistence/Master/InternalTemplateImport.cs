@@ -82,15 +82,17 @@ public sealed class InternalTemplateImport(MasterDbContext db, InternalTemplateS
             {
                 var template = new ContractTemplate { ContractTemplateCode = "UPLOAD_" + Guid.NewGuid().ToString("N"), ContractTemplateName = name,
                     ContractTemplateDescription = "Mẫu tải lên; người soạn đã kiểm tra nội dung, chưa xác nhận phê duyệt của công ty.",
-                    ContractTemplateDocumentType = 1, ContractTemplateLanguageMode = 1, IsActive = true, CreatedDate = DateTime.UtcNow };
+                    ContractTemplateDocumentType = 1, ContractTemplateLanguageMode = 1, IsActive = true, CreatedEmployeeId = checked((int)actor), CreatedDate = DateTime.UtcNow };
                 db.ContractTemplates.Add(template); await db.SaveChangesAsync(ct);
                 var terms = new List<DraftTerm>();
                 for (var offset = 0; offset < content.Length; offset += 18000)
                     terms.Add(new("IMPORT_" + terms.Count, "Nội dung mẫu — phần " + (terms.Count + 1), content.Substring(offset, Math.Min(18000, content.Length - offset))));
                 // Keep customer identity in the saved snapshot for the draft list; imported text is edited explicitly.
-                List<DraftField> fields = [new("CUSTOMER_CONTACT_NAME", "Tên khách hàng"), new("CUSTOMER_COMPANY", "Khách hàng / doanh nghiệp"),
-                    new("CUSTOMER_CONTACT_PHONE", "SĐT"), new("CUSTOMER_ADDRESS", "Địa chỉ"), new("CUSTOMER_EMAIL", "Email"), new("CUSTOMER_TAX_CODE", "Mã số thuế")];
+                if (input.Terms is { Count: > 0 }) terms = input.Terms.Select(t => t with { Key = InternalDraftPolicy.Text(t.Key, 100), Title = InternalDraftPolicy.Text(t.Title, 500), Content = InternalDraftPolicy.Text(t.Content, 20000) }).ToList();
+                if (terms.Any(t => string.IsNullOrWhiteSpace(t.Key) || string.IsNullOrWhiteSpace(t.Title) || string.IsNullOrWhiteSpace(t.Content)) || terms.Select(t => t.Key).Distinct().Count() != terms.Count) throw new ArgumentException("Điều khoản cần mã duy nhất, tiêu đề và nội dung.");
+                var fields = DraftCompletionPolicy.PartyFields.Concat(input.Fields ?? []).ToList();
                 var definition = new TemplateDefinition(template.ContractTemplateId, name, "upload-v1-" + Guid.NewGuid().ToString("N"), false, fields, terms, true);
+                DraftCompletionPolicy.ValidateTemplate(definition);
                 Directory.CreateDirectory(storage.Root);
                 async Task Store(byte[] bytes, string extension, string objectType, string mime)
                 {
@@ -105,7 +107,8 @@ public sealed class InternalTemplateImport(MasterDbContext db, InternalTemplateS
                 await Store(original, Path.GetExtension(input.FileName).ToLowerInvariant(), "INTERNAL_TEMPLATE_SOURCE", Path.GetExtension(input.FileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase) ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
                 await Store(JsonSerializer.SerializeToUtf8Bytes(definition, InternalRepository.Json), ".json", "INTERNAL_TEMPLATE", "application/json");
                 foreach (var field in fields) db.ContractTemplateFields.Add(new() { ContractTemplateId = template.ContractTemplateId, ContractTemplateFieldKey = field.Key,
-                    ContractTemplateFieldLabel = field.Label, ContractTemplateFieldDataType = "TEXT", IsRequired = field.Required });
+                    ContractTemplateFieldLabel = field.Label, ContractTemplateFieldDataType = field.DataType, IsRequired = field.Required,
+                    ExtraOptions = JsonSerializer.Serialize(new { field.Options, field.Min, field.Max }, InternalRepository.Json) });
                 db.AuditLogs.Add(new() { ActionType = "CREATE", EntityName = "CONTRACT_TEMPLATE", EntityId = template.ContractTemplateId.ToString(), ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow });
                 await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); return definition;
             }

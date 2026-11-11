@@ -2,7 +2,7 @@ using ContractManagement.Domain.Internal;
 namespace ContractManagement.Application.Features.Internal;
 
 public sealed record TemplateFileInput(string FileName, string Base64);
-public sealed record TemplateImportInput(string FileName, string Base64, string Name, string Content);
+public sealed record TemplateImportInput(string FileName, string Base64, string Name, string Content, List<DraftField>? Fields = null, List<DraftTerm>? Terms = null);
 public sealed record TemplateExtraction(string Name, string Content, string? Warning);
 public interface IInternalTemplateImport
 {

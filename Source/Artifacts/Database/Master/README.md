@@ -15,6 +15,12 @@ No SQL password is needed for this local connection.
 
 ## Source files
 
+`MasterDB-ConTrack.sql` is the supplied full schema for `ConTrackMaster`, including
+customer review and SMS tables. It contains its own CREATE DATABASE / USE statements.
+For the existing local `ContractManagement_Master` database, run `001`–`003` manually
+to add that functionality while preserving drafts and accounts.
+The application connection name remains `ConnectionStrings:MasterDatabase`.
+
 `MasterDB-Optimize.original.sql` is the exact supplied SQL file.
 `Master_Database_HuongDan.docx` is the supplied reference document. Its proposed
 workflows and example statuses are guidance, not seeded database values.
@@ -64,10 +70,21 @@ The internal draft workflow now runs directly on MASTER. See
 credentials, run commands, permissions, storage and verification.
 `001-internal-drafts.sql` upgrades the version pointer to BIGINT, adds a unique
 employee username index, and filters the unique customer email index to non-null values.
-It is applied explicitly by the idempotent internal bootstrap.
 `002-contract-review.sql` adds the customer review flow (CONTRACT_REVIEW_REQUEST, SMS_OUTBOX,
 SMS_PROVIDER_CALLBACK, review columns, document status 0..7 and foreign keys); 63 tables / 724 columns after it.
-The bootstrap splits it on `GO` lines and runs all batches in one transaction.
+`003-draft-content.sql` adds CONTRACT_TEMPLATE_FIELDS, CONTRACT_DOCUMENT_ITEMS and CONTRACT_DYNAMIC_VALUES,
+which the optimized schema dropped but the draft code still uses.
+`004-employee-admin.sql` makes employee email / phone / personal identifier filtered-unique, drops the
+display-name unique constraint, adds `employee_must_change_password`, and adds the `employee.manage`
+permission with the `INTERNAL_ADMIN` role for account administration.
+`005-department-roles.sql` seeds the 5 departments of `Artifacts/Sql/seed-masterdb.sql` (same codes and ids), adds
+`DEPARTMENT.department_staff_role_id` / `department_manager_role_id` / `department_manager_employee_id` (one manager per
+department, one department per employee), the per-page permissions and a staff + manager role per department, and moves
+the `CONTRACT_INTERNAL_CHECK` step from the retired `INTERNAL_OFFICE` role to Ban Giám Đốc (`INTERNAL_ADMIN`).
+The schema is database first: the application never applies these scripts. Run them manually and
+idempotently (SSMS, or `sqlcmd -I` so QUOTED_IDENTIFIER is on for the filtered indexes).
+Employees, roles, permissions, customers and the `CONTRACT_INTERNAL_CHECK` approval workflow
+are also inserted directly in the database.
 
 ## Legacy scope
 
@@ -76,8 +93,7 @@ services, login/RBAC, central database and tenant provisioning still use their
 legacy contexts and schema. They are not compatible merely by changing their
 connection strings. Their migration requires implementing the new workflows,
 including document/version handling, permissions and tenant database resolution.
-Legacy data has not been migrated. Internal bootstrap creates explicitly labeled local
-test employees, roles/permissions and an unapproved demonstration template.
+Legacy data has not been migrated.
 
 MASTER currently contains sensitive records for multiple business areas and has
 no database foreign keys. New endpoints must enforce authorization and data scope

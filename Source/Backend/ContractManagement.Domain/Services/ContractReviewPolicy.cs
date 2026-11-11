@@ -71,9 +71,47 @@ public static class ContractReviewPolicy
     }
 }
 
+/// <summary>Email link that replaces the customer password login. Only the SHA-256 of the token is stored.</summary>
+public static class ReviewLink
+{
+    public const string PhoneField = "CUSTOMER_CONTACT_PHONE", EmailField = "CUSTOMER_EMAIL";
+    public static string NewToken() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+    public static string Hash(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))).ToLowerInvariant();
+    public static bool IsToken(string? token) => token is { Length: 64 } && token.All(Uri.IsHexDigit);
+
+    /// <returns>The expiry in UTC, or null when it is missing or not in the future.</returns>
+    public static DateTime? Expiry(DateTimeOffset? value, DateTime now) => value is { } v && v.UtcDateTime > now ? v.UtcDateTime : null;
+
+    /// <summary>The contract's own contact wins; the customer record is used when the field is empty or invalid.</summary>
+    public static string? ContactPhone(IReadOnlyDictionary<string, string> fields, string? customerPhone) =>
+        PhoneNumber.Normalize(fields.GetValueOrDefault(PhoneField)) ?? PhoneNumber.Normalize(customerPhone);
+    public static string? ContactEmail(IReadOnlyDictionary<string, string> fields, string? customerEmail) =>
+        new[] { fields.GetValueOrDefault(EmailField)?.Trim(), customerEmail?.Trim() }.FirstOrDefault(IsEmail);
+    private static bool IsEmail(string? value) => System.Net.Mail.MailAddress.TryCreate(value, out var address) && address.Address == value;
+}
+
 public static class SnapshotHash
 {
-    public static string Compute(string draftJson) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(draftJson))).ToLowerInvariant();
+    public static string Compute(string draftJson)
+    {
+        if (!draftJson.TrimStart().StartsWith('{')) return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(draftJson))).ToLowerInvariant();
+        using var document = System.Text.Json.JsonDocument.Parse(draftJson);
+        if (document.RootElement.TryGetProperty("formatVersion", out var version) && version.GetInt32() >= 2)
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new System.Text.Json.Utf8JsonWriter(stream)) Write(document.RootElement, writer);
+            return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
+        }
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(draftJson))).ToLowerInvariant();
+    }
+    private static void Write(System.Text.Json.JsonElement value, System.Text.Json.Utf8JsonWriter writer)
+    {
+        if (value.ValueKind == System.Text.Json.JsonValueKind.Object) {
+            writer.WriteStartObject(); foreach (var p in value.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal)) { writer.WritePropertyName(p.Name); Write(p.Value, writer); } writer.WriteEndObject();
+        } else if (value.ValueKind == System.Text.Json.JsonValueKind.Array) { writer.WriteStartArray(); foreach (var item in value.EnumerateArray()) Write(item, writer); writer.WriteEndArray(); }
+        else if (value.ValueKind == System.Text.Json.JsonValueKind.Number && value.TryGetDecimal(out var number)) writer.WriteRawValue(number.ToString("G29", System.Globalization.CultureInfo.InvariantCulture));
+        else value.WriteTo(writer);
+    }
 }
 
 public static class PhoneNumber

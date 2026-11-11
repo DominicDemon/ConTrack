@@ -1,15 +1,13 @@
-import { type DraftContent, estimateTotals, money } from "@/services/internal-api";
+import { renderContract } from "../../../Shared/contract-renderer";
+import { type DraftContent, money } from "@/services/internal-api";
 import s from "./workspace.module.css";
 export default function DraftPreview({ content, code }: { content: DraftContent; code?: string }) {
-  const totals = estimateTotals(content);
+  // Normalize only the display copy; stored snapshots and signing hashes stay unchanged.
+  content = JSON.parse(JSON.stringify(content).normalize("NFC")) as DraftContent;
+  const rendered = renderContract(content); const totals = rendered.totals;
   const field = (key: string, label: string) => content.fields[key]?.trim() || <span className={s.missing}>Chưa điền: {label}</span>;
   const date = (value: string | null) => value ? value.split("-").reverse().join("/") : <span className={s.missing}>Chưa điền ngày</span>;
-  if (content.templateSnapshot?.isImported) return <div className={s.previewPane}><div className={s.previewLabel}><span>Bản xem trước • văn bản nhập</span><span>Chưa ký</span></div><article className={s.paper} aria-label="Bản xem trước hợp đồng">
-    <div className={s.demoStamp}>BẢN NHÁP • MẪU TẢI LÊN — CHƯA XÁC NHẬN PHÊ DUYỆT</div>
-    <h2>{content.name || "Tên hợp đồng"}</h2>
-    <p style={{fontSize:11}}>Mã nháp: {code || "Được cấp khi lưu"}</p>
-    {content.terms.map(term => <p key={term.key}>{term.content || <span className={s.missing}>Chưa nhập nội dung</span>}</p>)}
-  </article></div>;
+  if ((content.formatVersion ?? 1) < 2 && content.templateSnapshot?.isImported) return <div className={s.previewPane}><article className={s.paper}><div className={s.demoStamp}>BẢN NHÁP • MẪU TẢI LÊN — CHƯA XÁC NHẬN PHÊ DUYỆT</div><h2>{content.name}</h2><p>Mã nháp: {code || "Được cấp khi lưu"}</p>{content.terms.map(t => <p key={t.key}>{t.content}</p>)}</article></div>;
   return <div className={s.previewPane}><div className={s.previewLabel}><span>Bản xem trước • A4</span><span>Chưa ký</span></div><article className={s.paper} aria-label="Bản xem trước hợp đồng">
     <div className={s.demoStamp}>BẢN NHÁP • MẪU MINH HỌA — CHƯA ĐƯỢC CÔNG TY PHÊ DUYỆT</div>
     <p style={{ textAlign: "center", fontWeight: 700, marginTop: 22 }}>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</p><p style={{ textAlign: "center" }}>Độc lập – Tự do – Hạnh phúc</p>
@@ -30,7 +28,7 @@ export default function DraftPreview({ content, code }: { content: DraftContent;
     <h3>HẠNG MỤC HỢP ĐỒNG</h3>{content.items.length ? <table><thead><tr><th>Hạng mục</th><th>SL</th><th>Đơn giá</th><th>Thành tiền*</th></tr></thead><tbody>{content.items.map((item, i) => <tr key={i}><td>{item.name || "Chưa điền tên"}</td><td>{money(item.quantity)}</td><td>{money(item.unitPrice)}</td><td>{money(item.quantity * item.unitPrice)}</td></tr>)}</tbody></table> : <p className={s.missing}>Chưa có hạng mục hợp đồng</p>}
     <div className={s.totals}><div><span>Tạm tính</span><span>{money(totals.subtotal)} ₫</span></div><div><span>Giảm giá</span><span>{money(totals.discount)} ₫</span></div><div><span>VAT ({content.vatPercent}%)</span><span>{money(totals.vat)} ₫</span></div><div><span>Tổng giá trị</span><span>{money(totals.total)} ₫</span></div></div>
     <p style={{ fontSize: 11, color: "#5d6d70" }}>* Thành tiền trước giảm giá và VAT. Giá trị sẽ được kiểm tra lại khi lưu.</p>
-    <h3>ĐIỀU KHOẢN HỢP ĐỒNG</h3>{content.terms.map((term, i) => <section key={term.key}><h3>Điều {i + 1}. {term.title}</h3><p>{term.content || <span className={s.missing}>Chưa soạn nội dung điều khoản</span>}</p></section>)}
+    {(content.formatVersion ?? 1) >= 2 && <><h3>LỊCH THANH TOÁN</h3>{rendered.milestones.length ? rendered.milestones.map(m => <section key={m.key}><strong>{m.title || "Chưa đặt tên đợt"}: {money(m.amount)} ₫</strong><p>{m.due}</p><p>{m.condition}</p></section>) : <p className={s.missing}>Chưa lập lịch thanh toán</p>}</>}<h3>ĐIỀU KHOẢN HỢP ĐỒNG</h3>{rendered.terms.map((term, i) => <section key={term.key}><h3>Điều {i + 1}. {term.title}</h3><p>{term.content || <span className={s.missing}>Chưa soạn nội dung điều khoản</span>}</p></section>)}
     {!content.terms.length && <p className={s.missing}>Chưa có điều khoản</p>}
     <div className={s.signatures}><div><strong>ĐẠI DIỆN BÊN A</strong><p>(Chưa ký)</p></div><div><strong>ĐẠI DIỆN BÊN B</strong><p>(Chưa ký)</p></div></div>
   </article></div>;

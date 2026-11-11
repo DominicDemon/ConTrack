@@ -56,7 +56,7 @@ public class InternalTemplateImportTests
         await using var db = Context(Environment.GetEnvironmentVariable("CONTRACK_MASTER_TEST_CONNECTION"));
         var root = Path.Combine(Path.GetTempPath(), "contract-import-test-" + Guid.NewGuid().ToString("N"));
         var storage = new InternalTemplateStorage(root); var importer = new InternalTemplateImport(db, storage);
-        var actor = await db.Employees.Where(e => e.EmployeeUsername == "sale.local").Select(e => e.EmployeeId).SingleAsync();
+        var actor = await db.Employees.Where(e => e.EmployeeUsername == "sale").Select(e => e.EmployeeId).SingleAsync();
         long? id = null;
         try
         {

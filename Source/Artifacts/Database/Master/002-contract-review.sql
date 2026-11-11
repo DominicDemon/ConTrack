@@ -1,6 +1,5 @@
 -- 002: luồng "gửi khách xem hợp đồng nháp" (CONTRACT-REVIEW-FLOW). Chỉ thêm, không xóa/đổi tên.
--- Nguồn: phần [THÊM-xx] của MasterDB-ConTrack.sql. Idempotent; bootstrap tách batch theo dòng GO
--- và chạy tất cả trong một transaction.
+-- Nguồn: phần [THÊM-xx] của MasterDB-ConTrack.sql. Idempotent; chạy tay bằng SSMS hoặc sqlcmd -I (app không tự chạy).
 
 -- [THÊM-02] 0 Draft, 1 Negotiating, 2 PendingApproval, 3 PendingSignature, 4 Signed, 5 Completed, 6 Cancelled, 7 Rejected
 IF OBJECT_ID('CK_Doc_Status', 'C') IS NULL

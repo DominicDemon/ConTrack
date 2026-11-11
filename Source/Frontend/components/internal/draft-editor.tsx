@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, GripVertical, ListChecks, Plus, Save, Trash2, Users, Wallet } from "lucide-react";
-import { internalApi, InternalApiError, estimateTotals, money, dateTime, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
+import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import DraftPreview from "./draft-preview";
 import TemplateUpload from "./template-upload";
@@ -22,7 +22,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   useEffect(() => { const mq = window.matchMedia("(max-width: 850px)"); const update = () => setMobile(mq.matches); update(); mq.addEventListener("change", update); return () => mq.removeEventListener("change", update); }, []);
   useEffect(() => { let active = true; setLoading(true); setError("");
     void Promise.all([internalApi<TemplateDefinition[]>("/contract-templates"), internalApi<CustomerOption[]>("/customers"), internalApi<ProductOption[]>("/products"), id ? internalApi<DraftRecord>(`/contract-drafts/${id}`) : Promise.resolve(null)]).then(([ts, cs, ps, draft]) => {
-      if (!active) return; setTemplates(ts); setCustomers(cs); setProducts(ps); setRecord(draft);
+      if (!active) return; ts = ts.map(completePartyFields); setTemplates(ts); setCustomers(cs); setProducts(ps); setRecord(draft);
       setContent(draft?.content ?? { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
       setDirty(false); dirtyRef.current = false;
     }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; };
@@ -44,7 +44,8 @@ export default function DraftEditor({ id }: { id?: string }) {
   }, []);
   const change = useCallback((update: (old: DraftContent) => DraftContent) => { setContent(update); setDirty(true); dirtyRef.current = true; setSuccess(""); }, []);
   const setField = (key: string, value: string) => change(c => ({ ...c, fields: { ...c.fields, [key]: value } }));
-  const template = content.templateSnapshot ?? templates.find(t => t.id === content.templateId);
+  const sourceTemplate = content.templateSnapshot ?? templates.find(t => t.id === content.templateId);
+  const template = sourceTemplate && (true ? completePartyFields(sourceTemplate) : sourceTemplate);
   const totals = estimateTotals(content);
   const missing = [...(template?.fields.filter(f => f.required && !content.fields[f.key]?.trim()).map(f => f.label) ?? []), ...(!content.items.length ? ["Hạng mục hợp đồng"] : []), ...(!content.terms.length || content.terms.some(t => !t.content.trim()) ? ["Nội dung điều khoản"] : [])];
   function selectCustomer(customer: CustomerOption) { change(c => ({ ...c, customerId: customer.id, fields: { ...c.fields, ...customer.fields } })); }

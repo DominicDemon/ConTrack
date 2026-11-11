@@ -4,6 +4,8 @@ import 'pages/login_page.dart';
 import 'pages/catalog/services/service_list_page.dart';
 import 'pages/catalog/service-types/service_type_list_page.dart';
 import 'pages/dashboard_page.dart';
+import 'pages/scans/scan_login_page.dart';
+import 'pages/scans/signed_contract_list_page.dart';
 import 'pages/support/ticket_list_page.dart';
 import 'pages/support/create_ticket_page.dart';
 import 'pages/support/ticket_detail_page.dart';
@@ -88,6 +90,16 @@ class MyApp extends StatelessWidget {
             if (settings.name == '/catalog/services') {
               return MaterialPageRoute(
                 builder: (context) => const ServiceListPage(),
+              );
+            }
+            if (settings.name == '/scans/login') {
+              return MaterialPageRoute(
+                builder: (context) => const ScanLoginPage(),
+              );
+            }
+            if (settings.name == '/scans/contracts') {
+              return MaterialPageRoute(
+                builder: (context) => const SignedContractListPage(),
               );
             }
             if (settings.name == '/support/tickets') {

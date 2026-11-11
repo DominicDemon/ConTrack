@@ -156,8 +156,14 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <button className={ui.secondaryButton} disabled={busy || dirty} title={dirty ? "Lưu nháp trước khi tải lại trạng thái" : "Tải trạng thái khách hàng và phê duyệt mới nhất"} onClick={() => void refreshWorkflow()}><RefreshCw size={15}/>Làm mới trạng thái</button>
-        {canSendToCustomer && <button type="button" className={ui.primaryButton} aria-describedby={record.sendBlockedReason ? "send-review-block-reason" : "review-send-guidance"} disabled={busy || dirty || !!record.sendBlockedReason} title={record.sendBlockedReason || (dirty ? "Lưu nháp trước khi gửi" : undefined)} onClick={send}><Send size={16}/>Gửi khách xem</button>}
+<<<<<<< HEAD
+        <button type="button" className={ui.primaryButton} disabled={busy || dirty || !!record.sendBlockedReason}
+          aria-describedby="review-send-guidance" title={dirty ? "Lưu nháp trước khi gửi" : record.sendBlockedReason || undefined} onClick={send}><Send size={16}/>Gửi khách xem</button>
+        {canCreateVersion && <button className={ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới</button>}
+=======
+        {canSendToCustomer && <button className={ui.primaryButton} aria-describedby={record.sendBlockedReason ? "send-review-block-reason" : undefined} disabled={busy || dirty || !!record.sendBlockedReason} title={record.sendBlockedReason || (dirty ? "Lưu nháp trước khi gửi" : undefined)} onClick={send}><Send size={16}/>Gửi khách xem</button>}
         {canCreateVersion && <button className={ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới để chỉnh sửa</button>}
+>>>>>>> origin/feature/electronic-contract-signing
         {awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
           <button className={ui.secondaryButton} disabled={busy} onClick={() => followup("CLOSE")}><XCircle size={16}/>Đóng draft</button></>}
         {(latest?.status === "SENT" || latest?.status === "VIEWED") && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
@@ -172,14 +178,23 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
           onClick={() => void resetCustomerPassword()}><KeyRound size={16}/>Cấp lại mật khẩu tạm</button>}
       </div>
     </div>
+<<<<<<< HEAD
+    <div id="review-send-guidance" className={s.muted} style={{ marginTop: 8 }} aria-live="polite">
+      {dirty ? <p>Lưu nháp để cập nhật thông tin và kiểm tra điều kiện gửi khách.</p> : record.sendBlockedReason ? <>
+        <p>Chưa thể gửi khách: {record.sendBlockedReason}</p>
+        {!!record.content.missingFields.length && <p>Cần bổ sung: {record.content.missingFields.join(", ")}.</p>}
+      </> : <p>Nháp đã đủ thông tin. Bạn có thể gửi phiên bản này cho khách xem và phản hồi.</p>}
+    </div>
+    {(record.issues ?? []).some(i => i.path.startsWith("milestones")) && <button type="button" className={ui.secondaryButton} onClick={() => focusIssue("milestones")}>Đi tới lịch thanh toán</button>}
+    {(record.carriedComments?.length ?? 0) > 0 && <section className={ui.notice}><strong>Góp ý chuyển tiếp sang phiên bản này</strong>{record.carriedComments?.map(c => <div key={c.id}><p>{c.content} · chuyển từ bản trước · {c.resolved ? "Đã xử lý" : "Chưa xử lý"}</p>{!c.resolved && <button type="button" disabled={busy} className={ui.secondaryButton} onClick={() => void act(async () => { await internalApi(`/contract-comments/${c.id}/resolve`,"POST"); onChanged(); })}>Đánh dấu đã xử lý</button>}</div>)}</section>}
+=======
     {latest && <div className={s.customerPortalAccess}>
       <div><strong>Cách khách mở hợp đồng</strong><p>Khách mở Portal, đăng nhập bằng số điện thoại và mật khẩu, rồi chọn hợp đồng trong mục “Hợp đồng của bạn”. Link này mở trang đăng nhập, không phải link công khai riêng cho hợp đồng.</p><p className={s.muted}>Trạng thái “đang chờ khách” xác nhận yêu cầu đã được tạo, không xác nhận SMS đã giao thành công.</p></div>
       <a href={customerPortalLoginUrl} target="_blank" rel="noreferrer">Mở Portal khách hàng</a>
     </div>}
     {canSendToCustomer && record.sendBlockedReason && !canCreateVersion && !awaitingDecision && <div id="send-review-block-reason" className={s.muted} style={{ marginTop: 8 }}><p>Chưa thể gửi khách: {record.sendBlockedReason}</p>{record.content.missingFields.length > 0 && <ul style={{ margin: "6px 0 0", paddingLeft: 20 }}>{record.content.missingFields.map(field => <li key={field}>{field}</li>)}</ul>}</div>}
     {canSendToCustomer && dirty && !record.sendBlockedReason && <p className={s.muted} style={{ marginTop: 8 }}>Lưu nháp trước khi gửi khách.</p>}
-    {(record.issues ?? []).some(i => i.path.startsWith("milestones")) && <button type="button" className={ui.secondaryButton} onClick={() => focusIssue("milestones")}>Đi tới lịch thanh toán</button>}
-    {(record.carriedComments?.length ?? 0) > 0 && <section className={ui.notice}><strong>Góp ý chuyển tiếp sang phiên bản này</strong>{record.carriedComments?.map(c => <div key={c.id}><p>{c.content} · chuyển từ bản trước · {c.resolved ? "Đã xử lý" : "Chưa xử lý"}</p>{!c.resolved && <button type="button" disabled={busy} className={ui.secondaryButton} onClick={() => void act(async () => { await internalApi(`/contract-comments/${c.id}/resolve`,"POST"); onChanged(); })}>Đánh dấu đã xử lý</button>}</div>)}</section>}
+>>>>>>> origin/feature/electronic-contract-signing
     {record.canEdit && <p className={s.muted} style={{ marginTop: 8 }}>Khi bạn lưu nội dung đã thay đổi, hệ thống tự tạo phiên bản kế tiếp và giữ phiên bản trước trong lịch sử.</p>}
     {error && <p role="alert" className={ui.error} style={{ marginTop: 10 }}>{error}</p>}
     {notice && <p role="status" className={ui.notice} style={{ marginTop: 10 }}>{notice}</p>}

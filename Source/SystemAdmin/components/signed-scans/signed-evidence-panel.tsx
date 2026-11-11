@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { CheckCircle2, FileCheck2, FileUp, History, Info, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
-import { downloadBlob } from "@/components/contract-templates/contract-template-utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +26,17 @@ import { ContractStatusBadge } from "./status-badge";
 
 /** How often the panel asks again while OCR is still reading a file. */
 const POLL_MS = 2000;
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 
 type LoadState = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready"; overview: SignedEvidenceOverview };
 

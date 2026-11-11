@@ -11,7 +11,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 /// those who see scanned contracts.
 /// </summary>
 public sealed class ScanSearchService(
-    ScanMasterDbContext db,
+    MasterDbContext db,
     SignedEvidenceService evidence,
     ScannedContractService scanned,
     ICurrentEmployee currentEmployee)

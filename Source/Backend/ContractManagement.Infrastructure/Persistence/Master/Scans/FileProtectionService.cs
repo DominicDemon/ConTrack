@@ -63,7 +63,7 @@ public sealed record RecoveredFilesDto(long EmployeeId, int Granted, int Already
 /// Who may open a file is decided by the feature that owns it; this service only holds the keys.
 /// </summary>
 public sealed class FileProtectionService(
-    ScanMasterDbContext db,
+    MasterDbContext db,
     ICurrentEmployee currentEmployee,
     IOptions<FileEncryptionOptions> options,
     IRecoveryPublicKey recovery,
@@ -105,13 +105,6 @@ public sealed class FileProtectionService(
         var userKey = FileCrypto.GenerateUserKey();
         var pair = FileCrypto.CreateUserKeyPair(userKey);
         var now = DateTime.UtcNow;
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var revoked = await db.EmployeeEncryptionKeys
-            .Where(key => key.EmployeeId == employeeId && key.EmployeeEncryptionKeyStatus == ActiveStatus)
-            .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(key => key.EmployeeEncryptionKeyStatus, RevokedStatus)
-                    .SetProperty(key => key.RevokedAt, now),
-                cancellationToken);
         var issued = new EmployeeEncryptionKey
         {
             EmployeeId = employeeId,
@@ -123,10 +116,18 @@ public sealed class FileProtectionService(
             IssuedByEmployeeId = currentEmployee.EmployeeId,
             IssuedAt = now,
         };
-        db.EmployeeEncryptionKeys.Add(issued);
-        db.AuditLogs.Add(Audit("EncryptionKeyIssued", KeyEntity, employeeId, new { replacedOldKey = revoked > 0 }));
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await db.ExecuteInTransactionAsync(async () =>
+        {
+            var revoked = await db.EmployeeEncryptionKeys
+                .Where(key => key.EmployeeId == employeeId && key.EmployeeEncryptionKeyStatus == ActiveStatus)
+                .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(key => key.EmployeeEncryptionKeyStatus, RevokedStatus)
+                        .SetProperty(key => key.RevokedAt, now),
+                    cancellationToken);
+            db.EmployeeEncryptionKeys.Add(issued);
+            db.AuditLogs.Add(Audit("EncryptionKeyIssued", KeyEntity, employeeId, new { replacedOldKey = revoked > 0 }));
+            await db.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
         attempts.Reset(employeeId);
 
         int? recovered = null;

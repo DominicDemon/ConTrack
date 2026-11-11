@@ -18,7 +18,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 /// OCR reads the keywords of each file in the background, to check the content and to search by.
 /// </summary>
 public sealed class SignedEvidenceService(
-    ScanMasterDbContext db,
+    MasterDbContext db,
     IFileStore files,
     ICurrentEmployee currentEmployee,
     Microsoft.Extensions.Options.IOptions<ScanOcrOptions> ocrOptions,
@@ -270,66 +270,66 @@ public sealed class SignedEvidenceService(
 
         var employeeId = currentEmployee.EmployeeId;
         var now = DateTime.UtcNow;
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-
-        var evidence = await db.ContractSignedEvidences.SingleAsync(
-            candidate => candidate.ContractSignedEvidenceId == evidenceId, cancellationToken);
-        db.Entry(evidence).Property(candidate => candidate.Rowversion).OriginalValue = row.Evidence.Rowversion;
-        evidence.ContractSignedEvidenceStatus = (int)SignedEvidenceStatus.Accepted;
-        db.AuditLogs.Add(Audit(AcceptedAction, EvidenceEntity, evidenceId, null, new { note = note?.Trim() }));
-
-        if (replacing is { } oldId)
+        await db.ExecuteInTransactionAsync(async () =>
         {
-            // F19 step 4: the old evidence is marked replaced only now that the new one is valid.
-            var old = await db.ContractSignedEvidences.SingleAsync(
-                candidate => candidate.ContractSignedEvidenceId == oldId, cancellationToken);
-            if (old.ContractSignedEvidenceStatus == (int)SignedEvidenceStatus.Accepted)
+            var evidence = await db.ContractSignedEvidences.SingleAsync(
+                candidate => candidate.ContractSignedEvidenceId == evidenceId, cancellationToken);
+            db.Entry(evidence).Property(candidate => candidate.Rowversion).OriginalValue = row.Evidence.Rowversion;
+            evidence.ContractSignedEvidenceStatus = (int)SignedEvidenceStatus.Accepted;
+            db.AuditLogs.Add(Audit(AcceptedAction, EvidenceEntity, evidenceId, null, new { note = note?.Trim() }));
+
+            if (replacing is { } oldId)
             {
-                old.ContractSignedEvidenceStatus = (int)SignedEvidenceStatus.Superseded;
-                old.SupersededByEmployeeId = employeeId;
-                old.SupersededAt = now;
-                db.AuditLogs.Add(Audit(SupersededAction, EvidenceEntity, oldId, null, new { by = evidenceId }));
+                // F19 step 4: the old evidence is marked replaced only now that the new one is valid.
+                var old = await db.ContractSignedEvidences.SingleAsync(
+                    candidate => candidate.ContractSignedEvidenceId == oldId, cancellationToken);
+                if (old.ContractSignedEvidenceStatus == (int)SignedEvidenceStatus.Accepted)
+                {
+                    old.ContractSignedEvidenceStatus = (int)SignedEvidenceStatus.Superseded;
+                    old.SupersededByEmployeeId = employeeId;
+                    old.SupersededAt = now;
+                    db.AuditLogs.Add(Audit(SupersededAction, EvidenceEntity, oldId, null, new { by = evidenceId }));
+                }
             }
-        }
-        else
-        {
-            // F18 step 5: signing date, version lock and overall status.
-            var version = await db.ContractVersions.SingleAsync(
-                candidate => candidate.ContractVersionId == row.VersionId, cancellationToken);
-            version.ContractVersionSigndate = row.Evidence.ContractSignedEvidenceSigndate.ToDateTime(TimeOnly.MinValue);
-            if (!version.ContractVersionIslocked)
+            else
             {
-                version.ContractVersionIslocked = true;
-                version.ContractVersionLockeddate = now;
-                version.ContractVersionLockedbyemployeeid = (int)employeeId;
+                // F18 step 5: signing date, version lock and overall status.
+                var version = await db.ContractVersions.SingleAsync(
+                    candidate => candidate.ContractVersionId == row.VersionId, cancellationToken);
+                version.ContractVersionSigndate = row.Evidence.ContractSignedEvidenceSigndate.ToDateTime(TimeOnly.MinValue);
+                if (!version.ContractVersionIslocked)
+                {
+                    version.ContractVersionIslocked = true;
+                    version.ContractVersionLockeddate = now;
+                    version.ContractVersionLockedbyemployeeid = (int)employeeId;
+                }
+
+                var signed = await db.ContractDocuments
+                    .Where(document => document.ContractDocumentId == row.DocumentId
+                        && document.ContractDocumentStatus == (int)ContractDocumentStatus.PendingSignature)
+                    .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(document => document.ContractDocumentStatus, (int)ContractDocumentStatus.Signed)
+                            .SetProperty(document => document.UpdatedDate, now),
+                        cancellationToken);
+                if (signed == 0)
+                {
+                    throw new InternalAppException(409, "Hợp đồng vừa được người khác cập nhật. Hãy tải lại trang.");
+                }
+
+                db.AuditLogs.Add(Audit(ContractSignedAction, DocumentEntity, row.DocumentId,
+                    new { status = StatusKey((int)ContractDocumentStatus.PendingSignature) },
+                    new { status = StatusKey((int)ContractDocumentStatus.Signed), evidenceId, signDate = row.Evidence.ContractSignedEvidenceSigndate }));
             }
 
-            var signed = await db.ContractDocuments
-                .Where(document => document.ContractDocumentId == row.DocumentId
-                    && document.ContractDocumentStatus == (int)ContractDocumentStatus.PendingSignature)
-                .ExecuteUpdateAsync(setters => setters
-                        .SetProperty(document => document.ContractDocumentStatus, (int)ContractDocumentStatus.Signed)
-                        .SetProperty(document => document.UpdatedDate, now),
-                    cancellationToken);
-            if (signed == 0)
-            {
-                throw new InternalAppException(409, "Hợp đồng vừa được người khác cập nhật. Hãy tải lại trang.");
-            }
-
-            db.AuditLogs.Add(Audit(ContractSignedAction, DocumentEntity, row.DocumentId,
-                new { status = StatusKey((int)ContractDocumentStatus.PendingSignature) },
-                new { status = StatusKey((int)ContractDocumentStatus.Signed), evidenceId, signDate = row.Evidence.ContractSignedEvidenceSigndate }));
-        }
-
-        await MakePrimaryAsync(row, cancellationToken);
-        await NotifyAsync(contract, evidenceId, "SIGNED_EVIDENCE_ACCEPTED",
-            $"Bản ký giấy hợp lệ: {contract.Code ?? contract.Name}",
-            replacing is null
-                ? $"Bản ký giấy đã được xác nhận. Hợp đồng chuyển sang Đã ký, ngày ký {row.Evidence.ContractSignedEvidenceSigndate:dd/MM/yyyy}."
-                : "Bản ký thay thế đã được xác nhận; bản cũ được giữ trong lịch sử.",
-            row.Evidence.UploadedByEmployeeid, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            await MakePrimaryAsync(row, cancellationToken);
+            await NotifyAsync(contract, evidenceId, "SIGNED_EVIDENCE_ACCEPTED",
+                $"Bản ký giấy hợp lệ: {contract.Code ?? contract.Name}",
+                replacing is null
+                    ? $"Bản ký giấy đã được xác nhận. Hợp đồng chuyển sang Đã ký, ngày ký {row.Evidence.ContractSignedEvidenceSigndate:dd/MM/yyyy}."
+                    : "Bản ký thay thế đã được xác nhận; bản cũ được giữ trong lịch sử.",
+                row.Evidence.UploadedByEmployeeid, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
     }
 
     public async Task RejectAsync(long evidenceId, string reason, CancellationToken cancellationToken)
@@ -341,18 +341,19 @@ public sealed class SignedEvidenceService(
             throw new InternalAppException(409, "Bản ký này không còn chờ kiểm tra. Hãy tải lại trang.");
         }
 
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var evidence = await db.ContractSignedEvidences.SingleAsync(
-            candidate => candidate.ContractSignedEvidenceId == evidenceId, cancellationToken);
-        db.Entry(evidence).Property(candidate => candidate.Rowversion).OriginalValue = row.Evidence.Rowversion;
-        evidence.ContractSignedEvidenceStatus = (int)SignedEvidenceStatus.Rejected;
-        db.AuditLogs.Add(Audit(RejectedAction, EvidenceEntity, evidenceId, null, new { reason = reason.Trim() }));
-        await NotifyAsync(contract, evidenceId, "SIGNED_EVIDENCE_REJECTED",
-            $"Bản ký giấy không hợp lệ: {contract.Code ?? contract.Name}",
-            $"Lý do: {reason.Trim()}",
-            row.Evidence.UploadedByEmployeeid, cancellationToken);
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        await db.ExecuteInTransactionAsync(async () =>
+        {
+            var evidence = await db.ContractSignedEvidences.SingleAsync(
+                candidate => candidate.ContractSignedEvidenceId == evidenceId, cancellationToken);
+            db.Entry(evidence).Property(candidate => candidate.Rowversion).OriginalValue = row.Evidence.Rowversion;
+            evidence.ContractSignedEvidenceStatus = (int)SignedEvidenceStatus.Rejected;
+            db.AuditLogs.Add(Audit(RejectedAction, EvidenceEntity, evidenceId, null, new { reason = reason.Trim() }));
+            await NotifyAsync(contract, evidenceId, "SIGNED_EVIDENCE_REJECTED",
+                $"Bản ký giấy không hợp lệ: {contract.Code ?? contract.Name}",
+                $"Lý do: {reason.Trim()}",
+                row.Evidence.UploadedByEmployeeid, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -586,105 +587,112 @@ public sealed class SignedEvidenceService(
         try
         {
             // Serializable: two uploads at the same time cannot both pass the "nothing pending" check.
-            await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-            var pending = await (
-                    from waiting in db.ContractSignedEvidences
-                    join waitingFile in db.ContractDocumentFiles on waiting.ContractDocumentFileId equals waitingFile.ContractDocumentFileId
-                    where waitingFile.ContractDocumentId == contract.DocumentId
-                        && waitingFile.ContractVersionId == versionId
-                        && waiting.ContractSignedEvidenceStatus == (int)SignedEvidenceStatus.PendingReview
-                    select waiting.ContractSignedEvidenceId)
-                .AnyAsync(cancellationToken);
-            if (pending)
+            return await db.ExecuteInTransactionAsync(async () =>
             {
-                throw new InternalAppException(409, "Đang có một bản ký chờ kiểm tra. Hãy tải lại trang.");
-            }
+                if (stagedFileId is { } previousStaged)
+                {
+                    await staging.DeleteAsync(previousStaged, CancellationToken.None);
+                    stagedFileId = null;
+                }
 
-            var file = new FileStorage
-            {
-                FileStorageObjectid = contract.DocumentId,
-                FileStorageObjecttype = FileObjectType,
-                FileStorageFiletype = extension.TrimStart('.').ToUpperInvariant(),
-                FileStorageFilename = Path.GetFileName(fileName),
-                FileStorageFilepath = storageKey,
-                FileStorageStoragekey = storageKey,
-                FileStorageContenttype = contentType,
-                FileStorageFilesize = content.LongLength,
-                FileStorageSha256 = sha256,
-                FileStorageUploadedbyemployeeid = employeeId,
-                FileStorageUploadeddate = now,
-            };
-            db.FileStorages.Add(file);
-            await db.SaveChangesAsync(cancellationToken);
-            await protection.GrantAsync(file.FileStorageFileid, fileKey, await FileReadersAsync(contract, employeeId, cancellationToken),
-                cancellationToken);
-            await staging.SaveAsync(file.FileStorageFileid, content, cancellationToken);
-            stagedFileId = file.FileStorageFileid;
+                var pending = await (
+                        from waiting in db.ContractSignedEvidences
+                        join waitingFile in db.ContractDocumentFiles on waiting.ContractDocumentFileId equals waitingFile.ContractDocumentFileId
+                        where waitingFile.ContractDocumentId == contract.DocumentId
+                            && waitingFile.ContractVersionId == versionId
+                            && waiting.ContractSignedEvidenceStatus == (int)SignedEvidenceStatus.PendingReview
+                        select waiting.ContractSignedEvidenceId)
+                    .AnyAsync(cancellationToken);
+                if (pending)
+                {
+                    throw new InternalAppException(409, "Đang có một bản ký chờ kiểm tra. Hãy tải lại trang.");
+                }
 
-            var documentFile = new ContractDocumentFile
-            {
-                ContractDocumentId = contract.DocumentId,
-                ContractVersionId = versionId,
-                FileStorageFileid = file.FileStorageFileid,
-                ContractDocumentFileRole = ContractDocumentFileRoles.SignedPaper,
-                // Becomes the primary file of its role once the evidence is accepted.
-                IsPrimary = false,
-                CreatedDate = now,
-                CreatedEmployeeId = employeeId,
-            };
-            db.ContractDocumentFiles.Add(documentFile);
-            await db.SaveChangesAsync(cancellationToken);
+                var file = new FileStorage
+                {
+                    FileStorageObjectid = contract.DocumentId,
+                    FileStorageObjecttype = FileObjectType,
+                    FileStorageFiletype = extension.TrimStart('.').ToUpperInvariant(),
+                    FileStorageFilename = Path.GetFileName(fileName),
+                    FileStorageFilepath = storageKey,
+                    FileStorageStoragekey = storageKey,
+                    FileStorageContenttype = contentType,
+                    FileStorageFilesize = content.LongLength,
+                    FileStorageSha256 = sha256,
+                    FileStorageUploadedbyemployeeid = employeeId,
+                    FileStorageUploadeddate = now,
+                };
+                db.FileStorages.Add(file);
+                await db.SaveChangesAsync(cancellationToken);
+                await protection.GrantAsync(file.FileStorageFileid, fileKey, await FileReadersAsync(contract, employeeId, cancellationToken),
+                    cancellationToken);
+                await staging.SaveAsync(file.FileStorageFileid, content, cancellationToken);
+                stagedFileId = file.FileStorageFileid;
 
-            var evidence = new ContractSignedEvidence
-            {
-                ContractDocumentFileId = documentFile.ContractDocumentFileId,
-                ContractSignedEvidenceStatus = (int)SignedEvidenceStatus.PendingReview,
-                ContractSignedEvidenceSigndate = signDate,
-                UploadedByEmployeeid = employeeId,
-                UploadedAt = now,
-                SupersedesEvidenceId = replaced?.ContractSignedEvidenceId,
-                ContractSignedEvidenceSupersedereason = replaceReason,
-            };
-            db.ContractSignedEvidences.Add(evidence);
-            await db.SaveChangesAsync(cancellationToken);
+                var documentFile = new ContractDocumentFile
+                {
+                    ContractDocumentId = contract.DocumentId,
+                    ContractVersionId = versionId,
+                    FileStorageFileid = file.FileStorageFileid,
+                    ContractDocumentFileRole = ContractDocumentFileRoles.SignedPaper,
+                    // Becomes the primary file of its role once the evidence is accepted.
+                    IsPrimary = false,
+                    CreatedDate = now,
+                    CreatedEmployeeId = employeeId,
+                };
+                db.ContractDocumentFiles.Add(documentFile);
+                await db.SaveChangesAsync(cancellationToken);
 
-            // One upload is one batch of one file in the OCR tables of MasterDB-Optimize_v1.
-            var batch = new OcrBatch
-            {
-                UploadedByEmployeeId = employeeId,
-                TotalFiles = 1,
-                BatchStatus = OcrBatchStatuses.Pending,
-                CreatedAt = now,
-            };
-            db.OcrBatches.Add(batch);
-            await db.SaveChangesAsync(cancellationToken);
-            db.OcrJobs.Add(new OcrJob
-            {
-                OcrBatchId = batch.OcrPatchId,
-                FileStorageFileid = file.FileStorageFileid,
-                ContractDocumentId = contract.DocumentId,
-                OcrJobProcessingStatus = OcrJobStatuses.Queued,
-                ScannedEmployeeId = employeeId,
-                ScannedAt = now,
-            });
-            db.AuditLogs.Add(Audit(UploadedAction, EvidenceEntity, evidence.ContractSignedEvidenceId, null, new
-            {
-                fileId = file.FileStorageFileid,
-                versionId,
-                signDate,
-                sha256,
-                supersedes = replaced?.ContractSignedEvidenceId,
-                reason = replaceReason,
-            }));
-            await NotifyAsync(contract, evidence.ContractSignedEvidenceId, "SIGNED_EVIDENCE_UPLOADED",
-                $"Bản ký giấy chờ kiểm tra: {contract.Code ?? contract.Name}",
-                replaced is null
-                    ? $"Bản ký giấy ngày {signDate:dd/MM/yyyy} đã được tải lên, cần kiểm tra chữ ký và dấu trước khi ghi nhận."
-                    : $"Bản ký thay thế đã được tải lên, cần kiểm tra. Lý do thay: {replaceReason}",
-                employeeId, cancellationToken);
-            await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return evidence.ContractSignedEvidenceId;
+                var evidence = new ContractSignedEvidence
+                {
+                    ContractDocumentFileId = documentFile.ContractDocumentFileId,
+                    ContractSignedEvidenceStatus = (int)SignedEvidenceStatus.PendingReview,
+                    ContractSignedEvidenceSigndate = signDate,
+                    UploadedByEmployeeid = employeeId,
+                    UploadedAt = now,
+                    SupersedesEvidenceId = replaced?.ContractSignedEvidenceId,
+                    ContractSignedEvidenceSupersedereason = replaceReason,
+                };
+                db.ContractSignedEvidences.Add(evidence);
+                await db.SaveChangesAsync(cancellationToken);
+
+                // One upload is one batch of one file in the OCR tables of MasterDB-Optimize_v1.
+                var batch = new OcrBatch
+                {
+                    UploadedByEmployeeId = employeeId,
+                    TotalFiles = 1,
+                    BatchStatus = OcrBatchStatuses.Pending,
+                    CreatedAt = now,
+                };
+                db.OcrBatches.Add(batch);
+                await db.SaveChangesAsync(cancellationToken);
+                db.OcrJobs.Add(new OcrJob
+                {
+                    OcrBatchId = batch.OcrPatchId,
+                    FileStorageFileid = file.FileStorageFileid,
+                    ContractDocumentId = contract.DocumentId,
+                    OcrJobProcessingStatus = OcrJobStatuses.Queued,
+                    ScannedEmployeeId = employeeId,
+                    ScannedAt = now,
+                });
+                db.AuditLogs.Add(Audit(UploadedAction, EvidenceEntity, evidence.ContractSignedEvidenceId, null, new
+                {
+                    fileId = file.FileStorageFileid,
+                    versionId,
+                    signDate,
+                    sha256,
+                    supersedes = replaced?.ContractSignedEvidenceId,
+                    reason = replaceReason,
+                }));
+                await NotifyAsync(contract, evidence.ContractSignedEvidenceId, "SIGNED_EVIDENCE_UPLOADED",
+                    $"Bản ký giấy chờ kiểm tra: {contract.Code ?? contract.Name}",
+                    replaced is null
+                        ? $"Bản ký giấy ngày {signDate:dd/MM/yyyy} đã được tải lên, cần kiểm tra chữ ký và dấu trước khi ghi nhận."
+                        : $"Bản ký thay thế đã được tải lên, cần kiểm tra. Lý do thay: {replaceReason}",
+                    employeeId, cancellationToken);
+                await db.SaveChangesAsync(cancellationToken);
+                return evidence.ContractSignedEvidenceId;
+            }, cancellationToken, IsolationLevel.Serializable);
         }
         catch
         {

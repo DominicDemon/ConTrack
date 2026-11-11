@@ -58,4 +58,32 @@ IF NOT EXISTS (SELECT 1 FROM SYSTEM_PERMISSION WHERE system_permission_code = 's
            N'Cấp hoặc cấp lại key 12 ký tự cho nhân viên; key cũ thôi dùng được'
     FROM SYSTEM_PERMISSION_GROUP WHERE system_permission_group_code = 'FILE_ENCRYPTION';
 
+-- Gán quyền scan/ký giấy cho Phòng Hành Chính - Pháp Chế (INTERNAL_LEGAL, INTERNAL_LEGAL_MANAGER) và quyền cấp key cho quản lý/BGD.
+DECLARE @roleGrants TABLE (role_code VARCHAR(50), perm_code VARCHAR(100));
+INSERT INTO @roleGrants VALUES
+    ('INTERNAL_LEGAL', 'contract.signed_evidence.view'),
+    ('INTERNAL_LEGAL', 'contract.signed_evidence.upload'),
+    ('INTERNAL_LEGAL', 'contract.signed_evidence.review'),
+    ('INTERNAL_LEGAL', 'contract.scanned.view'),
+    ('INTERNAL_LEGAL', 'contract.scanned.upload'),
+    ('INTERNAL_LEGAL', 'contract.scanned.confirm'),
+    ('INTERNAL_LEGAL_MANAGER', 'contract.signed_evidence.view'),
+    ('INTERNAL_LEGAL_MANAGER', 'contract.signed_evidence.upload'),
+    ('INTERNAL_LEGAL_MANAGER', 'contract.signed_evidence.review'),
+    ('INTERNAL_LEGAL_MANAGER', 'contract.scanned.view'),
+    ('INTERNAL_LEGAL_MANAGER', 'contract.scanned.upload'),
+    ('INTERNAL_LEGAL_MANAGER', 'contract.scanned.confirm'),
+    ('INTERNAL_LEGAL_MANAGER', 'system.encryption_key.manage'),
+    ('INTERNAL_ADMIN', 'system.encryption_key.manage');
+
+INSERT INTO SYSTEM_ROLE_PERMISSION (system_role_id, system_permission_id, created_at)
+SELECT r.system_role_id, p.system_permission_id, SYSUTCDATETIME()
+FROM @roleGrants g
+JOIN SYSTEM_ROLE r ON r.system_role_code = g.role_code
+JOIN SYSTEM_PERMISSION p ON p.system_permission_code = g.perm_code
+WHERE NOT EXISTS (
+    SELECT 1 FROM SYSTEM_ROLE_PERMISSION rp
+    WHERE rp.system_role_id = r.system_role_id AND rp.system_permission_id = p.system_permission_id
+);
+
 COMMIT TRANSACTION;

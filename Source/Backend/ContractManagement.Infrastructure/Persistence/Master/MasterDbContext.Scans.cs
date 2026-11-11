@@ -1,34 +1,26 @@
 using ContractManagement.Domain.Entities.Master;
 using Microsoft.EntityFrameworkCore;
 
-namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
+namespace ContractManagement.Infrastructure.Persistence.Master;
 
-/// <summary>
-/// The MASTER context plus the tables of the paper-scan features (CONTRACTS, the OCR queue, OCR keywords, file keys),
-/// so <see cref="MasterDbContext"/> and databases without those tables are not affected. It runs without connection
-/// retries: the scan flows open their own transactions (one upload must save the file rows, the keys and the OCR job
-/// together), which a retrying strategy refuses.
-/// </summary>
-public sealed class ScanMasterDbContext(DbContextOptions<MasterDbContext> options) : MasterDbContext(options)
+public partial class MasterDbContext
 {
-    public DbSet<Contract> Contracts { get; set; }
+    public virtual DbSet<Contract> Contracts { get; set; }
 
-    public DbSet<ContractType> ContractTypes { get; set; }
+    public virtual DbSet<ContractType> ContractTypes { get; set; }
 
-    public DbSet<OcrBatch> OcrBatches { get; set; }
+    public virtual DbSet<OcrBatch> OcrBatches { get; set; }
 
-    public DbSet<OcrJob> OcrJobs { get; set; }
+    public virtual DbSet<OcrJob> OcrJobs { get; set; }
 
-    public DbSet<ContractScanKeyword> ContractScanKeywords { get; set; }
+    public virtual DbSet<ContractScanKeyword> ContractScanKeywords { get; set; }
 
-    public DbSet<EmployeeEncryptionKey> EmployeeEncryptionKeys { get; set; }
+    public virtual DbSet<EmployeeEncryptionKey> EmployeeEncryptionKeys { get; set; }
 
-    public DbSet<FileEncryptionKey> FileEncryptionKeys { get; set; }
+    public virtual DbSet<FileEncryptionKey> FileEncryptionKeys { get; set; }
 
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
-        base.OnModelCreating(modelBuilder);
-
         modelBuilder.Entity<Contract>(entity =>
         {
             entity.HasKey(e => e.ContractId).HasName("PK__CONTRACT__F8D66423920D9C63");
@@ -257,3 +249,4 @@ public sealed class ScanMasterDbContext(DbContextOptions<MasterDbContext> option
         });
     }
 }
+

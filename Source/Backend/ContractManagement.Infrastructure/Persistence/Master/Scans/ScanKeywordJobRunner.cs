@@ -12,7 +12,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 /// by hand stay. OCR_JOB has no attempt counter, so an engine failure is tried again within the same run,
 /// up to <see cref="MaxAttempts"/> times, before the job is marked FAILED for someone to retry.
 /// </summary>
-public sealed class ScanKeywordJobRunner(ScanMasterDbContext db, IFileStore files, IScanKeywordReader reader, IOcrStagingStore staging)
+public sealed class ScanKeywordJobRunner(MasterDbContext db, IFileStore files, IScanKeywordReader reader, IOcrStagingStore staging)
 {
     public const int MaxAttempts = 3;
 
@@ -121,48 +121,48 @@ public sealed class ScanKeywordJobRunner(ScanMasterDbContext db, IFileStore file
     private async Task SaveAsync(OcrJob job, ScanKeywordResult result, CancellationToken cancellationToken)
     {
         var fileId = job.FileStorageFileid;
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await db.ExecuteInTransactionAsync(async () =>
+        {
+            await db.ContractScanKeywords
+                .Where(keyword => keyword.FileStorageFileid == fileId
+                    && keyword.ContractScanKeywordSource == (int)ScanKeywordSource.Ocr)
+                .ExecuteDeleteAsync(cancellationToken);
+            // A keyword already added by hand is kept as it is (one row per type and value; the column ignores case).
+            var manual = (await db.ContractScanKeywords.AsNoTracking()
+                    .Where(keyword => keyword.FileStorageFileid == fileId)
+                    .Select(keyword => new { keyword.ContractScanKeywordType, keyword.ContractScanKeywordValue })
+                    .ToListAsync(cancellationToken))
+                .Select(keyword => (keyword.ContractScanKeywordType, keyword.ContractScanKeywordValue.ToUpperInvariant()))
+                .ToHashSet();
 
-        await db.ContractScanKeywords
-            .Where(keyword => keyword.FileStorageFileid == fileId
-                && keyword.ContractScanKeywordSource == (int)ScanKeywordSource.Ocr)
-            .ExecuteDeleteAsync(cancellationToken);
-        // A keyword already added by hand is kept as it is (one row per type and value; the column ignores case).
-        var manual = (await db.ContractScanKeywords.AsNoTracking()
-                .Where(keyword => keyword.FileStorageFileid == fileId)
-                .Select(keyword => new { keyword.ContractScanKeywordType, keyword.ContractScanKeywordValue })
-                .ToListAsync(cancellationToken))
-            .Select(keyword => (keyword.ContractScanKeywordType, keyword.ContractScanKeywordValue.ToUpperInvariant()))
-            .ToHashSet();
+            var now = DateTime.UtcNow;
+            db.ContractScanKeywords.AddRange(result.Keywords
+                .Where(keyword => !manual.Contains(((int)keyword.Type, keyword.Value.ToUpperInvariant())))
+                .Select(keyword => new ContractScanKeyword
+                {
+                    FileStorageFileid = fileId,
+                    ContractScanKeywordType = (int)keyword.Type,
+                    ContractScanKeywordValue = keyword.Value,
+                    ContractScanKeywordPagenumber = keyword.Page,
+                    ContractScanKeywordSource = (int)ScanKeywordSource.Ocr,
+                    CreatedAt = now,
+                }));
+            await db.SaveChangesAsync(cancellationToken);
 
-        var now = DateTime.UtcNow;
-        db.ContractScanKeywords.AddRange(result.Keywords
-            .Where(keyword => !manual.Contains(((int)keyword.Type, keyword.Value.ToUpperInvariant())))
-            .Select(keyword => new ContractScanKeyword
-            {
-                FileStorageFileid = fileId,
-                ContractScanKeywordType = (int)keyword.Type,
-                ContractScanKeywordValue = keyword.Value,
-                ContractScanKeywordPagenumber = keyword.Page,
-                ContractScanKeywordSource = (int)ScanKeywordSource.Ocr,
-                CreatedAt = now,
-            }));
-        await db.SaveChangesAsync(cancellationToken);
-
-        // Every kind of keyword found: SUCCESS. Something missing: the checker has to look for it on the paper.
-        var foundAll = Enum.GetValues<ScanKeywordType>().All(type => result.Keywords.Any(keyword => keyword.Type == type));
-        var status = foundAll ? OcrJobStatuses.Success : OcrJobStatuses.NeedReview;
-        await db.OcrJobs
-            .Where(candidate => candidate.OcrJobId == job.OcrJobId)
-            .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(candidate => candidate.OcrJobProcessingStatus, status)
-                    .SetProperty(candidate => candidate.OcrText, result.Text)
-                    .SetProperty(candidate => candidate.PageCount, result.PageCount)
-                    .SetProperty(candidate => candidate.ErrorMessage, (string?)null)
-                    .SetProperty(candidate => candidate.CompletedAt, now),
-                cancellationToken);
-        await UpdateBatchAsync(job.OcrBatchId, cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+            // Every kind of keyword found: SUCCESS. Something missing: the checker has to look for it on the paper.
+            var foundAll = Enum.GetValues<ScanKeywordType>().All(type => result.Keywords.Any(keyword => keyword.Type == type));
+            var status = foundAll ? OcrJobStatuses.Success : OcrJobStatuses.NeedReview;
+            await db.OcrJobs
+                .Where(candidate => candidate.OcrJobId == job.OcrJobId)
+                .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(candidate => candidate.OcrJobProcessingStatus, status)
+                        .SetProperty(candidate => candidate.OcrText, result.Text)
+                        .SetProperty(candidate => candidate.PageCount, result.PageCount)
+                        .SetProperty(candidate => candidate.ErrorMessage, (string?)null)
+                        .SetProperty(candidate => candidate.CompletedAt, now),
+                    cancellationToken);
+            await UpdateBatchAsync(job.OcrBatchId, cancellationToken);
+        }, cancellationToken);
         // Read: the plain copy is no longer needed.
         await staging.DeleteAsync(fileId, CancellationToken.None);
     }

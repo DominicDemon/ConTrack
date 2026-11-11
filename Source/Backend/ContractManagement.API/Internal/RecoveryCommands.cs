@@ -1,5 +1,6 @@
 using ContractManagement.Application.Features.Internal.Scans;
 using ContractManagement.Domain.Entities.Master;
+using ContractManagement.Infrastructure.Persistence.Master;
 using ContractManagement.Infrastructure.Persistence.Master.Scans;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
@@ -77,7 +78,7 @@ public static class RecoveryCommands
         var keyId = FileCrypto.KeyId(recoveryKey.ExportSubjectPublicKeyInfo());
 
         await using var scope = services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<ScanMasterDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<MasterDbContext>();
         var employeeKey = await db.EmployeeEncryptionKeys.AsNoTracking()
             .SingleOrDefaultAsync(key => key.EmployeeId == employeeId && key.EmployeeEncryptionKeyStatus == FileProtectionService.ActiveStatus)
             ?? throw new InvalidOperationException($"Employee {employeeId} has no active key: issue one first.");

@@ -1,6 +1,7 @@
 using System.Globalization;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Application.Features.Internal.Scans;
+using ContractManagement.Infrastructure.Persistence.Master;
 using ContractManagement.Infrastructure.Persistence.Master.Scans;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Mvc;
@@ -264,7 +265,7 @@ public static class ScanEndpoints
             throw new InternalAppException(401, "Vui lòng đăng nhập.");
         }
 
-        var db = context.RequestServices.GetRequiredService<ScanMasterDbContext>();
+        var db = context.RequestServices.GetRequiredService<MasterDbContext>();
         var ct = context.RequestAborted;
         var employee = await db.Employees.AsNoTracking()
             .Where(candidate => candidate.EmployeeId == employeeId && candidate.EmployeeStatus == "ACTIVE")

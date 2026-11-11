@@ -18,7 +18,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 /// Not in Master_Database_HuongDan (written for the older script): inferred from the tables, see ScannedContractCodes.
 /// </summary>
 public sealed class ScannedContractService(
-    ScanMasterDbContext db,
+    MasterDbContext db,
     IFileStore files,
     ICurrentEmployee currentEmployee,
     IOptions<ScanOcrOptions> ocrOptions,
@@ -73,59 +73,66 @@ public sealed class ScannedContractService(
 
         try
         {
-            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-            var batch = new OcrBatch
+            return await db.ExecuteInTransactionAsync(async () =>
             {
-                UploadedByEmployeeId = employeeId,
-                TotalFiles = stored.Count,
-                BatchStatus = OcrBatchStatuses.Pending,
-                CreatedAt = now,
-            };
-            db.OcrBatches.Add(batch);
-            await db.SaveChangesAsync(cancellationToken);
-            var readers = await FileReadersAsync(employeeId, null, cancellationToken);
-
-            foreach (var scan in stored)
-            {
-                var file = new FileStorage
+                foreach (var previousFileId in staged)
                 {
-                    // Until the contract exists the file belongs to its batch; then to the CONTRACTS row.
-                    FileStorageObjecttype = ScannedContractCodes.FileObjectBatch,
-                    FileStorageObjectid = batch.OcrPatchId,
-                    FileStorageFiletype = scan.Extension.TrimStart('.').ToUpperInvariant(),
-                    FileStorageFilename = Path.GetFileName(scan.FileName),
-                    FileStorageFilepath = scan.Key,
-                    FileStorageStoragekey = scan.Key,
-                    FileStorageContenttype = scan.ContentType,
-                    FileStorageFilesize = scan.Content.LongLength,
-                    FileStorageSha256 = Convert.ToHexString(SHA256.HashData(scan.Content)).ToLowerInvariant(),
-                    FileStorageUploadedbyemployeeid = employeeId,
-                    FileStorageUploadeddate = now,
+                    await staging.DeleteAsync(previousFileId, CancellationToken.None);
+                }
+
+                staged.Clear();
+                var batch = new OcrBatch
+                {
+                    UploadedByEmployeeId = employeeId,
+                    TotalFiles = stored.Count,
+                    BatchStatus = OcrBatchStatuses.Pending,
+                    CreatedAt = now,
                 };
-                db.FileStorages.Add(file);
+                db.OcrBatches.Add(batch);
                 await db.SaveChangesAsync(cancellationToken);
-                await protection.GrantAsync(file.FileStorageFileid, scan.FileKey, readers, cancellationToken);
-                await staging.SaveAsync(file.FileStorageFileid, scan.Content, cancellationToken);
-                staged.Add(file.FileStorageFileid);
-                db.OcrJobs.Add(new OcrJob
-                {
-                    OcrBatchId = batch.OcrPatchId,
-                    FileStorageFileid = file.FileStorageFileid,
-                    // Not a contract drafted in the system: no CONTRACT_DOCUMENTS row.
-                    ContractDocumentId = null,
-                    OcrJobProcessingStatus = OcrJobStatuses.Queued,
-                    ScannedEmployeeId = employeeId,
-                    ScannedAt = now,
-                });
-            }
+                var readers = await FileReadersAsync(employeeId, null, cancellationToken);
 
-            db.AuditLogs.Add(Audit(BatchUploadedAction, BatchEntity, batch.OcrPatchId, new
-            {
-                files = stored.Select(scan => scan.FileName).ToList(),
-            }));
-            await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return batch.OcrPatchId;
+                foreach (var scan in stored)
+                {
+                    var file = new FileStorage
+                    {
+                        // Until the contract exists the file belongs to its batch; then to the CONTRACTS row.
+                        FileStorageObjecttype = ScannedContractCodes.FileObjectBatch,
+                        FileStorageObjectid = batch.OcrPatchId,
+                        FileStorageFiletype = scan.Extension.TrimStart('.').ToUpperInvariant(),
+                        FileStorageFilename = Path.GetFileName(scan.FileName),
+                        FileStorageFilepath = scan.Key,
+                        FileStorageStoragekey = scan.Key,
+                        FileStorageContenttype = scan.ContentType,
+                        FileStorageFilesize = scan.Content.LongLength,
+                        FileStorageSha256 = Convert.ToHexString(SHA256.HashData(scan.Content)).ToLowerInvariant(),
+                        FileStorageUploadedbyemployeeid = employeeId,
+                        FileStorageUploadeddate = now,
+                    };
+                    db.FileStorages.Add(file);
+                    await db.SaveChangesAsync(cancellationToken);
+                    await protection.GrantAsync(file.FileStorageFileid, scan.FileKey, readers, cancellationToken);
+                    await staging.SaveAsync(file.FileStorageFileid, scan.Content, cancellationToken);
+                    staged.Add(file.FileStorageFileid);
+                    db.OcrJobs.Add(new OcrJob
+                    {
+                        OcrBatchId = batch.OcrPatchId,
+                        FileStorageFileid = file.FileStorageFileid,
+                        // Not a contract drafted in the system: no CONTRACT_DOCUMENTS row.
+                        ContractDocumentId = null,
+                        OcrJobProcessingStatus = OcrJobStatuses.Queued,
+                        ScannedEmployeeId = employeeId,
+                        ScannedAt = now,
+                    });
+                }
+
+                db.AuditLogs.Add(Audit(BatchUploadedAction, BatchEntity, batch.OcrPatchId, new
+                {
+                    files = stored.Select(scan => scan.FileName).ToList(),
+                }));
+                await db.SaveChangesAsync(cancellationToken);
+                return batch.OcrPatchId;
+            }, cancellationToken);
         }
         catch
         {
@@ -452,59 +459,60 @@ public sealed class ScannedContractService(
 
         var employeeId = currentEmployee.EmployeeId;
         var now = DateTime.UtcNow;
-        await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
-        if (await db.Contracts.AnyAsync(contract => contract.FileStorageFileid == file.FileStorageFileid, cancellationToken))
+        return await db.ExecuteInTransactionAsync(async () =>
         {
-            throw new InternalAppException(409, "Bản scan này đã được tạo hợp đồng. Hãy tải lại trang.");
-        }
+            if (await db.Contracts.AnyAsync(contract => contract.FileStorageFileid == file.FileStorageFileid, cancellationToken))
+            {
+                throw new InternalAppException(409, "Bản scan này đã được tạo hợp đồng. Hãy tải lại trang.");
+            }
 
-        if (await db.Contracts.AnyAsync(contract => contract.ContractCode == code, cancellationToken))
-        {
-            throw new InternalAppException(409, $"Số hợp đồng {code} đã có trong hệ thống.");
-        }
+            if (await db.Contracts.AnyAsync(contract => contract.ContractCode == code, cancellationToken))
+            {
+                throw new InternalAppException(409, $"Số hợp đồng {code} đã có trong hệ thống.");
+            }
 
-        var created = new Contract
-        {
-            ContractTypeId = input.ContractTypeId,
-            ContractCode = code,
-            ContractName = input.ContractName.Trim(),
-            PartnerId = input.CustomerId,
-            EmployeeId = employeeId,
-            // Scanning an old paper contract only archives it: contract_status and approval_status stay
-            // empty, and source_type tells these rows apart.
-            SourceType = ScannedContractCodes.SourceScanned,
-            SignedDate = input.SignedDate.ToDateTime(TimeOnly.MinValue),
-            EffectiveDate = input.EffectiveDate?.ToDateTime(TimeOnly.MinValue),
-            ExpirationDate = input.ExpirationDate?.ToDateTime(TimeOnly.MinValue),
-            Currency = string.IsNullOrWhiteSpace(input.Currency) ? ScannedContractCodes.DefaultCurrency : input.Currency.Trim().ToUpperInvariant(),
-            ContractValue = input.ContractValue,
-            ContractDescription = string.IsNullOrWhiteSpace(input.Description) ? null : input.Description.Trim(),
-            FileStorageFileid = file.FileStorageFileid,
-            CreatedDate = now,
-            CreatedEmployeeId = checked((int)employeeId),
-        };
-        db.Contracts.Add(created);
-        await db.SaveChangesAsync(cancellationToken);
+            var created = new Contract
+            {
+                ContractTypeId = input.ContractTypeId,
+                ContractCode = code,
+                ContractName = input.ContractName.Trim(),
+                PartnerId = input.CustomerId,
+                EmployeeId = employeeId,
+                // Scanning an old paper contract only archives it: contract_status and approval_status stay
+                // empty, and source_type tells these rows apart.
+                SourceType = ScannedContractCodes.SourceScanned,
+                SignedDate = input.SignedDate.ToDateTime(TimeOnly.MinValue),
+                EffectiveDate = input.EffectiveDate?.ToDateTime(TimeOnly.MinValue),
+                ExpirationDate = input.ExpirationDate?.ToDateTime(TimeOnly.MinValue),
+                Currency = string.IsNullOrWhiteSpace(input.Currency) ? ScannedContractCodes.DefaultCurrency : input.Currency.Trim().ToUpperInvariant(),
+                ContractValue = input.ContractValue,
+                ContractDescription = string.IsNullOrWhiteSpace(input.Description) ? null : input.Description.Trim(),
+                FileStorageFileid = file.FileStorageFileid,
+                CreatedDate = now,
+                CreatedEmployeeId = checked((int)employeeId),
+            };
+            db.Contracts.Add(created);
+            await db.SaveChangesAsync(cancellationToken);
 
-        await db.FileStorages
-            .Where(candidate => candidate.FileStorageFileid == file.FileStorageFileid)
-            .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(candidate => candidate.FileStorageObjecttype, ScannedContractCodes.FileObjectContract)
-                    .SetProperty(candidate => candidate.FileStorageObjectid, created.ContractId),
-                cancellationToken);
-        db.AuditLogs.Add(Audit(ContractCreatedAction, ContractEntity, created.ContractId, new
-        {
-            jobId,
-            fileId = file.FileStorageFileid,
-            sha256 = file.FileStorageSha256,
-            code,
-            customerId = input.CustomerId,
-            signedDate = input.SignedDate,
-            ocrStatus = job.OcrJobProcessingStatus,
-        }));
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return created.ContractId;
+            await db.FileStorages
+                .Where(candidate => candidate.FileStorageFileid == file.FileStorageFileid)
+                .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(candidate => candidate.FileStorageObjecttype, ScannedContractCodes.FileObjectContract)
+                        .SetProperty(candidate => candidate.FileStorageObjectid, created.ContractId),
+                    cancellationToken);
+            db.AuditLogs.Add(Audit(ContractCreatedAction, ContractEntity, created.ContractId, new
+            {
+                jobId,
+                fileId = file.FileStorageFileid,
+                sha256 = file.FileStorageSha256,
+                code,
+                customerId = input.CustomerId,
+                signedDate = input.SignedDate,
+                ocrStatus = job.OcrJobProcessingStatus,
+            }));
+            await db.SaveChangesAsync(cancellationToken);
+            return created.ContractId;
+        }, cancellationToken, System.Data.IsolationLevel.Serializable);
     }
 
     // ---------------------------------------------------------------------------------------------

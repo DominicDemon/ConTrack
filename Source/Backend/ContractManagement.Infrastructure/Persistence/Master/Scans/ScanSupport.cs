@@ -1,3 +1,4 @@
+using System.Data;
 using System.Security.Cryptography;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Application.Features.Internal.Scans;
@@ -8,6 +9,39 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
+
+internal static class ScanTransactionSupport
+{
+    internal static Task ExecuteInTransactionAsync(
+        this MasterDbContext db,
+        Func<Task> action,
+        CancellationToken cancellationToken = default,
+        IsolationLevel? isolationLevel = null) =>
+        db.ExecuteInTransactionAsync<object?>(
+            async () =>
+            {
+                await action();
+                return null;
+            },
+            cancellationToken,
+            isolationLevel);
+
+    internal static async Task<T> ExecuteInTransactionAsync<T>(
+        this MasterDbContext db,
+        Func<Task<T>> action,
+        CancellationToken cancellationToken = default,
+        IsolationLevel? isolationLevel = null) =>
+        await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            db.ChangeTracker.Clear();
+            await using var transaction = isolationLevel.HasValue
+                ? await db.Database.BeginTransactionAsync(isolationLevel.Value, cancellationToken)
+                : await db.Database.BeginTransactionAsync(cancellationToken);
+            var result = await action();
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        });
+}
 
 public static class FileKeyCodes
 {
@@ -104,9 +138,6 @@ public static class ScanRegistration
 {
     public static IServiceCollection AddInternalScans(this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddScoped(_ => new ScanMasterDbContext(new DbContextOptionsBuilder<MasterDbContext>()
-            .UseSqlServer(configuration.GetConnectionString("MasterDatabase"))
-            .Options));
         services.Configure<FileStoreOptions>(configuration.GetSection(FileStoreOptions.SectionName));
         services.AddSingleton<IFileStore, LocalFileStore>();
         services.Configure<OcrStagingOptions>(configuration.GetSection(OcrStagingOptions.SectionName));

@@ -11,6 +11,8 @@ import type {
   SignedEvidenceApi,
   SignedEvidenceOverview,
   UploadSignedEvidenceInput,
+  ScanEmailInput,
+  ScanEmailResult,
 } from "./types";
 
 const fileNameFromDisposition = (header: unknown): string | null => {
@@ -94,6 +96,14 @@ export const httpSignedEvidenceApi: SignedEvidenceApi = {
 
   async removeKeyword(evidenceId: string, keywordId: string) {
     await scanApi.delete(`/signed-evidence/${evidenceId}/keywords/${keywordId}`);
+  },
+
+  /** Sends the evidence file as a PDF attachment; the server opens it with the sender's key, like "View". */
+  async emailFile(evidenceId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailResult> {
+    const { data } = await scanApi.post<ScanEmailResult>(`/signed-evidence/${evidenceId}/email`, input, {
+      headers: keyHeader(fileKey),
+    });
+    return data;
   },
 
   async search(query: ScanSearchQuery) {

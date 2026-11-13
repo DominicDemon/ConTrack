@@ -16,5 +16,7 @@ public sealed class SmtpEmailOptions
         && !value.Contains('\r') && !value.Contains('\n') && MailAddress.TryCreate(value, out var address)
         && string.Equals(address.Address, value, StringComparison.Ordinal);
 }
-public sealed record EmailMessage(string Recipient, string Subject, string TextBody, string HtmlBody, string? LogoContentId = null);
+public sealed record EmailAttachment(string FileName, string ContentType, byte[] Content);
+public sealed record EmailMessage(string Recipient, string Subject, string TextBody, string HtmlBody, string? LogoContentId = null,
+    IReadOnlyList<EmailAttachment>? Attachments = null);
 public interface IEmailTransport { Task SendAsync(EmailMessage message, CancellationToken cancellationToken); }

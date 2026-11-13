@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Loader2, ScanLine, Search } from "lucide-react";
+import { Eye, Loader2, Mail, ScanLine, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,11 +12,14 @@ import {
   signedEvidenceApi,
   type ScanSearchMatch,
   type ScanSearchResponse,
+  type ScanSearchResult,
+  type ScannedSearchResult,
   type ScanSearchType,
 } from "@/services/scans/signed-scans";
 import { contractHref } from "./contract-list";
 import { formatDateTime, formatKeywordValue, formatSignDate, KEYWORD_TYPE_LABELS } from "./format";
 import { Highlight } from "./highlight";
+import { ScanEmailDialog, ScanReviewDialog, type ScanTarget } from "./scan-actions";
 import { ContractStatusBadge, EvidenceStatusBadge, StatusBadge } from "./status-badge";
 
 const FILTERS: { value: ScanSearchType; label: string }[] = [
@@ -54,6 +57,61 @@ function Matches({ matches, query }: { matches: ScanSearchMatch[]; query: string
   );
 }
 
+const scanTarget = (scan: ScannedSearchResult): ScanTarget => ({
+  kind: "scan",
+  id: scan.jobId,
+  title: scan.contractCode ?? scan.fileName,
+  href: `/workspace/scanned-contracts/jobs/${scan.jobId}`,
+  matches: scan.matches,
+  details: [
+    { label: "Tệp", value: scan.fileName },
+    { label: "Số hợp đồng", value: scan.contractCode ?? "" },
+    { label: "Tên hợp đồng", value: scan.contractName ?? "" },
+    { label: "Khách hàng", value: scan.customerName ?? "" },
+    { label: "Người tải", value: scan.uploadedBy },
+    { label: "Ngày tải", value: formatDateTime(scan.uploadedAt) },
+  ].filter((detail) => detail.value),
+});
+
+const evidenceTarget = (item: ScanSearchResult): ScanTarget => ({
+  kind: "evidence",
+  id: item.evidenceId,
+  title: item.documentCode ?? item.documentName,
+  href: contractHref(item.documentId),
+  matches: item.matches,
+  details: [
+    { label: "Số hợp đồng", value: item.documentCode ?? "" },
+    { label: "Tên hợp đồng", value: item.documentName },
+    { label: "Khách hàng", value: item.customerName },
+    { label: "Ngày ký", value: formatSignDate(item.signDate) },
+    { label: "Bản ký", value: `#${item.evidenceId}` },
+  ].filter((detail) => detail.value),
+});
+
+/** Review and email: the same two actions on every result. */
+function ResultActions({
+  target,
+  onReview,
+  onEmail,
+}: {
+  target: ScanTarget;
+  onReview: (target: ScanTarget) => void;
+  onEmail: (target: ScanTarget) => void;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap gap-2 border-t pt-3">
+      <Button type="button" variant="outline" size="sm" onClick={() => onReview(target)}>
+        <Eye aria-hidden="true" />
+        Review
+      </Button>
+      <Button type="button" variant="outline" size="sm" onClick={() => onEmail(target)}>
+        <Mail aria-hidden="true" />
+        Gửi email
+      </Button>
+    </div>
+  );
+}
+
 /**
  * Finds contracts by the keywords read from their scans: contract code, tax code, phone or customer name. Searches
  * while typing and marks the typed text in every result. Both the paper-signing evidence of contracts in the system
@@ -66,6 +124,10 @@ export function ScanSearch() {
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const inputId = useId();
+  const [reviewing, setReviewing] = useState<ScanTarget | null>(null);
+  const [emailing, setEmailing] = useState<ScanTarget | null>(null);
+  const closeReview = useCallback(() => setReviewing(null), []);
+  const closeEmail = useCallback(() => setEmailing(null), []);
   // Only the answer to the latest request is shown; a slower, older answer is dropped.
   const latest = useRef(0);
 
@@ -182,80 +244,86 @@ export function ScanSearch() {
 
           <ul className="space-y-3">
             {response.scans.map((scan) => (
-              <li key={`scan-${scan.jobId}`}>
-                <Link
-                  href={`/workspace/scanned-contracts/jobs/${scan.jobId}`}
-                  className="block rounded-xl border p-4 transition-colors hover:bg-accent/40"
-                >
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <ScanLine className="size-4 text-primary" aria-hidden="true" />
-                        <span className="font-semibold break-all text-primary">
-                          <Highlight text={scan.contractCode ?? scan.fileName} query={marked} />
-                        </span>
-                        {scan.contractId ? (
-                          <StatusBadge tone="success">Hợp đồng scan</StatusBadge>
-                        ) : (
-                          <StatusBadge tone="info">Bản scan</StatusBadge>
-                        )}
-                      </div>
+              <li key={`scan-${scan.jobId}`} className="rounded-xl border p-4 transition-colors hover:bg-accent/30">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <ScanLine className="size-4 text-primary" aria-hidden="true" />
+                      <Link
+                        href={`/workspace/scanned-contracts/jobs/${scan.jobId}`}
+                        className="font-semibold break-all text-primary hover:underline"
+                      >
+                        <Highlight text={scan.contractCode ?? scan.fileName} query={marked} />
+                      </Link>
                       {scan.contractId ? (
-                        <p className="mt-1 text-sm break-all">
-                          <Highlight text={scan.contractName ?? ""} query={marked} />
-                          {scan.customerName && (
-                            <>
-                              {" · "}
-                              <Highlight text={scan.customerName} query={marked} />
-                            </>
-                          )}
-                        </p>
-                      ) : null}
+                        <StatusBadge tone="success">Hợp đồng scan</StatusBadge>
+                      ) : (
+                        <StatusBadge tone="info">Bản scan</StatusBadge>
+                      )}
                     </div>
-                    <div className="shrink-0 text-xs text-muted-foreground">
-                      {scan.uploadedBy} · {formatDateTime(scan.uploadedAt)}
-                    </div>
+                    {scan.contractId ? (
+                      <p className="mt-1 text-sm break-all">
+                        <Highlight text={scan.contractName ?? ""} query={marked} />
+                        {scan.customerName && (
+                          <>
+                            {" · "}
+                            <Highlight text={scan.customerName} query={marked} />
+                          </>
+                        )}
+                      </p>
+                    ) : null}
                   </div>
-                  <Matches matches={scan.matches} query={marked} />
-                </Link>
+                  <div className="shrink-0 text-xs text-muted-foreground">
+                    {scan.uploadedBy} · {formatDateTime(scan.uploadedAt)}
+                  </div>
+                </div>
+                <Matches matches={scan.matches} query={marked} />
+                <ResultActions target={scanTarget(scan)} onReview={setReviewing} onEmail={setEmailing} />
               </li>
             ))}
           </ul>
 
           <ul className="space-y-3">
             {response.items.map((item) => (
-              <li key={item.evidenceId}>
-                <Link
-                  href={contractHref(item.documentId)}
-                  className="block rounded-xl border p-4 transition-colors hover:bg-accent/40"
-                >
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-primary">
-                          <Highlight text={item.documentCode ?? item.documentName} query={marked} />
-                        </span>
-                        <ContractStatusBadge status={item.contractStatus} />
-                      </div>
-                      <p className="mt-1 text-sm">
-                        <Highlight text={item.documentName} query={marked} />
-                        {" · "}
-                        <Highlight text={item.customerName} query={marked} />
-                      </p>
+              <li key={item.evidenceId} className="rounded-xl border p-4 transition-colors hover:bg-accent/30">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link href={contractHref(item.documentId)} className="font-semibold text-primary hover:underline">
+                        <Highlight text={item.documentCode ?? item.documentName} query={marked} />
+                      </Link>
+                      <ContractStatusBadge status={item.contractStatus} />
                     </div>
-                    <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                      <StatusBadge tone="neutral">Bản ký giấy</StatusBadge>
-                      <EvidenceStatusBadge status={item.evidenceStatus} />
-                      bản ký #{item.evidenceId} · ngày ký {formatSignDate(item.signDate)}
-                    </div>
+                    <p className="mt-1 text-sm">
+                      <Highlight text={item.documentName} query={marked} />
+                      {" · "}
+                      <Highlight text={item.customerName} query={marked} />
+                    </p>
                   </div>
-                  <Matches matches={item.matches} query={marked} />
-                </Link>
+                  <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                    <StatusBadge tone="neutral">Bản ký giấy</StatusBadge>
+                    <EvidenceStatusBadge status={item.evidenceStatus} />
+                    bản ký #{item.evidenceId} · ngày ký {formatSignDate(item.signDate)}
+                  </div>
+                </div>
+                <Matches matches={item.matches} query={marked} />
+                <ResultActions target={evidenceTarget(item)} onReview={setReviewing} onEmail={setEmailing} />
               </li>
             ))}
           </ul>
         </div>
       )}
+
+      <ScanReviewDialog
+        target={reviewing}
+        query={marked}
+        onClose={closeReview}
+        onEmail={(target) => {
+          setReviewing(null);
+          setEmailing(target);
+        }}
+      />
+      <ScanEmailDialog target={emailing} onClose={closeEmail} />
     </div>
   );
 }

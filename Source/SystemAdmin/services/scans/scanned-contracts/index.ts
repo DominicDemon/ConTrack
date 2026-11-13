@@ -1,5 +1,12 @@
 import { scanApi } from "../http";
-import type { AddScanKeywordInput, ScanKeyword, ScanKeywordJobStatus, ScanKeywordState } from "../signed-scans";
+import type {
+  AddScanKeywordInput,
+  ScanEmailInput,
+  ScanEmailResult,
+  ScanKeyword,
+  ScanKeywordJobStatus,
+  ScanKeywordState,
+} from "../signed-scans";
 
 /** OCR_JOB.ocr_job_processing_status, as MasterDB-Optimize_v1 lists it. */
 export type OcrJobStatus = "QUEUED" | "PROCESSING" | "SUCCESS" | "NEED_REVIEW" | "FAILED";
@@ -117,6 +124,14 @@ export const scannedContractsApi = {
 
   async getJob(jobId: string): Promise<ScannedJobDetail> {
     const { data } = await scanApi.get<ScannedJobDetail>(`/scanned-contracts/jobs/${jobId}`);
+    return data;
+  },
+
+  /** Sends the scan as a PDF attachment; the server opens it with the sender's key, like "View". */
+  async emailJob(jobId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailResult> {
+    const { data } = await scanApi.post<ScanEmailResult>(`/scanned-contracts/jobs/${jobId}/email`, input, {
+      headers: keyHeader(fileKey),
+    });
     return data;
   },
 

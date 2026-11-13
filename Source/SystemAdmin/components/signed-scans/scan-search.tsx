@@ -251,7 +251,7 @@ export function ScanSearch() {
                       <ScanLine className="size-4 text-primary" aria-hidden="true" />
                       <Link
                         href={`/workspace/scanned-contracts/jobs/${scan.jobId}`}
-                        className="font-semibold break-all text-primary hover:underline"
+                        className="font-semibold [overflow-wrap:anywhere] text-primary hover:underline"
                       >
                         <Highlight text={scan.contractCode ?? scan.fileName} query={marked} />
                       </Link>
@@ -262,7 +262,7 @@ export function ScanSearch() {
                       )}
                     </div>
                     {scan.contractId ? (
-                      <p className="mt-1 text-sm break-all">
+                      <p className="mt-1 text-sm [overflow-wrap:anywhere]">
                         <Highlight text={scan.contractName ?? ""} query={marked} />
                         {scan.customerName && (
                           <>

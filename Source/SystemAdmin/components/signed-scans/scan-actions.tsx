@@ -150,7 +150,7 @@ function ReviewContent({
   return (
     <>
       <DialogHeader>
-        <DialogTitle className="pr-8 break-all">
+        <DialogTitle className="pr-8 [overflow-wrap:anywhere]">
           <Highlight text={target.title} query={query} />
         </DialogTitle>
         <DialogDescription>Xem nhanh bản scan. Tệp chỉ mở bằng key của bạn và không được lưu lại trên máy.</DialogDescription>
@@ -272,7 +272,7 @@ function EmailForm({
     <>
       <DialogHeader>
         <DialogTitle>Gửi bản scan qua email</DialogTitle>
-        <DialogDescription className="break-all">
+        <DialogDescription className="[overflow-wrap:anywhere]">
           {target.title}: gửi kèm tệp PDF và thông tin hợp đồng. Mỗi người nhận một email riêng.
         </DialogDescription>
       </DialogHeader>

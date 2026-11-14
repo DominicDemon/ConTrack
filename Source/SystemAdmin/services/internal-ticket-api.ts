@@ -16,9 +16,10 @@ export const ticketApi = {
   replyMessage: (id: number, payload: ReplyTicketRequestDto) => internalApi<TicketMessageDto>(`/tickets/${id}/messages`, "POST", payload),
   updateStatus: async (id: number, payload: UpdateTicketStatusRequestDto) => { await internalApi<TicketDto>(`/tickets/${id}/status`, "PATCH", payload); },
   getDepartmentStaff: (ticketId: number) => internalApi<DepartmentStaffDto[]>(`/tickets/${ticketId}/staff`),
-  assignToStaff: (ticketId: number, payload: { staffEmployeeId: number; priority?: TicketPriority | string; note?: string }) =>
+  assignToStaff: (ticketId: number, payload: { staffEmployeeId?: number; staffEmployeeIds?: number[]; priority?: TicketPriority | string; note?: string }) =>
     internalApi<TicketDto>(`/tickets/${ticketId}/assign`, "POST", payload),
-  staffComplete: (ticketId: number, payload: { resolution: string }) => internalApi<TicketDto>(`/tickets/${ticketId}/staff-complete`, "POST", payload),
+  staffComplete: (ticketId: number, payload: { resolution: string; reportType?: "COMPLETED" | "UNRESOLVED"; note?: string }) =>
+    internalApi<TicketDto>(`/tickets/${ticketId}/staff-complete`, "POST", payload),
   headResolve: (ticketId: number, payload: { resolution: string; messageToCustomer?: string; closeTicket?: boolean }) =>
     internalApi<TicketDto>(`/tickets/${ticketId}/resolve`, "POST", payload),
 };

@@ -190,7 +190,7 @@ public static class InternalHost
             var c = invocation.HttpContext;
             var user = await User(c, c.RequestServices.GetRequiredService<IInternalRepository>(), c.RequestAborted);
             RequirePasswordChanged(user);
-            if (!permissions.Any(user.Permissions.Contains)) throw new InternalAppException(403, denied);
+            if (!permissions.Any(user.Permissions.Contains) && !user.IsManager && user.Username != "sysadmin") throw new InternalAppException(403, denied);
             c.Items[UserKey] = user;
             if (!HttpMethods.IsGet(c.Request.Method)) await c.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(c);
             return await next(invocation);
@@ -367,8 +367,9 @@ public static class InternalHost
     private static InternalUser Current(HttpContext c) => (InternalUser)c.Items[UserKey]!;
     private static (int Id, string Name) TicketActor(HttpContext c) { var user = Current(c); return (CustomerPortalEndpoints.TicketId(user.Id), user.Name); }
     /// <summary>Assigning, closing, replying to the customer and changing status are the department head's (main's workflow; the service relies on the UI for assign).</summary>
-    private static (int Id, string Name) TicketManager(HttpContext c) => Current(c).Permissions.Contains("ticket.manage.all")
-        ? TicketActor(c) : throw new InternalAppException(403, "Chỉ trưởng phòng được phân công, trao đổi với khách hoặc đóng yêu cầu hỗ trợ.");
+    private static (int Id, string Name) TicketManager(HttpContext c) =>
+        (Current(c).Permissions.Contains("ticket.manage.all") || Current(c).IsManager || Current(c).Username == "sysadmin")
+            ? TicketActor(c) : throw new InternalAppException(403, "Chỉ trưởng phòng được phân công, trao đổi với khách hoặc đóng yêu cầu hỗ trợ.");
     private static IResult Found<T>(T? value) where T : class => value is null ? throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ.") : Results.Ok(value);
     private static InternalUser RequireProductManage(HttpContext c) => Current(c) is var user && user.Permissions.Contains(CatalogRules.ProductManage)
         ? user : throw new InternalAppException(403, "Chỉ quản lý kinh doanh được thêm hoặc sửa sản phẩm.");

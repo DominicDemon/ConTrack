@@ -539,90 +539,100 @@ export default function CustomerSupportTicketDetailPage({
                 <div ref={chatBottomRef} />
               </div>
 
-              <form
-                onSubmit={handleSendReply}
-                className="border-t bg-white p-3.5 dark:bg-slate-900"
-              >
-                {attachedImage && (
-                  <div className="mb-3 flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50/60 p-2.5 dark:border-blue-900 dark:bg-blue-950/30">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPreviewImage(attachedImage.dataUrl);
-                        setZoomScale(1);
-                      }}
-                      className="group relative h-16 w-20 shrink-0 overflow-hidden rounded-lg border bg-white cursor-zoom-in"
-                      title="Bấm vào để xem ảnh lớn"
-                    >
-                      <img
-                        src={attachedImage.dataUrl}
-                        alt={attachedImage.name}
-                        className="h-full w-full object-cover"
-                      />
-                    </button>
-                    <div className="min-w-0 flex-1 text-xs">
-                      <p className="font-semibold text-blue-900 dark:text-blue-200">
-                        Ảnh đính kèm sẵn sàng gửi
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        Bấm vào ảnh để xem phóng to hoặc nhấn Gửi ngay
-                      </p>
+              {isResolved ? (
+                <div className="flex items-center justify-center gap-2 border-t bg-slate-100 px-4 py-3.5 text-xs font-medium text-slate-600 dark:bg-slate-900 dark:text-slate-400">
+                  <CheckCircle2 className="size-4 text-emerald-600" />
+                  <span>
+                    Yêu cầu hỗ trợ đã hoàn thành và đóng. Bạn chỉ có thể xem lại
+                    lịch sử tin nhắn và kết quả xử lý, không thể nhắn thêm.
+                  </span>
+                </div>
+              ) : (
+                <form
+                  onSubmit={handleSendReply}
+                  className="border-t bg-white p-3.5 dark:bg-slate-900"
+                >
+                  {attachedImage && (
+                    <div className="mb-3 flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50/60 p-2.5 dark:border-blue-900 dark:bg-blue-950/30">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPreviewImage(attachedImage.dataUrl);
+                          setZoomScale(1);
+                        }}
+                        className="group relative h-16 w-20 shrink-0 overflow-hidden rounded-lg border bg-white cursor-zoom-in"
+                        title="Bấm vào để xem ảnh lớn"
+                      >
+                        <img
+                          src={attachedImage.dataUrl}
+                          alt={attachedImage.name}
+                          className="h-full w-full object-cover"
+                        />
+                      </button>
+                      <div className="min-w-0 flex-1 text-xs">
+                        <p className="font-semibold text-blue-900 dark:text-blue-200">
+                          Ảnh đính kèm sẵn sàng gửi
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Bấm vào ảnh để xem phóng to hoặc nhấn Gửi ngay
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setAttachedImage(null)}
+                        className="size-8 text-muted-foreground hover:text-rose-600"
+                        title="Xóa ảnh"
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
                     </div>
+                  )}
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                      className="hidden"
+                      onChange={handleSelectImage}
+                    />
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="outline"
                       size="icon"
-                      onClick={() => setAttachedImage(null)}
-                      className="size-8 text-muted-foreground hover:text-rose-600"
-                      title="Xóa ảnh"
+                      onClick={() => fileInputRef.current?.click()}
+                      title="Gửi hình ảnh minh họa"
+                      className="size-10 shrink-0 rounded-full border-slate-300 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
                     >
-                      <Trash2 className="size-4" />
+                      <ImagePlus className="size-5" />
+                    </Button>
+
+                    <input
+                      type="text"
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      onPaste={handlePasteImage}
+                      placeholder="Nhập tin nhắn hoặc nhấn Ctrl+V để dán ảnh gửi Trưởng phòng..."
+                      className="h-10 flex-1 rounded-full border border-slate-300 bg-slate-50 px-4 text-sm focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
+                    />
+
+                    <Button
+                      type="submit"
+                      disabled={sending || (!replyText.trim() && !attachedImage)}
+                      className="h-10 rounded-full bg-blue-600 px-5 text-white hover:bg-blue-700"
+                    >
+                      {sending ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Send className="size-4" />
+                      )}
+                      <span className="ml-1.5 hidden sm:inline">Gửi ngay</span>
                     </Button>
                   </div>
-                )}
-
-                <div className="flex items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                    className="hidden"
-                    onChange={handleSelectImage}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => fileInputRef.current?.click()}
-                    title="Gửi hình ảnh minh họa"
-                    className="size-10 shrink-0 rounded-full border-slate-300 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
-                  >
-                    <ImagePlus className="size-5" />
-                  </Button>
-
-                  <input
-                    type="text"
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    onPaste={handlePasteImage}
-                    placeholder="Nhập tin nhắn hoặc nhấn Ctrl+V để dán ảnh gửi Trưởng phòng..."
-                    className="h-10 flex-1 rounded-full border border-slate-300 bg-slate-50 px-4 text-sm focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                  />
-
-                  <Button
-                    type="submit"
-                    disabled={sending || (!replyText.trim() && !attachedImage)}
-                    className="h-10 rounded-full bg-blue-600 px-5 text-white hover:bg-blue-700"
-                  >
-                    {sending ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Send className="size-4" />
-                    )}
-                    <span className="ml-1.5 hidden sm:inline">Gửi ngay</span>
-                  </Button>
-                </div>
-              </form>
+                </form>
+              )}
             </div>
           )}
 

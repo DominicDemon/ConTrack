@@ -192,9 +192,14 @@ function SupportTicketsContent() {
   const handleView = useCallback(
     (id: number) => {
       setLoadingId(id);
-      router.push(`/workspace/support-tickets/${id}`);
+      const tabParam = searchParams.get("tab");
+      router.push(
+        tabParam
+          ? `/workspace/support-tickets/${id}?tab=${encodeURIComponent(tabParam)}`
+          : `/workspace/support-tickets/${id}`,
+      );
     },
-    [router],
+    [router, searchParams],
   );
 
   // SummaryCards đồng bộ với TenantsPage

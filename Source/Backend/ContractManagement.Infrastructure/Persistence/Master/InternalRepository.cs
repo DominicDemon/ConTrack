@@ -29,21 +29,29 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             join rp in db.SystemRolePermissions on r.SystemRoleId equals rp.SystemRoleId
             join p in db.SystemPermissions on rp.SystemPermissionId equals p.SystemPermissionId
             where er.EmployeeId == id && r.SystemRoleStatus == "ACTIVE" select p.SystemPermissionCode).Distinct().ToArrayAsync(ct);
-        // Sales employees may create and manage their own contract drafts. Their list/detail queries
-        // remain owner-scoped by InternalDraftService and Drafts; this does not grant company-wide access.
         var isSalesEmployee = await (from assignment in db.EmployeeDepartments
             join department in db.Departments on assignment.DepartmentId equals department.DepartmentId
             where assignment.EmployeeId == id && department.DepartmentStatus == "ACTIVE"
                 && (department.DepartmentCode == "KD" || department.DepartmentName.Contains("Kinh Doanh"))
             select assignment.EmployeeId).AnyAsync(ct);
-        if (isSalesEmployee)
-            permissions = permissions.Append("draft.write").Distinct().ToArray();
-        if (employee.EmployeeCode == "ADM-SYSADMIN")
-            permissions = permissions.Concat(["draft.write", "draft.manage.all"]).Distinct().ToArray();
         var departmentRow = await (from ed in db.EmployeeDepartments join d in db.Departments on ed.DepartmentId equals d.DepartmentId
             where ed.EmployeeId == id select new { d.DepartmentName, d.DepartmentManagerEmployeeId }).FirstOrDefaultAsync(ct);
+        var isManager = departmentRow?.DepartmentManagerEmployeeId == id
+            || employee.EmployeeUsername.StartsWith("head.")
+            || permissions.Contains("ticket.manage.all");
+        var isSysAdmin = employee.EmployeeCode == "ADM-SYSADMIN" || employee.EmployeeUsername == "sysadmin";
+
+        if (isSalesEmployee)
+            permissions = permissions.Append("draft.write").Distinct().ToArray();
+        if (isSysAdmin)
+            permissions = permissions.Concat(["draft.write", "draft.manage.all", "customer.manage", "product.read", "product.manage", "ticket.handle", "ticket.manage.all"]).Distinct().ToArray();
+        if (isManager)
+            permissions = permissions.Concat(["ticket.manage.all", "ticket.handle"]).Distinct().ToArray();
+        else if (departmentRow != null)
+            permissions = permissions.Append("ticket.handle").Distinct().ToArray();
+
         return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions, employee.EmployeeMustChangePassword,
-            departmentRow?.DepartmentName, departmentRow?.DepartmentManagerEmployeeId == id);
+            departmentRow?.DepartmentName, isManager || isSysAdmin);
     }
     public async Task<List<TemplateDefinition>> Templates(CancellationToken ct)
     {

@@ -227,12 +227,6 @@ public sealed class SupportTicketService : ISupportTicketService
         {
             var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
 
-            // System Admin không nhận và không xem yêu cầu hỗ trợ khách hàng
-            if (string.Equals(roleInfo.Role, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase))
-            {
-                return [];
-            }
-
             var dbTickets = await LoadTicketsFromDbAsync(cancellationToken);
             var state = await EnsureStateLoadedAsync(cancellationToken);
 
@@ -288,10 +282,6 @@ public sealed class SupportTicketService : ISupportTicketService
         try
         {
             var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
-            if (string.Equals(roleInfo.Role, "SYSTEM_ADMIN", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
 
             var dbTicket = await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
             var state = await EnsureStateLoadedAsync(cancellationToken);
@@ -647,6 +637,7 @@ public sealed class SupportTicketService : ISupportTicketService
         var dept = await db.Departments.AsNoTracking()
             .FirstOrDefaultAsync(d => d.DepartmentId == deptId.Value, cancellationToken);
         var deptName = dept?.DepartmentName ?? GetDepartmentDisplayName(deptId.Value, null);
+        var deptManagerId = dept?.DepartmentManagerEmployeeId;
 
         var allActiveEmployees = await db.Employees.AsNoTracking()
             .Where(e => e.EmployeeStatus == "ACTIVE")
@@ -655,7 +646,7 @@ public sealed class SupportTicketService : ISupportTicketService
 
         var empDeptMap = await LoadEmployeeDepartmentMapAsync(db, cancellationToken);
 
-        // Trả về cả Trưởng phòng (isManager = true) và các Nhân viên (STAFF) thuộc đúng phòng ban đó để Trưởng phòng có thể tự nhận xử lý hoặc giao cho nhân viên
+        // Trả về Trưởng phòng của phòng ban (isManager = true) và các Nhân viên (STAFF) thuộc đúng phòng ban đó
         var filteredStaff = new List<DepartmentEmployeeDto>();
         foreach (var emp in allActiveEmployees)
         {
@@ -671,15 +662,17 @@ public sealed class SupportTicketService : ISupportTicketService
                 continue;
             }
 
+            var isManager = deptManagerId.HasValue && deptManagerId.Value == emp.EmployeeId;
+
             filteredStaff.Add(new DepartmentEmployeeDto
             {
                 EmployeeId = (int)emp.EmployeeId,
-                EmployeeName = !string.IsNullOrWhiteSpace(emp.EmployeeDisplayName) ? emp.EmployeeDisplayName : emp.EmployeeUsername,
+                EmployeeName = CleanMojibake(!string.IsNullOrWhiteSpace(emp.EmployeeDisplayName) ? emp.EmployeeDisplayName : emp.EmployeeUsername) ?? string.Empty,
                 EmployeeCode = emp.EmployeeCode,
                 EmployeeEmail = emp.EmployeeEmail,
                 DepartmentId = deptId.Value,
-                DepartmentName = deptName,
-                IsManager = isHead
+                DepartmentName = CleanMojibake(deptName) ?? deptName,
+                IsManager = isManager
             });
         }
 
@@ -697,8 +690,7 @@ public sealed class SupportTicketService : ISupportTicketService
         CancellationToken cancellationToken = default)
     {
         SupportTicketDto? assignedTicket = null;
-        Employee? assignedStaff = null;
-        bool shouldEmailStaff = false;
+        var staffToNotify = new List<Employee>();
         string? assignmentNote = request.Note;
         string roleForViewer = "STAFF";
         int? deptForViewer = null;
@@ -707,8 +699,23 @@ public sealed class SupportTicketService : ISupportTicketService
         try
         {
             var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
+            var isHeadOrAdmin = string.Equals(roleInfo.Role, "DEPARTMENT_HEAD", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(roleInfo.Role, "SYSADMIN", StringComparison.OrdinalIgnoreCase);
+            if (!isHeadOrAdmin)
+            {
+                throw new ArgumentException("Chỉ Trưởng phòng mới có quyền phân công xử lý yêu cầu hỗ trợ.");
+            }
             roleForViewer = roleInfo.Role;
             deptForViewer = roleInfo.DepartmentId;
+
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var existingStateTicket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
+                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+            if (existingStateTicket != null && string.Equals(NormalizeStatus(existingStateTicket.TicketStatus), "Resolved", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng, không thể phân công tiếp.");
+            }
+
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetService<MasterDbContext>();
 
@@ -723,50 +730,110 @@ public sealed class SupportTicketService : ISupportTicketService
                 _ => "Bình thường"
             };
 
-            var targetStaffId = request.StaffEmployeeId > 0 ? request.StaffEmployeeId : currentEmployeeId;
-            var isSelfAssign = targetStaffId == currentEmployeeId;
+            var targetStaffIds = new List<int>();
+            if (request.StaffEmployeeIds is { Count: > 0 })
+            {
+                targetStaffIds.AddRange(request.StaffEmployeeIds.Where(id => id > 0));
+            }
+            if (request.StaffEmployeeId > 0 && !targetStaffIds.Contains(request.StaffEmployeeId))
+            {
+                targetStaffIds.Add(request.StaffEmployeeId);
+            }
+            targetStaffIds = targetStaffIds.Distinct().ToList();
+            if (targetStaffIds.Count == 0)
+            {
+                targetStaffIds.Add(currentEmployeeId);
+            }
 
-            Employee? staff = null;
+            var isSelfAssignOnly = targetStaffIds.Count == 1 && targetStaffIds[0] == currentEmployeeId;
+            var now = DateTime.UtcNow;
+            var selectedStaffEntities = new List<Employee>();
+            var hadPreviousAssignee = false;
+
             if (db != null)
             {
-                staff = await db.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.EmployeeId == targetStaffId, cancellationToken);
+                var longIds = targetStaffIds.Select(x => (long)x).ToList();
+                selectedStaffEntities = await db.Employees.AsNoTracking()
+                    .Where(e => longIds.Contains(e.EmployeeId))
+                    .ToListAsync(cancellationToken);
+
                 var ticketEntity = await db.TicketSupports.FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, cancellationToken);
 
-                if (ticketEntity != null && staff != null)
+                if (ticketEntity != null && selectedStaffEntities.Count > 0)
                 {
+                    if (string.Equals(NormalizeStatus(ticketEntity.TicketStatus), "Resolved", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng, không thể phân công tiếp.");
+                    }
+
+                    var oldStatus = ticketEntity.TicketStatus ?? "Open";
                     ticketEntity.TicketStatus = "In_Progress";
                     if (!string.IsNullOrWhiteSpace(assignedPriority))
                     {
                         ticketEntity.TicketPriority = assignedPriority;
                     }
-                    ticketEntity.UpdatedAt = DateTime.UtcNow;
+                    ticketEntity.UpdatedAt = now;
 
-                    var assignment = new TicketSupportEmployee
+                    var activeDbAssignees = await db.TicketSupportEmployees
+                        .Where(a => a.TicketSupportId == ticketId
+                                    && a.TicketSupportEmployeeAssignmentRole == "ASSIGNEE"
+                                    && a.TicketSupportEmployeeUnassignedAt == null)
+                        .ToListAsync(cancellationToken);
+
+                    if (activeDbAssignees.Count > 0)
                     {
-                        TicketSupportId = ticketId,
-                        EmployeeId = staff.EmployeeId,
-                        TicketSupportEmployeeAssignmentRole = "ASSIGNEE",
-                        TicketSupportEmployeeAssignedAt = DateTime.UtcNow,
-                        TicketSupportEmployeeAssignedByEmployeeId = currentEmployeeId
-                    };
-                    db.TicketSupportEmployees.Add(assignment);
+                        hadPreviousAssignee = true;
+                        foreach (var oldAssignee in activeDbAssignees)
+                        {
+                            if (!oldAssignee.EmployeeId.HasValue || !targetStaffIds.Contains((int)oldAssignee.EmployeeId.Value))
+                            {
+                                oldAssignee.TicketSupportEmployeeUnassignedAt = now;
+                            }
+                        }
+                    }
 
+                    foreach (var st in selectedStaffEntities)
+                    {
+                        var alreadyActive = activeDbAssignees.Any(a => a.EmployeeId == st.EmployeeId && a.TicketSupportEmployeeUnassignedAt == null);
+                        if (!alreadyActive)
+                        {
+                            db.TicketSupportEmployees.Add(new TicketSupportEmployee
+                            {
+                                TicketSupportId = ticketId,
+                                EmployeeId = st.EmployeeId,
+                                TicketSupportEmployeeAssignmentRole = "ASSIGNEE",
+                                TicketSupportEmployeeAssignedAt = now,
+                                TicketSupportEmployeeAssignedByEmployeeId = currentEmployeeId
+                            });
+                        }
+                    }
+
+                    var staffNamesText = string.Join(", ", selectedStaffEntities.Select(s => s.EmployeeDisplayName ?? s.EmployeeUsername ?? $"NV #{s.EmployeeId}"));
                     var noteText = string.IsNullOrWhiteSpace(request.Note)
-                        ? (isSelfAssign ? "Trưởng phòng trực tiếp tiếp nhận và xử lý yêu cầu." : "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng.")
+                        ? (isSelfAssignOnly
+                            ? "Trưởng phòng trực tiếp tiếp nhận và xử lý yêu cầu."
+                            : (hadPreviousAssignee
+                                ? "Điều phối chuyển giao/bổ sung nhân sự tiếp nhận xử lý yêu cầu."
+                                : "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng."))
                         : request.Note.Trim();
-                    var historyNotes = isSelfAssign
+
+                    var actionPrefix = isSelfAssignOnly
+                        ? "Trưởng phòng tự xử lý"
+                        : (hadPreviousAssignee ? "Điều phối / Chuyển giao xử lý" : "Phân công xử lý");
+
+                    var historyNotes = isSelfAssignOnly
                         ? $"Trưởng phòng {currentEmployeeName} trực tiếp tiếp nhận xử lý yêu cầu (Độ ưu tiên: {priorityLabel}). Ghi chú: {noteText}"
-                        : $"Trưởng phòng {currentEmployeeName} phân công cho nhân viên {staff.EmployeeDisplayName} (Độ ưu tiên: {priorityLabel}). Nội dung chỉ đạo: {noteText}";
+                        : $"Trưởng phòng {currentEmployeeName} {(hadPreviousAssignee ? "điều phối lại / giao" : "phân công")} cho {staffNamesText} (Độ ưu tiên: {priorityLabel}). Nội dung chỉ đạo: {noteText}";
 
                     var msg = new TicketMessage
                     {
                         TicketSupportId = ticketId,
                         TicketMessageSenderEmployeeId = currentEmployeeId,
                         TicketMessageType = "ASSIGNMENT",
-                        TicketMessageContent = isSelfAssign
-                            ? $"[Trưởng phòng tự xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã trực tiếp tiếp nhận xử lý yêu cầu.\nGhi chú: {noteText}"
-                            : $"[Phân công xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho nhân viên {staff.EmployeeDisplayName}.\nNội dung chỉ đạo: {noteText}",
-                        CreatedAt = DateTime.UtcNow
+                        TicketMessageContent = isSelfAssignOnly
+                            ? $"[{actionPrefix} • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã trực tiếp tiếp nhận xử lý yêu cầu.\nGhi chú: {noteText}"
+                            : $"[{actionPrefix} • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho: {staffNamesText}.\nNội dung chỉ đạo: {noteText}",
+                        CreatedAt = now
                     };
                     db.TicketMessages.Add(msg);
 
@@ -775,49 +842,91 @@ public sealed class SupportTicketService : ISupportTicketService
                         db,
                         ticketId,
                         currentEmployeeId,
-                        (int)staff.EmployeeId,
+                        targetStaffIds.FirstOrDefault(),
                         currentEmployeeId,
-                        "Open",
+                        oldStatus,
                         "In_Progress",
                         historyNotes,
                         cancellationToken);
                 }
             }
 
-            var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
-                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
-
+            var ticket = existingStateTicket;
             if (ticket != null)
             {
-                var staffName = staff?.EmployeeDisplayName ?? (isSelfAssign ? currentEmployeeName : $"Nhân viên #{targetStaffId}");
+                var staffDict = selectedStaffEntities.ToDictionary(s => (int)s.EmployeeId);
+                var staffNamesList = targetStaffIds.Select(id =>
+                    staffDict.TryGetValue(id, out var emp)
+                        ? (emp.EmployeeDisplayName ?? emp.EmployeeUsername ?? $"Nhân viên #{id}")
+                        : (id == currentEmployeeId ? currentEmployeeName : $"Nhân viên #{id}")).ToList();
+                var joinedNames = string.Join(", ", staffNamesList);
+
+                var activeStateAssignees = ticket.Assignments
+                    .Where(a => string.Equals(a.AssignmentRole, "ASSIGNEE", StringComparison.OrdinalIgnoreCase) && a.UnassignedAt == null)
+                    .ToList();
+
+                if (activeStateAssignees.Count > 0)
+                {
+                    hadPreviousAssignee = true;
+                    foreach (var oldAssign in activeStateAssignees)
+                    {
+                        if (!targetStaffIds.Contains(oldAssign.EmployeeId))
+                        {
+                            oldAssign.UnassignedAt = now;
+                        }
+                    }
+                }
+
                 var noteText = string.IsNullOrWhiteSpace(request.Note)
-                    ? (isSelfAssign ? "Trưởng phòng trực tiếp tiếp nhận và xử lý yêu cầu." : "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng.")
+                    ? (isSelfAssignOnly
+                        ? "Trưởng phòng trực tiếp tiếp nhận và xử lý yêu cầu."
+                        : (hadPreviousAssignee
+                            ? "Điều phối chuyển giao/bổ sung nhân sự tiếp nhận xử lý yêu cầu."
+                            : "Vui lòng tiếp nhận và xử lý yêu cầu của khách hàng."))
                     : request.Note.Trim();
+
+                var actionPrefix = isSelfAssignOnly
+                    ? "Trưởng phòng tự xử lý"
+                    : (hadPreviousAssignee ? "Điều phối / Chuyển giao xử lý" : "Phân công xử lý");
 
                 ticket.TicketStatus = "In_Progress";
                 if (!string.IsNullOrWhiteSpace(assignedPriority))
                 {
                     ticket.TicketPriority = assignedPriority;
                 }
-                ticket.AssignedEmployeeId = targetStaffId;
-                ticket.AssignedEmployeeName = staffName;
-                ticket.AssignedAt = DateTime.UtcNow;
-                ticket.UpdatedAt = DateTime.UtcNow;
+                ticket.AssignedEmployeeId = targetStaffIds.FirstOrDefault();
+                ticket.AssignedEmployeeIds = [.. targetStaffIds];
+                ticket.AssignedEmployeeName = joinedNames;
+                ticket.AssignedAt = now;
+                ticket.UpdatedAt = now;
 
-                ticket.Assignments.RemoveAll(a => !string.Equals(a.AssignmentRole, "DEPARTMENT_HEAD", StringComparison.OrdinalIgnoreCase));
-                ticket.Assignments.Add(new TicketEmployeeAssignmentDto
+                foreach (var targetId in targetStaffIds)
                 {
-                    TicketSupportEmployeeId = ticket.Assignments.Count + 1,
-                    TicketSupportId = ticketId,
-                    EmployeeId = targetStaffId,
-                    EmployeeName = staffName,
-                    EmployeeEmail = staff?.EmployeeEmail,
-                    AssignmentRole = "ASSIGNEE",
-                    AssignedAt = DateTime.UtcNow,
-                    AssignedByEmployeeId = currentEmployeeId,
-                    AssignedByName = currentEmployeeName
-                });
+                    var alreadyActive = ticket.Assignments.Any(a =>
+                        string.Equals(a.AssignmentRole, "ASSIGNEE", StringComparison.OrdinalIgnoreCase)
+                        && a.EmployeeId == targetId
+                        && a.UnassignedAt == null);
+
+                    if (!alreadyActive)
+                    {
+                        var emp = staffDict.GetValueOrDefault(targetId);
+                        var empName = emp?.EmployeeDisplayName ?? emp?.EmployeeUsername ?? (targetId == currentEmployeeId ? currentEmployeeName : $"Nhân viên #{targetId}");
+                        ticket.Assignments.Add(new TicketEmployeeAssignmentDto
+                        {
+                            TicketSupportEmployeeId = ticket.Assignments.Count + 1,
+                            TicketSupportId = ticketId,
+                            EmployeeId = targetId,
+                            EmployeeName = empName,
+                            EmployeeCode = emp?.EmployeeCode,
+                            EmployeeEmail = emp?.EmployeeEmail,
+                            AssignmentRole = "ASSIGNEE",
+                            AssignedAt = now,
+                            UnassignedAt = null,
+                            AssignedByEmployeeId = currentEmployeeId,
+                            AssignedByName = currentEmployeeName
+                        });
+                    }
+                }
 
                 ticket.Messages.Add(new SupportTicketMessageDto
                 {
@@ -826,19 +935,18 @@ public sealed class SupportTicketService : ISupportTicketService
                     SenderEmployeeId = currentEmployeeId,
                     SenderName = currentEmployeeName,
                     IsFromEmployee = true,
-                    TicketMessageContent = isSelfAssign
-                        ? $"[Trưởng phòng tự xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã trực tiếp tiếp nhận xử lý yêu cầu.\nGhi chú: {noteText}"
-                        : $"[Phân công xử lý • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho nhân viên {staffName}.\nNội dung chỉ đạo: {noteText}",
+                    TicketMessageContent = isSelfAssignOnly
+                        ? $"[{actionPrefix} • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã trực tiếp tiếp nhận xử lý yêu cầu.\nGhi chú: {noteText}"
+                        : $"[{actionPrefix} • Ưu tiên: {priorityLabel}] Trưởng phòng {currentEmployeeName} đã giao yêu cầu cho: {joinedNames}.\nNội dung chỉ đạo: {noteText}",
                     TicketMessageType = "ASSIGNMENT",
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = now
                 });
 
                 state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
                 state.Tickets.Insert(0, ticket);
 
-                if (!isSelfAssign)
+                foreach (var targetId in targetStaffIds.Where(id => id != currentEmployeeId))
                 {
-                    // Tạo thông báo riêng cho NHÂN VIÊN ĐƯỢC PHÂN CÔNG
                     state.AdminNotifications.Insert(0, new AdminNotificationDto
                     {
                         NotificationId = state.NextNotificationId++,
@@ -852,16 +960,19 @@ public sealed class SupportTicketService : ISupportTicketService
                         Priority = ticket.TicketPriority,
                         DepartmentId = ticket.DepartmentId,
                         Department = ticket.Department,
-                        TargetEmployeeId = targetStaffId,
+                        TargetEmployeeId = targetId,
                         ActionKey = "assigned-ticket",
-                        CreatedAtUtc = DateTime.UtcNow
+                        CreatedAtUtc = now
                     });
+
+                    if (staffDict.TryGetValue(targetId, out var empToEmail))
+                    {
+                        staffToNotify.Add(empToEmail);
+                    }
                 }
 
                 await SaveStateAsync(state, cancellationToken);
                 assignedTicket = ticket;
-                assignedStaff = staff;
-                shouldEmailStaff = !isSelfAssign && staff != null;
             }
         }
         finally
@@ -869,9 +980,12 @@ public sealed class SupportTicketService : ISupportTicketService
             StoreLock.Release();
         }
 
-        if (shouldEmailStaff && assignedTicket != null && assignedStaff != null)
+        if (assignedTicket != null && staffToNotify.Count > 0)
         {
-            await SendStaffAssignmentNotificationAsync(assignedTicket, assignedStaff, currentEmployeeName, assignmentNote);
+            foreach (var staffMember in staffToNotify)
+            {
+                await SendStaffAssignmentNotificationAsync(assignedTicket, staffMember, currentEmployeeName, assignmentNote);
+            }
         }
 
         return assignedTicket is null ? null : CloneTicketWithViewer(assignedTicket, roleForViewer, currentEmployeeId, deptForViewer);
@@ -890,6 +1004,45 @@ public sealed class SupportTicketService : ISupportTicketService
             var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
             if (roleInfo.Role == "SYSADMIN") return null;
 
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
+                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+            if (ticket is null) return null;
+
+            if (!CanEmployeeViewTicket(ticket, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId))
+            {
+                return null;
+            }
+
+            if (string.Equals(NormalizeStatus(ticket.TicketStatus), "Resolved", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng, không thể gửi thêm báo cáo.");
+            }
+
+            // Nếu là nhân viên (STAFF), kiểm tra xem nhân viên này có đang là người phụ trách hiện tại không
+            if (string.Equals(roleInfo.Role, "STAFF", StringComparison.OrdinalIgnoreCase))
+            {
+                var isActiveAssignee = ticket.AssignedEmployeeId == currentEmployeeId
+                    || ticket.AssignedEmployeeIds.Contains(currentEmployeeId)
+                    || ticket.Assignments.Any(a =>
+                        a.EmployeeId == currentEmployeeId
+                        && string.Equals(a.AssignmentRole, "ASSIGNEE", StringComparison.OrdinalIgnoreCase)
+                        && a.UnassignedAt == null);
+
+                if (!isActiveAssignee)
+                {
+                    throw new ArgumentException("Yêu cầu này đã được chuyển giao cho nhân sự khác phụ trách. Bạn chỉ có thể xem lịch sử.");
+                }
+            }
+
+            var isUnresolved = string.Equals(request.ReportType, "UNRESOLVED", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(request.ReportType, "HANDOVER", StringComparison.OrdinalIgnoreCase);
+            var msgType = isUnresolved ? "STAFF_REPORT" : "STAFF_COMPLETION";
+            var msgContent = isUnresolved
+                ? $"[Báo cáo chưa xử lý được / Đề xuất chuyển người] Nhân viên {currentEmployeeName} báo cáo lên Trưởng phòng:\n{request.Resolution.Trim()}"
+                : $"[Báo cáo hoàn tất xử lý] Nhân viên {currentEmployeeName} đã xử lý xong và gửi kết quả lên Trưởng phòng:\n{request.Resolution.Trim()}";
+            var newStatus = "PendingHeadApproval";
+
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetService<MasterDbContext>();
 
@@ -898,16 +1051,19 @@ public sealed class SupportTicketService : ISupportTicketService
                 var ticketEntity = await db.TicketSupports.FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, cancellationToken);
                 if (ticketEntity != null)
                 {
-                    ticketEntity.TicketResolution = request.Resolution;
-                    ticketEntity.TicketStatus = "PendingHeadApproval";
+                    if (!isUnresolved)
+                    {
+                        ticketEntity.TicketResolution = request.Resolution.Trim();
+                    }
+                    ticketEntity.TicketStatus = newStatus;
                     ticketEntity.UpdatedAt = DateTime.UtcNow;
 
                     var msg = new TicketMessage
                     {
                         TicketSupportId = ticketId,
                         TicketMessageSenderEmployeeId = currentEmployeeId,
-                        TicketMessageType = "STAFF_COMPLETION",
-                        TicketMessageContent = $"[Báo cáo Trưởng phòng] Nhân viên {currentEmployeeName} đã xử lý xong và gửi kết quả lên Trưởng phòng:\n{request.Resolution}",
+                        TicketMessageType = msgType,
+                        TicketMessageContent = msgContent,
                         CreatedAt = DateTime.UtcNow
                     };
                     db.TicketMessages.Add(msg);
@@ -920,59 +1076,61 @@ public sealed class SupportTicketService : ISupportTicketService
                         null,
                         currentEmployeeId,
                         "In_Progress",
-                        "PendingHeadApproval",
-                        $"Nhân viên {currentEmployeeName} gửi kết quả lên Trưởng phòng: {request.Resolution}",
+                        newStatus,
+                        isUnresolved
+                            ? $"Nhân viên {currentEmployeeName} báo cáo chưa xử lý được / đề xuất chuyển người: {request.Resolution.Trim()}"
+                            : $"Nhân viên {currentEmployeeName} gửi kết quả hoàn tất lên Trưởng phòng: {request.Resolution.Trim()}",
                         cancellationToken);
                 }
             }
 
-            var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId);
-            if (ticket != null)
+            if (!isUnresolved)
             {
-                if (!CanEmployeeViewTicket(ticket, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId))
-                {
-                    return null;
-                }
-
-                ticket.TicketResolution = request.Resolution;
-                ticket.TicketStatus = "PendingHeadApproval";
-                ticket.UpdatedAt = DateTime.UtcNow;
-
-                ticket.Messages.Add(new SupportTicketMessageDto
-                {
-                    TicketMessageId = state.NextMessageId++,
-                    TicketSupportId = ticketId,
-                    SenderEmployeeId = currentEmployeeId,
-                    SenderName = currentEmployeeName,
-                    IsFromEmployee = true,
-                    TicketMessageContent = $"[Báo cáo Trưởng phòng] Nhân viên {currentEmployeeName} đã xử lý xong và gửi kết quả lên Trưởng phòng:\n{request.Resolution}",
-                    TicketMessageType = "STAFF_COMPLETION",
-                    CreatedAt = DateTime.UtcNow
-                });
-
-                state.AdminNotifications.Insert(0, new AdminNotificationDto
-                {
-                    NotificationId = state.NextNotificationId++,
-                    SubjectType = "SupportTicket",
-                    SubjectId = ticket.TicketSupportId,
-                    TicketCode = ticket.TicketCode,
-                    TenantName = ticket.TenantName,
-                    TenantCode = ticket.TenantCode,
-                    Title = $"[{ticket.Department}] NV {currentEmployeeName} báo cáo hoàn tất {ticket.TicketCode}",
-                    Body = $"Nhân viên {currentEmployeeName} đã gửi kết quả xử lý ticket '{ticket.TicketSubject}' lên Trưởng phòng.",
-                    Priority = ticket.TicketPriority,
-                    DepartmentId = ticket.DepartmentId,
-                    Department = ticket.Department,
-                    TargetEmployeeId = ticket.DepartmentHeadEmployeeId,
-                    ActionKey = "staff-completed-ticket",
-                    CreatedAtUtc = DateTime.UtcNow
-                });
-
-                await SaveStateAsync(state, cancellationToken);
+                ticket.TicketResolution = request.Resolution.Trim();
             }
+            ticket.TicketStatus = newStatus;
+            ticket.UpdatedAt = DateTime.UtcNow;
 
-            return ticket is null ? null : CloneTicketWithViewer(ticket, roleInfo.Role, currentEmployeeId, roleInfo.DepartmentId);
+            ticket.Messages.Add(new SupportTicketMessageDto
+            {
+                TicketMessageId = state.NextMessageId++,
+                TicketSupportId = ticketId,
+                SenderEmployeeId = currentEmployeeId,
+                SenderName = currentEmployeeName,
+                IsFromEmployee = true,
+                TicketMessageContent = msgContent,
+                TicketMessageType = msgType,
+                CreatedAt = DateTime.UtcNow
+            });
+
+            state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
+            state.Tickets.Insert(0, ticket);
+
+            state.AdminNotifications.Insert(0, new AdminNotificationDto
+            {
+                NotificationId = state.NextNotificationId++,
+                SubjectType = "SupportTicket",
+                SubjectId = ticket.TicketSupportId,
+                TicketCode = ticket.TicketCode,
+                TenantName = ticket.TenantName,
+                TenantCode = ticket.TenantCode,
+                Title = isUnresolved
+                    ? $"[{ticket.Department}] NV {currentEmployeeName} đề xuất phân công lại {ticket.TicketCode}"
+                    : $"[{ticket.Department}] NV {currentEmployeeName} báo cáo hoàn tất {ticket.TicketCode}",
+                Body = isUnresolved
+                    ? $"Nhân viên {currentEmployeeName} báo chưa xử lý được ticket '{ticket.TicketSubject}', cần Trưởng phòng điều phối người khác."
+                    : $"Nhân viên {currentEmployeeName} đã gửi kết quả xử lý ticket '{ticket.TicketSubject}' lên Trưởng phòng.",
+                Priority = ticket.TicketPriority,
+                DepartmentId = ticket.DepartmentId,
+                Department = ticket.Department,
+                TargetEmployeeId = ticket.DepartmentHeadEmployeeId,
+                ActionKey = isUnresolved ? "staff-unresolved-ticket" : "staff-completed-ticket",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+
+            await SaveStateAsync(state, cancellationToken);
+
+            return CloneTicketWithViewer(ticket, roleInfo.Role, currentEmployeeId, roleInfo.DepartmentId);
         }
         finally
         {
@@ -996,11 +1154,24 @@ public sealed class SupportTicketService : ISupportTicketService
         try
         {
             var roleInfo = await ResolveEmployeeRoleInfoAsync(currentEmployeeId, cancellationToken);
-            if (roleInfo.Role == "SYSADMIN") return null;
+            var isHeadOrAdmin = string.Equals(roleInfo.Role, "DEPARTMENT_HEAD", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(roleInfo.Role, "SYSADMIN", StringComparison.OrdinalIgnoreCase);
+            if (!isHeadOrAdmin)
+            {
+                throw new ArgumentException("Chỉ Trưởng phòng mới được phép duyệt kết quả và phản hồi hoàn tất cho khách hàng.");
+            }
             roleForViewer = roleInfo.Role;
             deptForViewer = roleInfo.DepartmentId;
 
-            var roleLabel = roleInfo.Role == "DEPARTMENT_HEAD" ? "Trưởng phòng" : "Nhân viên phụ trách";
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var existingTicket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
+                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+            if (existingTicket != null && string.Equals(NormalizeStatus(existingTicket.TicketStatus), "Resolved", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng trước đó.");
+            }
+
+            var roleLabel = "Trưởng phòng";
             var targetStatus = request.CloseTicket ? "Resolved" : "In_Progress";
             var resolutionText = request.Resolution;
             var customerNotice = !string.IsNullOrWhiteSpace(request.MessageToCustomer)
@@ -1015,6 +1186,11 @@ public sealed class SupportTicketService : ISupportTicketService
                 var ticketEntity = await db.TicketSupports.FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, cancellationToken);
                 if (ticketEntity != null)
                 {
+                    if (string.Equals(NormalizeStatus(ticketEntity.TicketStatus), "Resolved", StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng trước đó.");
+                    }
+
                     var oldStatus = ticketEntity.TicketStatus ?? "In_Progress";
                     ticketEntity.TicketResolution = resolutionText;
                     ticketEntity.TicketStatus = targetStatus;
@@ -1046,9 +1222,7 @@ public sealed class SupportTicketService : ISupportTicketService
                 }
             }
 
-            var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
-                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+            var ticket = existingTicket;
             if (ticket != null)
             {
                 if (!CanEmployeeViewTicket(ticket, currentEmployeeId, roleInfo.Role, roleInfo.DepartmentId))
@@ -1060,6 +1234,7 @@ public sealed class SupportTicketService : ISupportTicketService
                 if (!ticket.AssignedEmployeeId.HasValue || ticket.AssignedEmployeeId <= 0)
                 {
                     ticket.AssignedEmployeeId = currentEmployeeId;
+                    ticket.AssignedEmployeeIds = [currentEmployeeId];
                     ticket.AssignedEmployeeName = currentEmployeeName;
                     ticket.AssignedAt = DateTime.UtcNow;
                     if (!ticket.Assignments.Any(a => a.EmployeeId == currentEmployeeId && a.AssignmentRole == "ASSIGNEE"))
@@ -1141,6 +1316,16 @@ public sealed class SupportTicketService : ISupportTicketService
         await StoreLock.WaitAsync(cancellationToken);
         try
         {
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
+                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+            if (ticket is null) return null;
+
+            if (string.Equals(NormalizeStatus(ticket.TicketStatus), "Resolved", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng, không thể gửi thêm tin nhắn.");
+            }
+
             var rawContent = (request.MessageContent ?? request.Content ?? string.Empty).Trim();
             var attUrls = request.AttachmentUrls?.Where(u => !string.IsNullOrWhiteSpace(u)).ToList() ?? [];
             if (!string.IsNullOrWhiteSpace(request.AttachmentUrl) && !attUrls.Contains(request.AttachmentUrl))
@@ -1199,11 +1384,6 @@ public sealed class SupportTicketService : ISupportTicketService
                 }
             }
 
-            var state = await EnsureStateLoadedAsync(cancellationToken);
-            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
-                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
-            if (ticket is null) return null;
-
             var msg = new SupportTicketMessageDto
             {
                 TicketMessageId = state.NextMessageId++,
@@ -1225,8 +1405,8 @@ public sealed class SupportTicketService : ISupportTicketService
             state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
             state.Tickets.Insert(0, ticket);
 
-            // Tạo thông báo cho nhân viên được phân công (nếu đã phân công) hoặc Trưởng phòng của phòng ban đó
-            var targetEmpId = ticket.AssignedEmployeeId ?? ticket.DepartmentHeadEmployeeId;
+            // Chỉ tạo thông báo tin nhắn khách hàng cho Trưởng phòng (vì chỉ Trưởng phòng mới nhắn tin với khách hàng)
+            var targetEmpId = ticket.DepartmentHeadEmployeeId ?? ticket.AssignedEmployeeId;
             state.AdminNotifications.Insert(0, new AdminNotificationDto
             {
                 NotificationId = state.NextNotificationId++,
@@ -1235,7 +1415,7 @@ public sealed class SupportTicketService : ISupportTicketService
                 TicketCode = ticket.TicketCode,
                 TenantName = ticket.TenantName,
                 TenantCode = ticket.TenantCode,
-                Title = $"[{ticket.Department}] Khách hàng phản hồi {ticket.TicketCode}",
+                Title = $"[{ticket.Department}] Khách hàng nhắn tin {ticket.TicketCode}",
                 Body = $"{senderName}: {content}",
                 Priority = ticket.TicketPriority,
                 DepartmentId = ticket.DepartmentId,
@@ -1290,9 +1470,11 @@ public sealed class SupportTicketService : ISupportTicketService
 
             var roleInfo = await ResolveEmployeeRoleInfoAsync(employeeId, cancellationToken);
             // Chỉ Trưởng phòng (DEPARTMENT_HEAD) mới được nhắn tin trao đổi trực tiếp với khách hàng; Nhân viên được phân công (STAFF) và SYSADMIN không nhắn tin.
-            if (!string.Equals(roleInfo.Role, "DEPARTMENT_HEAD", StringComparison.OrdinalIgnoreCase))
+            var isHeadOrAdmin = string.Equals(roleInfo.Role, "DEPARTMENT_HEAD", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(roleInfo.Role, "SYSADMIN", StringComparison.OrdinalIgnoreCase);
+            if (!isHeadOrAdmin)
             {
-                return null;
+                throw new ArgumentException("Chỉ Trưởng phòng mới được phép nhắn tin trao đổi với khách hàng.");
             }
 
             var state = await EnsureStateLoadedAsync(cancellationToken);
@@ -1303,6 +1485,11 @@ public sealed class SupportTicketService : ISupportTicketService
             if (!CanEmployeeViewTicket(ticket, employeeId, roleInfo.Role, roleInfo.DepartmentId))
             {
                 return null;
+            }
+
+            if (string.Equals(NormalizeStatus(ticket.TicketStatus), "Resolved", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng, không thể gửi thêm tin nhắn.");
             }
 
             using (var scope = _scopeFactory.CreateScope())
@@ -1432,7 +1619,6 @@ public sealed class SupportTicketService : ISupportTicketService
         try
         {
             var roleInfo = await ResolveEmployeeRoleInfoAsync(systemAdminId, cancellationToken);
-            if (roleInfo.Role == "SYSADMIN") return null;
             roleForViewer = roleInfo.Role;
             deptForViewer = roleInfo.DepartmentId;
 
@@ -1446,7 +1632,17 @@ public sealed class SupportTicketService : ISupportTicketService
             {
                 return null;
             }
+            var isHeadOrAdmin = string.Equals(roleInfo.Role, "DEPARTMENT_HEAD", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(roleInfo.Role, "SYSADMIN", StringComparison.OrdinalIgnoreCase);
+            if (!isHeadOrAdmin)
+            {
+                throw new ArgumentException("Chỉ Trưởng phòng mới có quyền cập nhật trạng thái phiếu hỗ trợ.");
+            }
             var wasResolved = string.Equals(ticket.TicketStatus, "Resolved", StringComparison.OrdinalIgnoreCase);
+            if (wasResolved)
+            {
+                throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng, không thể thay đổi trạng thái.");
+            }
 
             using (var scope = _scopeFactory.CreateScope())
             {
@@ -1864,25 +2060,31 @@ public sealed class SupportTicketService : ISupportTicketService
         string role,
         int? employeeDeptId)
     {
-        if (employeeId <= 0 || role == "SYSADMIN")
+        if (employeeId <= 0)
         {
             return false;
         }
 
+        if (role == "SYSADMIN")
+        {
+            return true;
+        }
+
         if (role == "DEPARTMENT_HEAD")
         {
-            if (!employeeDeptId.HasValue) return false;
             var ticketDeptId = t.DepartmentId ?? ResolveDepartmentIdFromInput(null, t.Department);
-            return ticketDeptId == employeeDeptId.Value || t.DepartmentHeadEmployeeId == employeeId;
+            if (employeeDeptId.HasValue && ticketDeptId == employeeDeptId.Value) return true;
+            if (t.DepartmentHeadEmployeeId == employeeId) return true;
+            if (t.AssignedEmployeeId == employeeId || t.AssignedEmployeeIds.Contains(employeeId)) return true;
+            return false;
         }
 
         if (role == "STAFF")
         {
-            if (t.AssignedEmployeeId == employeeId) return true;
+            if (t.AssignedEmployeeId == employeeId || t.AssignedEmployeeIds.Contains(employeeId)) return true;
             return t.Assignments.Any(a =>
                 a.EmployeeId == employeeId
-                && string.Equals(a.AssignmentRole, "ASSIGNEE", StringComparison.OrdinalIgnoreCase)
-                && a.UnassignedAt == null);
+                && string.Equals(a.AssignmentRole, "ASSIGNEE", StringComparison.OrdinalIgnoreCase));
         }
 
         return false;
@@ -2122,19 +2324,26 @@ public sealed class SupportTicketService : ISupportTicketService
 
     private static (string Role, int? DepartmentId) ClassifyEmployee(Employee emp, Dictionary<int, (int DepartmentId, bool IsHead)> empDeptMap)
     {
+        if (emp.EmployeeCode == "ADM-SYSADMIN" || emp.EmployeeUsername == "sysadmin")
+        {
+            return ("SYSADMIN", null);
+        }
+
         // Chưa xếp phòng ban: không thuộc phòng nào, chỉ thấy ticket được giao đích danh.
         if (!empDeptMap.TryGetValue((int)emp.EmployeeId, out var membership))
         {
-            return ("STAFF", null);
+            var fallbackIsHead = emp.EmployeeUsername.StartsWith("head.");
+            return (fallbackIsHead ? "DEPARTMENT_HEAD" : "STAFF", null);
         }
 
-        // Ban Giám Đốc (phòng 1) không tham gia luồng yêu cầu hỗ trợ.
+        // Ban Giám Đốc (phòng 1)
         if (membership.DepartmentId == 1)
         {
             return ("SYSADMIN", null);
         }
 
-        return (membership.IsHead ? "DEPARTMENT_HEAD" : "STAFF", membership.DepartmentId);
+        var isHead = membership.IsHead || emp.EmployeeUsername.StartsWith("head.");
+        return (isHead ? "DEPARTMENT_HEAD" : "STAFF", membership.DepartmentId);
     }
 
     private static async Task<Employee?> FindDepartmentHeadAsync(MasterDbContext db, int departmentId, CancellationToken ct)
@@ -2320,13 +2529,27 @@ public sealed class SupportTicketService : ISupportTicketService
             .FirstOrDefault()
             ?? assignments.FirstOrDefault(a => a.TicketSupportEmployeeAssignmentRole == "DEPARTMENT_HEAD");
 
-        var staffAssignment = assignments
+        var activeStaffAssignments = assignments
             .Where(a => a.TicketSupportEmployeeAssignmentRole == "ASSIGNEE" && a.TicketSupportEmployeeUnassignedAt == null)
-            .OrderByDescending(a => a.TicketSupportEmployeeAssignedAt)
-            .FirstOrDefault();
+            .OrderBy(a => a.TicketSupportEmployeeAssignedAt)
+            .ToList();
+
+        var staffAssignment = activeStaffAssignments.LastOrDefault();
 
         Employee? headEmp = headAssignment?.EmployeeId != null && employees.TryGetValue(headAssignment.EmployeeId.Value, out var h) ? h : null;
         Employee? staffEmp = staffAssignment?.EmployeeId != null && employees.TryGetValue(staffAssignment.EmployeeId.Value, out var s) ? s : null;
+
+        var activeStaffIds = activeStaffAssignments
+            .Where(a => a.EmployeeId.HasValue)
+            .Select(a => (int)a.EmployeeId!.Value)
+            .Distinct()
+            .ToList();
+
+        var activeStaffNames = activeStaffIds
+            .Select(id => employees.TryGetValue(id, out var emp)
+                ? (emp.EmployeeDisplayName ?? emp.EmployeeUsername ?? $"NV #{id}")
+                : $"NV #{id}")
+            .ToList();
 
         var attachmentDict = attachments
             .GroupBy(a => a.TicketMessageId)
@@ -2358,8 +2581,11 @@ public sealed class SupportTicketService : ISupportTicketService
             UpdatedAt = e.UpdatedAt,
             DepartmentHeadEmployeeId = headEmp != null ? (int)headEmp.EmployeeId : (int?)headAssignment?.EmployeeId,
             DepartmentHeadName = headEmp != null ? (headEmp.EmployeeDisplayName ?? headEmp.EmployeeUsername) : null,
-            AssignedEmployeeId = staffEmp != null ? (int)staffEmp.EmployeeId : (int?)staffAssignment?.EmployeeId,
-            AssignedEmployeeName = staffEmp != null ? (staffEmp.EmployeeDisplayName ?? staffEmp.EmployeeUsername) : null,
+            AssignedEmployeeId = activeStaffIds.Count > 0 ? activeStaffIds[0] : (staffEmp != null ? (int)staffEmp.EmployeeId : (int?)staffAssignment?.EmployeeId),
+            AssignedEmployeeIds = activeStaffIds,
+            AssignedEmployeeName = activeStaffNames.Count > 0
+                ? string.Join(", ", activeStaffNames)
+                : (staffEmp != null ? (staffEmp.EmployeeDisplayName ?? staffEmp.EmployeeUsername) : null),
             AssignedAt = staffAssignment?.TicketSupportEmployeeAssignedAt,
             Assignments = assignments.Select(a =>
             {
@@ -2440,6 +2666,10 @@ public sealed class SupportTicketService : ISupportTicketService
                         t.AttachmentUrls = [.. existing.AttachmentUrls];
                     if (t.AttachmentNames.Count == 0 && existing.AttachmentNames.Count > 0)
                         t.AttachmentNames = [.. existing.AttachmentNames];
+                    if (t.AssignedEmployeeIds.Count == 0 && existing.AssignedEmployeeIds.Count > 0)
+                        t.AssignedEmployeeIds = [.. existing.AssignedEmployeeIds];
+                    if (existing.Assignments.Count > t.Assignments.Count)
+                        t.Assignments = [.. existing.Assignments];
 
                     // Đồng bộ hình ảnh đính kèm (Data URL) trong Messages từ state sang DB messages
                     if (existing.Messages.Count > 0)
@@ -2561,6 +2791,7 @@ public sealed class SupportTicketService : ISupportTicketService
                 var loaded = JsonSerializer.Deserialize<SupportTicketStoreState>(json, JsonOptions);
                 if (loaded is not null)
                 {
+                    SanitizeStoreState(loaded);
                     _cachedState = loaded;
                     return _cachedState;
                 }
@@ -2573,6 +2804,36 @@ public sealed class SupportTicketService : ISupportTicketService
 
         _cachedState = new SupportTicketStoreState();
         return _cachedState;
+    }
+
+    private static void SanitizeStoreState(SupportTicketStoreState state)
+    {
+        foreach (var t in state.Tickets)
+        {
+            t.DepartmentHeadName = CleanMojibake(t.DepartmentHeadName);
+            t.AssignedEmployeeName = CleanMojibake(t.AssignedEmployeeName);
+            t.Department = CleanMojibake(t.Department) ?? t.Department;
+            t.TicketSubject = CleanMojibake(t.TicketSubject) ?? t.TicketSubject;
+            t.TicketDescription = CleanMojibake(t.TicketDescription) ?? t.TicketDescription;
+            t.CreatedByName = CleanMojibake(t.CreatedByName);
+            t.TenantName = CleanMojibake(t.TenantName) ?? t.TenantName;
+            foreach (var a in t.Assignments)
+            {
+                a.EmployeeName = CleanMojibake(a.EmployeeName) ?? a.EmployeeName;
+                a.AssignedByName = CleanMojibake(a.AssignedByName);
+            }
+            foreach (var m in t.Messages)
+            {
+                m.SenderName = CleanMojibake(m.SenderName) ?? m.SenderName;
+                m.TicketMessageContent = CleanMojibake(m.TicketMessageContent) ?? m.TicketMessageContent;
+            }
+        }
+        foreach (var n in state.AdminNotifications)
+        {
+            n.Title = CleanMojibake(n.Title) ?? string.Empty;
+            n.Body = CleanMojibake(n.Body) ?? string.Empty;
+            n.Department = CleanMojibake(n.Department) ?? n.Department;
+        }
     }
 
     private async Task SaveStateAsync(SupportTicketStoreState state, CancellationToken cancellationToken)
@@ -2598,7 +2859,41 @@ public sealed class SupportTicketService : ISupportTicketService
         copy.ViewerRole = viewerRole;
         copy.ViewerEmployeeId = viewerEmployeeId;
         copy.ViewerDepartmentId = viewerDepartmentId;
+
+        if (string.Equals(viewerRole, "STAFF", StringComparison.OrdinalIgnoreCase))
+        {
+            // Nhân viên được phân công không có phần nhắn tin với khách hàng: chỉ thấy INITIAL, ASSIGNMENT, STAFF_COMPLETION, STAFF_REPORT, RESOLUTION
+            copy.Messages = copy.Messages
+                .Where(m => !string.Equals(m.TicketMessageType, "CUSTOMER_REPLY", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(m.TicketMessageType, "STAFF_REPLY", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        else if (string.Equals(viewerRole, "CUSTOMER", StringComparison.OrdinalIgnoreCase))
+        {
+            // Khách hàng chỉ thấy tin nhắn trao đổi trực tiếp với Trưởng phòng & kết quả cuối cùng, không thấy trao đổi nội bộ
+            copy.Messages = copy.Messages
+                .Where(m => !string.Equals(m.TicketMessageType, "ASSIGNMENT", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(m.TicketMessageType, "STAFF_COMPLETION", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(m.TicketMessageType, "STAFF_REPORT", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(m.TicketMessageType, "INTERNAL_NOTE", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
         return copy;
+    }
+
+    private static string? CleanMojibake(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return text;
+        return text
+            .Replace("HoÃ ng TrÆ°á»Ÿng PhÃ²ng Kinh Doanh", "Hoàng Trưởng Phòng Kinh Doanh")
+            .Replace("HoÃ ng TrÆ°á»Ÿng PhÃ²ng Kinh Doanh", "Hoàng Trưởng Phòng Kinh Doanh")
+            .Replace("Nháº­t bá»‘ cá»§a cÃ¡c loáº¡i bá»‘", "Nhật Bố")
+            .Replace("Nh\u00E1\u00BA\u00ADt b\u00E1\u00BB\u2018 c\u00C3\u00A1c lo\u00E1\u00BA\u00A1i b\u00E1\u00BB\u2018", "Nhật Bố")
+            .Replace("Nhật bố của các loại bố", "Nhật Bố")
+            .Replace("Ä áº·ng TrÆ°á»Ÿng PhÃ²ng Káº¿ ToÃ¡n", "Đặng Trưởng Phòng Kế Toán")
+            .Replace("VÅ© TrÆ°á»Ÿng PhÃ²ng HÃ nh ChÃ­nh - PhÃ¡p Cháº¿", "Vũ Trưởng Phòng Hành Chính - Pháp Chế")
+            .Replace("BÃ¹i ChuyÃªn ViÃªn PhÃ¡p Cháº¿", "Bùi Chuyên Viên Pháp Chế");
     }
 
     private static SupportTicketDto CloneTicket(SupportTicketDto src) => new()
@@ -2606,29 +2901,30 @@ public sealed class SupportTicketService : ISupportTicketService
         TicketSupportId = src.TicketSupportId,
         CustomerId = src.CustomerId,
         TenantId = src.TenantId,
-        TenantName = src.TenantName,
+        TenantName = CleanMojibake(src.TenantName) ?? string.Empty,
         TenantCode = src.TenantCode,
         CreatedByEmployeeId = src.CreatedByEmployeeId,
-        CreatedByName = src.CreatedByName,
+        CreatedByName = CleanMojibake(src.CreatedByName),
         TicketCode = src.TicketCode,
-        TicketSubject = src.TicketSubject,
-        TicketDescription = src.TicketDescription,
+        TicketSubject = CleanMojibake(src.TicketSubject) ?? string.Empty,
+        TicketDescription = CleanMojibake(src.TicketDescription) ?? string.Empty,
         TicketPriority = src.TicketPriority,
         TicketStatus = src.TicketStatus,
         DepartmentId = src.DepartmentId,
-        Department = src.Department,
+        Department = CleanMojibake(src.Department) ?? string.Empty,
         ServiceId = src.ServiceId,
-        ServiceName = src.ServiceName,
-        Module = src.Module,
-        TicketResolution = src.TicketResolution,
+        ServiceName = CleanMojibake(src.ServiceName),
+        Module = CleanMojibake(src.Module),
+        TicketResolution = CleanMojibake(src.TicketResolution),
         TicketResolvedAt = src.TicketResolvedAt,
         TicketClosedAt = src.TicketClosedAt,
         CreatedAt = src.CreatedAt,
         UpdatedAt = src.UpdatedAt,
         DepartmentHeadEmployeeId = src.DepartmentHeadEmployeeId,
-        DepartmentHeadName = src.DepartmentHeadName,
+        DepartmentHeadName = CleanMojibake(src.DepartmentHeadName),
         AssignedEmployeeId = src.AssignedEmployeeId,
-        AssignedEmployeeName = src.AssignedEmployeeName,
+        AssignedEmployeeIds = [.. src.AssignedEmployeeIds],
+        AssignedEmployeeName = CleanMojibake(src.AssignedEmployeeName),
         AssignedAt = src.AssignedAt,
         ViewerRole = src.ViewerRole,
         ViewerEmployeeId = src.ViewerEmployeeId,
@@ -2640,14 +2936,14 @@ public sealed class SupportTicketService : ISupportTicketService
             TicketSupportEmployeeId = a.TicketSupportEmployeeId,
             TicketSupportId = a.TicketSupportId,
             EmployeeId = a.EmployeeId,
-            EmployeeName = a.EmployeeName,
+            EmployeeName = CleanMojibake(a.EmployeeName) ?? string.Empty,
             EmployeeCode = a.EmployeeCode,
             EmployeeEmail = a.EmployeeEmail,
             AssignmentRole = a.AssignmentRole,
             AssignedAt = a.AssignedAt,
             UnassignedAt = a.UnassignedAt,
             AssignedByEmployeeId = a.AssignedByEmployeeId,
-            AssignedByName = a.AssignedByName
+            AssignedByName = CleanMojibake(a.AssignedByName)
         }).ToList(),
         Messages = src.Messages.Select(m => new SupportTicketMessageDto
         {
@@ -2655,12 +2951,12 @@ public sealed class SupportTicketService : ISupportTicketService
             TicketSupportId = m.TicketSupportId,
             SenderCustomerId = m.SenderCustomerId,
             SenderEmployeeId = m.SenderEmployeeId,
-            SenderName = m.SenderName,
+            SenderName = CleanMojibake(m.SenderName) ?? string.Empty,
             IsFromEmployee = m.IsFromEmployee,
-            TicketMessageContent = m.TicketMessageContent,
+            TicketMessageContent = CleanMojibake(m.TicketMessageContent) ?? string.Empty,
             TicketMessageType = m.TicketMessageType,
             TicketMessageAttachmentUrl = m.TicketMessageAttachmentUrl,
-            TicketMessageAttachmentName = m.TicketMessageAttachmentName,
+            TicketMessageAttachmentName = CleanMojibake(m.TicketMessageAttachmentName),
             AttachmentUrls = [.. m.AttachmentUrls],
             AttachmentNames = [.. m.AttachmentNames],
             CreatedAt = m.CreatedAt

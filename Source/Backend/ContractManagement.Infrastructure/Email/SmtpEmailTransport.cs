@@ -35,6 +35,7 @@ public sealed class SmtpEmailTransport(IOptions<SmtpEmailOptions> options) : IEm
             SubjectEncoding = Encoding.UTF8, Body = message.TextBody, BodyEncoding = Encoding.UTF8, IsBodyHtml = false
         };
         mail.To.Add(new MailAddress(message.Recipient));
+        if (SmtpEmailOptions.IsEmailAddress(message.ReplyTo)) mail.ReplyToList.Add(new MailAddress(message.ReplyTo!));
         var html = AlternateView.CreateAlternateViewFromString(message.HtmlBody, Encoding.UTF8, MediaTypeNames.Text.Html);
         if (logo is { Length: > 0 } && message.LogoContentId is not null)
         {

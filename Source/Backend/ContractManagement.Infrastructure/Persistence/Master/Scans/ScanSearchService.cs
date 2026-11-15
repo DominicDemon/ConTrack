@@ -71,6 +71,17 @@ public sealed class ScanSearchService(
                 .ToListAsync(cancellationToken));
         }
 
+        if (only is null or ScanKeywordType.Email)
+        {
+            // Emails are stored lower case, without spaces.
+            var email = string.Concat(typed.Where(character => !char.IsWhiteSpace(character))).ToLowerInvariant();
+            found.AddRange(await db.ContractScanKeywords.AsNoTracking()
+                .Where(keyword => keyword.ContractScanKeywordType == (int)ScanKeywordType.Email
+                    && keyword.ContractScanKeywordValue.Contains(email))
+                .Take(MaxResults * 4)
+                .ToListAsync(cancellationToken));
+        }
+
         var items = currentEmployee.HasPermission(SigningPermissions.View)
             ? await evidence.SearchResultsAsync(found, MaxResults, cancellationToken)
             : [];

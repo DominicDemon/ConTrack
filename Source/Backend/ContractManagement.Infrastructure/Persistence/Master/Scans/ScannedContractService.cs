@@ -12,7 +12,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 /// <summary>
 /// Old paper contracts brought into the system by scanning (CONTRACTS.source_type = SCANNED, MasterDB-Optimize_v1):
 /// 1. upload one or more scans: one OCR_BATCH, one FILE_STORAGE and one OCR_JOB per file;
-/// 2. OCR runs in the background (ScanKeywordJobRunner) and keeps the text and the keywords;
+/// 2. OCR runs in the background (ScanKeywordJobRunner) and keeps the keywords (not the full text);
 /// 3. once read, the scan is kept and found by search; staff fix keywords OCR read wrong;
 /// 4. optionally, the checker creates a CONTRACTS row from it, to manage it with the other contracts.
 /// Not in Master_Database_HuongDan (written for the older script): inferred from the tables, see ScannedContractCodes.
@@ -58,6 +58,20 @@ public sealed class ScannedContractService(
         var now = DateTime.UtcNow;
         var stored = new List<(string FileName, byte[] Content, string Key, string Extension, string ContentType, byte[]? FileKey)>();
         var staged = new List<long>();
+        // The same bytes are stored once: a second copy would be found twice and could be filed under the wrong contract.
+        var seen = new Dictionary<string, string>();
+        foreach (var (fileName, content) in scans)
+        {
+            var sha256 = ScanDuplicates.Hash(content);
+            if (seen.TryGetValue(sha256, out var twin))
+            {
+                throw new InternalAppException(409, $"Tệp \"{fileName}\" trùng nội dung với \"{twin}\" trong cùng lượt tải. Hãy bỏ bớt một tệp.");
+            }
+
+            seen[sha256] = fileName;
+            await ScanDuplicates.EnsureNewAsync(db, fileName, sha256, cancellationToken);
+        }
+
         foreach (var (fileName, content) in scans)
         {
             // Any file is kept; OCR reads PDF, JPG and PNG, anything else ends FAILED and is checked by eye.
@@ -105,7 +119,7 @@ public sealed class ScannedContractService(
                         FileStorageStoragekey = scan.Key,
                         FileStorageContenttype = scan.ContentType,
                         FileStorageFilesize = scan.Content.LongLength,
-                        FileStorageSha256 = Convert.ToHexString(SHA256.HashData(scan.Content)).ToLowerInvariant(),
+                        FileStorageSha256 = ScanDuplicates.Hash(scan.Content),
                         FileStorageUploadedbyemployeeid = employeeId,
                         FileStorageUploadeddate = now,
                     };
@@ -380,6 +394,7 @@ public sealed class ScannedContractService(
             .ToDictionary(group => group.Key, group => ToCustomerOption(group.First().customer, group.First().business).Name);
         var people = await PeopleAsync(rows.Select(row => row.FileStorageUploadedbyemployeeid), cancellationToken);
         var byFile = found.ToLookup(keyword => keyword.FileStorageFileid);
+        var emails = await SignedEvidenceService.EmailsAsync(db, rows.Select(row => row.FileStorageFileid).ToList(), cancellationToken);
 
         return rows.Select(row =>
             {
@@ -397,7 +412,8 @@ public sealed class ScannedContractService(
                     byFile[row.FileStorageFileid]
                         .DistinctBy(keyword => keyword.ContractScanKeywordId)
                         .Select(SignedEvidenceService.ToMatchDto)
-                        .ToList());
+                        .ToList(),
+                    emails[row.FileStorageFileid].ToList());
             })
             .ToList();
     }

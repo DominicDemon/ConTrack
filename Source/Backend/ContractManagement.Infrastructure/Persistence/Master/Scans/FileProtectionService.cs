@@ -385,9 +385,11 @@ public sealed class FileProtectionService(
             throw new InternalAppException(400, "Tệp đã được mã hóa. Hãy nhập key 12 ký tự của bạn.", FileKeyCodes.KeyRequired);
         }
 
-        if (attempts.IsLocked(me))
+        if (attempts.RemainingLock(me) is { } remaining)
         {
-            throw new InternalAppException(429, $"Nhập sai key quá {FileKeyAttemptTracker.MaxFailures} lần. Thử lại sau {FileKeyAttemptTracker.LockDuration.TotalMinutes:0} phút.", FileKeyCodes.KeyLocked);
+            throw new InternalAppException(429,
+                $"Nhập sai key quá {FileKeyAttemptTracker.MaxFailures} lần. Thử lại sau {Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes))} phút.",
+                FileKeyCodes.KeyLocked);
         }
 
         var key = await db.EmployeeEncryptionKeys.AsNoTracking()
@@ -534,6 +536,12 @@ public sealed class FileKeyAttemptTracker
 
     public bool IsLocked(long employeeId) =>
         _counters.TryGetValue(employeeId, out var counter) && counter.LockedUntil > DateTimeOffset.UtcNow;
+
+    /// <summary>How long the employee stays locked; null when not locked.</summary>
+    public TimeSpan? RemainingLock(long employeeId) =>
+        _counters.TryGetValue(employeeId, out var counter) && counter.LockedUntil - DateTimeOffset.UtcNow is { } left && left > TimeSpan.Zero
+            ? left
+            : null;
 
     public void RecordFailure(long employeeId) =>
         _counters.AddOrUpdate(

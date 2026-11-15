@@ -151,7 +151,7 @@ public sealed class TesseractScanOcrEngine : IScanOcrEngine
         info.ArgumentList.Add("-l");
         info.ArgumentList.Add(_options.Languages);
         info.ArgumentList.Add("--psm");
-        info.ArgumentList.Add("3");
+        info.ArgumentList.Add((_options.PageSegMode is >= 1 and <= 13 ? _options.PageSegMode : 4).ToString(CultureInfo.InvariantCulture));
         if (!string.IsNullOrWhiteSpace(_options.TessdataPath))
         {
             info.ArgumentList.Add("--tessdata-dir");

@@ -1,10 +1,7 @@
-using System.Text.Json;
 using ContractManagement.API.Domains.Email;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Application.Features.Internal.Scans;
-using ContractManagement.Domain.Entities.Master;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
@@ -12,25 +9,22 @@ namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 /// <summary>
 /// Sends a scan found by the search to one or more addresses, as a PDF attachment with a short summary. The file is
 /// opened exactly as "View" opens it: the same scope check, the employee's own key, the same opening log; so only
-/// someone who may read the scan can send it. Every sending is written to AUDIT_LOG with its recipients.
+/// someone who may read the scan can send it. The emails themselves go out in the background (ScanEmailQueue), which
+/// also writes each sending to AUDIT_LOG with its recipients. Replies go to the employee who sent it.
 /// </summary>
 public sealed class ScanEmailService(
     MasterDbContext db,
     SignedEvidenceService evidence,
     ScannedContractService scanned,
-    IEmailTransport email,
+    ScanEmailQueue queue,
     IOptions<SmtpEmailOptions> smtp,
-    ICurrentEmployee currentEmployee,
-    ILogger<ScanEmailService> logger)
+    ICurrentEmployee currentEmployee)
 {
-    public const string EmailedAction = "ScanEmailed";
     public const string EvidenceEntity = "CONTRACT_SIGNED_EVIDENCE";
     public const string JobEntity = "OCR_JOB";
 
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-
     /// <summary>A paper-signing evidence of a contract in the system.</summary>
-    public async Task<ScanEmailResultDto> SendEvidenceAsync(
+    public async Task<ScanEmailJobDto> SendEvidenceAsync(
         long evidenceId, IReadOnlyList<string?>? recipients, string? note, string? fileKey, CancellationToken cancellationToken)
     {
         var (addresses, cleanNote) = Check(recipients, note);
@@ -49,7 +43,7 @@ public sealed class ScanEmailService(
     }
 
     /// <summary>A scan of an old paper contract (Hợp đồng giấy scan).</summary>
-    public async Task<ScanEmailResultDto> SendScannedJobAsync(
+    public async Task<ScanEmailJobDto> SendScannedJobAsync(
         long jobId, IReadOnlyList<string?>? recipients, string? note, string? fileKey, CancellationToken cancellationToken)
     {
         var (addresses, cleanNote) = Check(recipients, note);
@@ -66,6 +60,9 @@ public sealed class ScanEmailService(
         return await SendAsync(content, addresses, cleanNote, JobEntity, jobId, cancellationToken);
     }
 
+    /// <summary>The progress of a sending this employee started; null when unknown or someone else's.</summary>
+    public ScanEmailJobDto? Progress(string jobId) => queue.Find(jobId, currentEmployee.EmployeeId);
+
     /// <summary>Everything about the request is checked before the file is opened.</summary>
     private (IReadOnlyList<string> Addresses, string? Note) Check(IReadOnlyList<string?>? recipients, string? note)
     {
@@ -79,7 +76,7 @@ public sealed class ScanEmailService(
         return (addresses, cleanNote);
     }
 
-    private async Task<ScanEmailResultDto> SendAsync(
+    private async Task<ScanEmailJobDto> SendAsync(
         ScanEmailContent content, IReadOnlyList<string> addresses, string? note, string entity, long entityId,
         CancellationToken cancellationToken)
     {
@@ -90,53 +87,17 @@ public sealed class ScanEmailService(
         }
 
         content = content with { Title = OneLine(content.Title), FileName = OneLine(content.FileName) };
-        var senderName = await db.Employees.AsNoTracking()
+        var sender = await db.Employees.AsNoTracking()
             .Where(employee => employee.EmployeeId == currentEmployee.EmployeeId)
-            .Select(employee => employee.EmployeeDisplayName)
-            .FirstOrDefaultAsync(cancellationToken) ?? "Nhân viên";
+            .Select(employee => new { employee.EmployeeDisplayName, employee.EmployeeEmail })
+            .FirstOrDefaultAsync(cancellationToken);
+        var messages = addresses
+            .Select(address => ScanEmail.Compose(address, content, sender?.EmployeeDisplayName ?? "Nhân viên", note, sender?.EmployeeEmail))
+            .ToList();
 
-        var sent = new List<string>();
-        var failed = new List<ScanEmailFailureDto>();
-        foreach (var address in addresses)
-        {
-            try
-            {
-                await email.SendAsync(ScanEmail.Compose(address, content, senderName, note), cancellationToken);
-                sent.Add(address);
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                logger.LogWarning(exception, "Sending a scan by email failed for one recipient");
-                failed.Add(new ScanEmailFailureDto(address, exception is TimeoutException
-                    ? "Máy chủ email không phản hồi kịp."
-                    : "Máy chủ email từ chối gửi tới địa chỉ này."));
-            }
-        }
-
-        db.AuditLogs.Add(new AuditLog
-        {
-            ActionType = EmailedAction,
-            EntityName = entity,
-            EntityId = entityId.ToString(),
-            ActorType = "Employee",
-            ActorId = currentEmployee.EmployeeId,
-            NewData = JsonSerializer.Serialize(new
-            {
-                file = content.FileName,
-                sent,
-                failed = failed.Select(failure => failure.Email),
-                withNote = note is not null,
-            }, Json),
-            CreatedAt = DateTime.UtcNow,
-        });
-        await db.SaveChangesAsync(CancellationToken.None);
-
-        if (sent.Count == 0)
-        {
-            throw new InternalAppException(502, "Không gửi được email nào. Kiểm tra cấu hình email của máy chủ rồi thử lại.");
-        }
-
-        return new ScanEmailResultDto(sent, failed);
+        // Last: nothing above may fail after the recipients are counted against the hourly limit.
+        queue.Reserve(currentEmployee.EmployeeId, addresses.Count);
+        return queue.Enqueue(currentEmployee.EmployeeId, entity, entityId, content.FileName, note is not null, messages);
     }
 
     private static void Add(List<(string, string)> details, string label, string? value)

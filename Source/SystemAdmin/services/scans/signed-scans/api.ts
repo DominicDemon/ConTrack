@@ -12,7 +12,7 @@ import type {
   SignedEvidenceOverview,
   UploadSignedEvidenceInput,
   ScanEmailInput,
-  ScanEmailResult,
+  ScanEmailJob,
 } from "./types";
 
 const fileNameFromDisposition = (header: unknown): string | null => {
@@ -99,10 +99,16 @@ export const httpSignedEvidenceApi: SignedEvidenceApi = {
   },
 
   /** Sends the evidence file as a PDF attachment; the server opens it with the sender's key, like "View". */
-  async emailFile(evidenceId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailResult> {
-    const { data } = await scanApi.post<ScanEmailResult>(`/signed-evidence/${evidenceId}/email`, input, {
+  async emailFile(evidenceId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailJob> {
+    const { data } = await scanApi.post<ScanEmailJob>(`/signed-evidence/${evidenceId}/email`, input, {
       headers: keyHeader(fileKey),
     });
+    return data;
+  },
+
+  /** How far a sending started by this user has got; emails go out in the background. */
+  async emailProgress(jobId: string): Promise<ScanEmailJob> {
+    const { data } = await scanApi.get<ScanEmailJob>(`/scan-emails/${jobId}`);
     return data;
   },
 

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import { Download, ExternalLink, FileWarning, Loader2, Mail, Send } from "lucide-react";
 import { blobErrorMessage, FileKeyCancelled, useFileKey } from "@/components/internal/file-key";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
@@ -12,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/components/ui/sonner";
 import { getScanErrorMessage } from "@/services/scans/http";
 import { scannedContractsApi } from "@/services/scans/scanned-contracts";
-import { signedEvidenceApi, type ScanEmailResult, type ScanSearchMatch } from "@/services/scans/signed-scans";
+import { signedEvidenceApi, type ScanEmailJob, type ScanSearchMatch } from "@/services/scans/signed-scans";
 import { EmailInput, isEmail, MAX_EMAILS } from "./email-input";
 import { formatKeywordValue, KEYWORD_TYPE_LABELS } from "./format";
 import { Highlight } from "./highlight";
@@ -24,6 +23,8 @@ export interface ScanTarget {
   title: string;
   details: { label: string; value: string }[];
   matches: ScanSearchMatch[];
+  /** Email addresses printed on the scan: offered as recipients, never added on their own. */
+  emails: string[];
   /** The page with everything about it. */
   href: string;
 }
@@ -44,6 +45,34 @@ const sendEmail = (target: ScanTarget, recipients: string[], note: string, key: 
     ? signedEvidenceApi.emailFile(target.id, input, key)
     : scannedContractsApi.emailJob(target.id, input, key);
 };
+
+/**
+ * Follows a sending to its end and tells the user, wherever they are by then: the dialog closes as soon as the
+ * server has taken the emails, since a large attachment takes most of a minute to go out.
+ */
+async function reportWhenSent(first: ScanEmailJob, title: string) {
+  let job = first;
+  try {
+    // Up to five minutes: ten 18 MB emails are the slowest allowed sending.
+    for (let attempt = 0; !job.done && attempt < 150; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      job = await signedEvidenceApi.emailProgress(job.jobId);
+    }
+  } catch {
+    toast.error(`Không theo dõi được việc gửi "${title}". Mở Nhật ký để xem kết quả.`);
+    return;
+  }
+  const sent = job.recipients.filter((recipient) => recipient.status === "Sent");
+  const failed = job.recipients.filter((recipient) => recipient.status === "Failed");
+  if (!job.done) toast.warning(`"${title}" vẫn đang gửi (${sent.length}/${job.recipients.length} email).`);
+  else if (failed.length === 0) toast.success(`Đã gửi "${title}" tới ${sent.length} email.`);
+  else {
+    toast.error(`"${title}": gửi được ${sent.length}, lỗi ${failed.length} email.`, {
+      description: failed.map((recipient) => `${recipient.email}: ${recipient.reason ?? "không gửi được"}`).join("\n"),
+      duration: 20000,
+    });
+  }
+}
 
 function Summary({ target, query }: { target: ScanTarget; query: string }) {
   return (
@@ -233,12 +262,12 @@ function EmailForm({
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [result, setResult] = useState<ScanEmailResult | null>(null);
   const emailsId = useId();
   const noteId = useId();
 
   const wrong = emails.filter((email) => !isEmail(email));
   const tooMany = emails.length > MAX_EMAILS;
+  const suggestions = target.emails.filter((email) => !emails.some((added) => added.toLowerCase() === email.toLowerCase()));
 
   const busy = (value: boolean) => {
     setSending(value);
@@ -252,16 +281,12 @@ function EmailForm({
     setProblem(null);
     busy(true);
     try {
-      const sent = await withFileKey((key) => sendEmail(target, emails, note, key));
-      if (sent.failed.length === 0) {
-        toast.success(`Đã gửi bản scan tới ${sent.sent.length} email.`);
-        busy(false);
-        onClose();
-        return;
-      }
-      // Keep only the addresses that failed, so trying again does not send twice.
-      setResult(sent);
-      setEmails(sent.failed.map((failure) => failure.email));
+      const job = await withFileKey((key) => sendEmail(target, emails, note, key));
+      toast.info(`Đang gửi "${target.title}" tới ${job.recipients.length} email. Bạn có thể làm việc khác; kết quả sẽ được báo ở đây.`);
+      void reportWhenSent(job, target.title);
+      busy(false);
+      onClose();
+      return;
     } catch (sendError) {
       if (!(sendError instanceof FileKeyCancelled)) setProblem(getScanErrorMessage(sendError, "Không gửi được email."));
     }
@@ -295,6 +320,22 @@ function EmailForm({
             invalid={wrong.length > 0 || tooMany}
           />
           <p className="text-xs text-muted-foreground">Nhập nhiều email: nhấn Enter, dấu phẩy hoặc dán cả danh sách.</p>
+          {suggestions.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 text-xs">
+              <span className="text-muted-foreground">Email in trên hợp đồng (bấm để thêm):</span>
+              {suggestions.map((email) => (
+                <button
+                  key={email}
+                  type="button"
+                  disabled={sending}
+                  className="rounded-full border border-dashed px-2 py-0.5 hover:bg-accent"
+                  onClick={() => setEmails([...emails, email])}
+                >
+                  + {email}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor={noteId}>Lời nhắn (không bắt buộc)</Label>
@@ -308,29 +349,14 @@ function EmailForm({
             placeholder="VD: Gửi anh/chị bản hợp đồng đã ký để đối chiếu."
           />
         </div>
-        {result && (
-          <Alert>
-            <AlertDescription className="space-y-1 text-sm">
-              <p>
-                Đã gửi {result.sent.length} email. {result.failed.length} email chưa gửi được (đã giữ lại ở trên để gửi lại):
-              </p>
-              <ul className="list-disc pl-5 text-destructive">
-                {result.failed.map((failure) => (
-                  <li key={failure.email}>
-                    {failure.email}: {failure.reason}
-                  </li>
-                ))}
-              </ul>
-            </AlertDescription>
-          </Alert>
-        )}
         {problem && (
           <p role="alert" className="text-sm text-destructive">
             {problem}
           </p>
         )}
         <p className="text-xs text-muted-foreground">
-          Tệp gửi đi không còn được mã hóa. Chỉ gửi cho người được phép xem hợp đồng. Mỗi lần gửi đều được ghi nhật ký.
+          Tệp gửi đi không còn được mã hóa. Chỉ gửi cho người được phép xem hợp đồng. Mỗi lần gửi đều được ghi nhật ký; thư
+          trả lời sẽ về email của bạn.
         </p>
       </div>
       <DialogFooter>
@@ -339,7 +365,7 @@ function EmailForm({
         </Button>
         <Button disabled={sending || emails.length === 0} onClick={() => void send()}>
           {sending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Send aria-hidden="true" />}
-          {result ? "Gửi lại" : "Gửi"}
+          Gửi
         </Button>
       </DialogFooter>
     </>

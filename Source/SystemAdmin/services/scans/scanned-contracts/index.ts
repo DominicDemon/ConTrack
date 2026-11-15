@@ -2,7 +2,7 @@ import { scanApi } from "../http";
 import type {
   AddScanKeywordInput,
   ScanEmailInput,
-  ScanEmailResult,
+  ScanEmailJob,
   ScanKeyword,
   ScanKeywordJobStatus,
   ScanKeywordState,
@@ -128,8 +128,8 @@ export const scannedContractsApi = {
   },
 
   /** Sends the scan as a PDF attachment; the server opens it with the sender's key, like "View". */
-  async emailJob(jobId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailResult> {
-    const { data } = await scanApi.post<ScanEmailResult>(`/scanned-contracts/jobs/${jobId}/email`, input, {
+  async emailJob(jobId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailJob> {
+    const { data } = await scanApi.post<ScanEmailJob>(`/scanned-contracts/jobs/${jobId}/email`, input, {
       headers: keyHeader(fileKey),
     });
     return data;

@@ -28,6 +28,7 @@ const FILTERS: { value: ScanSearchType; label: string }[] = [
   { value: "TaxCode", label: "Mã số thuế" },
   { value: "PhoneNumber", label: "Số điện thoại" },
   { value: "CustomerName", label: "Tên khách hàng" },
+  { value: "Email", label: "Email" },
 ];
 
 /** The server needs this many characters to search. */
@@ -63,6 +64,7 @@ const scanTarget = (scan: ScannedSearchResult): ScanTarget => ({
   title: scan.contractCode ?? scan.fileName,
   href: `/workspace/scanned-contracts/jobs/${scan.jobId}`,
   matches: scan.matches,
+  emails: scan.emails ?? [],
   details: [
     { label: "Tệp", value: scan.fileName },
     { label: "Số hợp đồng", value: scan.contractCode ?? "" },
@@ -79,6 +81,7 @@ const evidenceTarget = (item: ScanSearchResult): ScanTarget => ({
   title: item.documentCode ?? item.documentName,
   href: contractHref(item.documentId),
   matches: item.matches,
+  emails: item.emails ?? [],
   details: [
     { label: "Số hợp đồng", value: item.documentCode ?? "" },
     { label: "Tên hợp đồng", value: item.documentName },

@@ -15,13 +15,14 @@ interface StatusLabel {
   tone: StatusTone;
 }
 
-export const KEYWORD_TYPES: ScanKeywordType[] = ["ContractCode", "TaxCode", "PhoneNumber", "CustomerName"];
+export const KEYWORD_TYPES: ScanKeywordType[] = ["ContractCode", "TaxCode", "PhoneNumber", "CustomerName", "Email"];
 
 export const KEYWORD_TYPE_LABELS: Record<ScanKeywordType, string> = {
   ContractCode: "Số hợp đồng",
   TaxCode: "Mã số thuế",
   PhoneNumber: "Số điện thoại",
   CustomerName: "Tên khách hàng",
+  Email: "Email",
 };
 
 const CONTRACT_STATUS: Record<ContractStatusKey, string> = {

@@ -28,6 +28,7 @@ const PLACEHOLDERS: Record<ScanKeywordType, string> = {
   TaxCode: "VD: 0312345678",
   PhoneNumber: "VD: 0901 234 567",
   CustomerName: "VD: Công ty TNHH Thương mại ABC",
+  Email: "VD: lienhe@congty.vn",
 };
 
 interface AddKeywordDialogProps {

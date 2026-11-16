@@ -159,6 +159,7 @@ public static class ScanRegistration
         services.AddScoped<SignedEvidenceService>();
         services.AddScoped<ScannedContractService>();
         services.AddScoped<ScanSearchService>();
+        services.AddScoped<ScanEmailService>();
         services.AddScoped<ScanKeywordJobRunner>();
         services.AddHostedService<ScanKeywordJobWorker>();
         return services;

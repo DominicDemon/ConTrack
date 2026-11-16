@@ -211,6 +211,17 @@ export interface ScannedSearchResult {
   matches: ScanSearchMatch[];
 }
 
+/** Sending a scan by email: one email per address; an address that failed can be tried again. */
+export interface ScanEmailInput {
+  recipients: string[];
+  note?: string;
+}
+
+export interface ScanEmailResult {
+  sent: string[];
+  failed: { email: string; reason: string }[];
+}
+
 export interface ScanSearchResponse {
   query: string;
   /** Paper-signing evidence of contracts in the system. */
@@ -236,5 +247,6 @@ export interface SignedEvidenceApi {
   retryKeywords(evidenceId: string, fileKey?: string): Promise<ScanKeywordState>;
   addKeyword(evidenceId: string, input: AddScanKeywordInput): Promise<ScanKeyword>;
   removeKeyword(evidenceId: string, keywordId: string): Promise<void>;
+  emailFile(evidenceId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailResult>;
   search(query: ScanSearchQuery): Promise<ScanSearchResponse>;
 }

@@ -122,6 +122,7 @@ public partial class DbDtctechContext
         modelBuilder.Entity<TblContractAcceptanceRecord>().Property(x => x.LocationEn)
             .HasMaxLength(500).IsUnicode();
 
+        ConfigureElectronicSigning(modelBuilder);
         ExcludeSupportTablesFromTenantMigrations(modelBuilder);
     }
 }

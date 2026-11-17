@@ -1,9 +1,13 @@
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace ContractManagement.Domain.Internal;
 
 public sealed record DraftField(string Key, string Label, bool Required = false, string DataType = "TEXT", List<string>? Options = null, decimal? Min = null, decimal? Max = null);
-public sealed record DraftTerm(string Key, string Title, string Content, bool Editable = true);
+// English text is null for a Vietnamese-only contract and is then left out of the stored JSON, so earlier snapshots keep their bytes.
+public sealed record DraftTerm(string Key, string Title, string Content, bool Editable = true,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleEn = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ContentEn = null);
 public sealed record TemplateDefinition(long Id, string Name, string Revision, bool IsDemo,
     List<DraftField> Fields, List<DraftTerm> Terms, bool IsImported = false,
     int DocumentType = 1, string? WordStorageKey = null, string? WordSha256 = null, bool ManualWordContent = false);
@@ -33,10 +37,26 @@ public sealed class DraftContent
     public TemplateDefinition? TemplateSnapshot { get; set; }
     public DraftTotals Totals { get; set; } = new(0, 0, 0, 0);
     public List<string> MissingFields { get; set; } = [];
+    /// <summary>null = Vietnamese only; <see cref="InternalDraftPolicy.Bilingual"/> = English and Vietnamese, English first.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? LanguageMode { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? NameEn { get; set; }
+    /// <summary>English wording of the party details in <see cref="InternalDraftPolicy.EnglishFieldKeys"/>.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Dictionary<string, string>? FieldsEn { get; set; }
 }
 
 public static class InternalDraftPolicy
 {
+    public const string Bilingual = "VI_EN";
+    /// <summary>A person signs electronically (OTP); a business signs the printed contract and stamps it with its red seal.</summary>
+    public const string Person = "PERSON", Business = "BUSINESS";
+    /// <summary>The text a stored snapshot (web JSON) contains for a party type filter; null = no filter.</summary>
+    public static string? PartyTypeMarker(string? partyType) => string.IsNullOrWhiteSpace(partyType) ? null
+        : partyType is Person or Business ? $"\"partyType\":\"{partyType}\""
+        : throw new ArgumentException("Loại khách hàng không hợp lệ.");
+    /// <summary>Party details that read differently in English (names, addresses, positions, banks); numbers and codes are shared.</summary>
+    public static readonly string[] EnglishFieldKeys = ["CUSTOMER_COMPANY", "CUSTOMER_ADDRESS", "CUSTOMER_CONTACT_TITLE", "CUSTOMER_BANK_NAME",
+        "PROVIDER_LEGAL_NAME", "PROVIDER_ADDRESS", "PROVIDER_REPRESENTATIVE_TITLE", "PROVIDER_BANK_NAME"];
+
     public static string Text(string? value, int max)
     {
         var text = value?.Trim() ?? "";
@@ -85,7 +105,15 @@ public static class InternalDraftPolicy
             return item with { Name = name };
         }).ToList();
         if (subtotal > 9999999999999999.99m) throw new ArgumentException("Tổng giá trị vượt giới hạn lưu trữ.");
-        input.Terms = input.Terms.Select(t => t with { Key = Text(t.Key, 100), Title = Text(t.Title, 500), Content = Text(t.Content, 20000) }).ToList();
+        var bilingual = input.LanguageMode == Bilingual;
+        if (input.LanguageMode is not (null or "VI" or Bilingual)) throw new ArgumentException("Ngôn ngữ hợp đồng không hợp lệ.");
+        if (bilingual && template.WordStorageKey is not null) throw new ArgumentException("Mẫu Word giữ nguyên nội dung của file; hợp đồng song ngữ cần mẫu soạn trong hệ thống.");
+        input.LanguageMode = bilingual ? Bilingual : null;
+        input.NameEn = bilingual ? Text(input.NameEn, 1000) : null;
+        input.FieldsEn = bilingual ? (input.FieldsEn ?? []).Where(p => EnglishFieldKeys.Contains(p.Key) && allowed.Contains(p.Key))
+            .Select(p => (p.Key, Value: Text(p.Value, 4000))).Where(p => p.Value.Length > 0).ToDictionary(p => p.Key, p => p.Value) : null;
+        input.Terms = input.Terms.Select(t => t with { Key = Text(t.Key, 100), Title = Text(t.Title, 500), Content = Text(t.Content, 20000),
+            TitleEn = bilingual ? Text(t.TitleEn, 500) : null, ContentEn = bilingual ? Text(t.ContentEn, 20000) : null }).ToList();
         if (input.Terms.Any(t => string.IsNullOrWhiteSpace(t.Key) || string.IsNullOrWhiteSpace(t.Title)) || input.Terms.Select(t => t.Key).Distinct().Count() != input.Terms.Count)
             throw new ArgumentException("Điều khoản cần mã duy nhất và tiêu đề.");
         foreach (var locked in template.Terms.Where(t => !t.Editable))
@@ -103,7 +131,11 @@ public static class InternalDraftPolicy
         input.TemplateSnapshot = template;
         input.MissingFields = template.Fields.Where(f => f.Required && string.IsNullOrWhiteSpace(input.Fields.GetValueOrDefault(f.Key))).Select(f => f.Label).ToList();
         if (input.Items.Count == 0) input.MissingFields.Add("Hạng mục hợp đồng");
-        if (input.Terms.Count == 0 || input.Terms.Any(t => string.IsNullOrWhiteSpace(t.Content))) input.MissingFields.Add("Nội dung điều khoản");
+        // A fixed term is the template's own text (checked above); a title-only one, e.g. a Word signature heading, is complete.
+        if (input.Terms.Count == 0 || input.Terms.Any(t => t.Editable && string.IsNullOrWhiteSpace(t.Content))) input.MissingFields.Add("Nội dung điều khoản");
+        if (bilingual && string.IsNullOrEmpty(input.NameEn)) input.MissingFields.Add("Tên hợp đồng tiếng Anh");
+        if (bilingual && input.Terms.Any(t => t.Editable && (string.IsNullOrEmpty(t.TitleEn) || string.IsNullOrEmpty(t.ContentEn))))
+            input.MissingFields.Add("Điều khoản tiếng Anh");
         DraftCompletionPolicy.Prepare(input, template);
         return input;
     }

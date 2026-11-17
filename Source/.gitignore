@@ -10,6 +10,7 @@ node_modules/
 **/node_modules/
 [Bb]in/
 [Oo]bj/
+.artifacts/
 *.user
 *.suo
 

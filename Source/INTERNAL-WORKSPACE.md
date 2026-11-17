@@ -15,7 +15,7 @@ API mặc định `ApplicationMode=Internal`, dùng riêng `ConnectionStrings:Ma
 biến `ConnectionStrings__MasterDatabase` và `ApplicationMode`.
 
 Database là nguồn schema (database first); app không tự tạo bảng hay dữ liệu. Trước khi chạy,
-database MASTER phải có đủ schema (gồm `Artifacts/Database/Master/001`–`005`), tài khoản
+database MASTER phải có đủ schema (gồm `Artifacts/Database/Master/001`–`012`), tài khoản
 và quy trình duyệt `CONTRACT_INTERNAL_CHECK`, tất cả tạo trực tiếp bằng SQL.
 
 Từ thư mục `Source`:
@@ -29,7 +29,8 @@ Mở thêm terminal: `npm run dev` tại `Source/SystemAdmin` (http://localhost:
 tại `Source/Frontend` (http://localhost:3000, khách hàng).
 
 Tài khoản nhân viên và khách hàng được tạo sẵn trong database. Mật khẩu lưu dạng hash ASP.NET Identity (`PasswordHasher`).
-Chưa có mẫu hợp đồng nào: tải mẫu lên qua nút “Tải lên hợp đồng mẫu” ở màn tạo nháp.
+Mẫu minh họa `INTERNAL_DEMO_V1` (sale tự nhập điều khoản) có sẵn sau khi chạy `010-demo-template.sql`.
+Mẫu Word tải lên bằng nút “Tải mẫu Word” ở màn tạo nháp (cần LibreOffice, `TemplatePdfRendering:ExecutablePath`).
 Swagger (Development): http://localhost:5005/swagger.
 API được proxy cùng origin qua Next; đổi đích bằng `INTERNAL_API_ORIGIN` nếu cần.
 
@@ -70,8 +71,25 @@ Trang ticket cũ của main (`(protected)/support-tickets` ở cả hai app) và
 Chỉ mẫu, khách hàng và tên là bắt buộc khi lưu. Thông tin thiếu được đánh dấu.
 Mẫu tải lên chưa được coi là đã phê duyệt; thông tin pháp nhân phải do người dùng nhập.
 Khách và mẫu được chụp vào nháp, không tự cập nhật theo dữ liệu gốc về sau.
-Nháp dùng mẫu Word hỗ trợ xem trước PDF và tải DOCX.
 Nhân viên kinh doanh chỉ truy cập nháp của mình; quản lý kinh doanh xem được tất cả. Cả hai được tạo khách.
+Nháp dùng mẫu Word hỗ trợ xem trước PDF và tải DOCX. Chưa có OTP ký, màn Ban Giám Đốc duyệt / ký hoặc thanh toán.
+
+**Hợp đồng song ngữ:** ô "Ngôn ngữ hợp đồng" → "Song ngữ Anh – Việt" (không áp dụng cho mẫu Word). Nhập thêm tên hợp đồng
+tiếng Anh, tên / địa chỉ / chức vụ / ngân hàng tiếng Anh của hai bên và tiêu đề + nội dung tiếng Anh của từng điều khoản.
+Bản xem trước, bản khách xem trên Portal và PDF ký trình bày như hợp đồng in của công ty: tiếng Anh trước, tiếng Việt in nghiêng
+("ARTICLE 1: …" / "ĐIỀU 1: …", nhãn dạng "Tel / Điện thoại"). Điều khoản thiếu bản tiếng Anh được báo trong danh sách cần bổ sung.
+Nội dung tiếng Anh lưu trong nội dung nháp và các cột `*_en` có sẵn của `CONTRACT_TERM`; không cần script mới.
+
+**Nhắc hạn hợp đồng:** hợp đồng đã ký (`CONTRACT_DOCUMENTS` trạng thái Đã ký / Hoàn tất, ngày hết hạn của phiên bản hiện hành)
+và hợp đồng giấy scan (`CONTRACTS.expiration_date`) được nhắc trước 30 ngày và 7 ngày. API kiểm tra lúc khởi động và mỗi 6 giờ,
+gửi thông báo (`NOTIFICATION`) và email cho người phụ trách và Ban Giám Đốc; mỗi mốc gửi một lần (khóa sự kiện chống trùng).
+Trang Tổng quan liệt kê hợp đồng hết hạn trong 30 ngày tới (Ban Giám Đốc xem tất cả, người khác xem hợp đồng mình phụ trách).
+
+**Khách cá nhân / doanh nghiệp:** "Bên giao dịch" của bản nháp quyết định cách ký. Cá nhân (`PERSON`) ký điện tử như trước
+(công ty ký, khách ký OTP trên Portal). Doanh nghiệp (`BUSINESS`) không ký điện tử (API từ chối "Tạo phiên ký"): sau khi khách
+đồng ý và quản lý duyệt, bấm "In hợp đồng (PDF)" (`GET /contract-drafts/{id}/print-pdf`, chỉ khi chờ ký), hai bên ký và doanh
+nghiệp đóng dấu đỏ, rồi scan và tải lên màn "Bản ký giấy"; xác nhận bản scan chuyển hồ sơ sang Đã ký. Danh sách hợp đồng nháp,
+Theo dõi ký và Kho hợp đồng có bộ lọc "Loại khách hàng" (`?partyType=PERSON|BUSINESS`, theo phiên bản hiện hành).
 
 ## Nhân viên & phân quyền
 
@@ -98,8 +116,11 @@ Khu workspace cũ ở Frontend vẫn còn song song, sẽ gỡ sau.
    hồ sơ → 1. Khách chưa đổi mật khẩu tạm (`customer_personal_phone_verified_at` NULL) nhận SMS mật khẩu tạm 24 giờ;
    khách đã có mật khẩu nhận SMS báo có hợp đồng.
 2. Khách đăng nhập bằng SĐT, bị bắt đổi mật khẩu tạm (`PASSWORD_CHANGE_REQUIRED`), xem đúng phiên bản đã gửi,
-   góp ý theo điều khoản, rồi Đồng ý (hồ sơ 2, tạo CONTRACT_APPROVAL_REQUEST theo workflow `CONTRACT_INTERNAL_CHECK`),
-   Yêu cầu sửa (hồ sơ giữ 1) hoặc Từ chối (hồ sơ 7). Mỗi phản hồi tạo NOTIFICATION cho sale (và hành chính khi đồng ý).
+   rồi Đồng ý (hồ sơ 2, tạo CONTRACT_APPROVAL_REQUEST theo workflow `CONTRACT_INTERNAL_CHECK`),
+   Gửi yêu cầu sửa (hồ sơ giữ 1) hoặc Từ chối (hồ sơ 7). Mỗi phản hồi tạo NOTIFICATION cho sale (và hành chính khi đồng ý).
+   Góp ý và yêu cầu sửa là một: khách thêm góp ý theo mục (góp ý chung, thông tin các bên, thời hạn, hạng mục và giá trị,
+   lịch thanh toán, từng điều khoản), rồi bấm **Gửi yêu cầu sửa** (cần ít nhất một góp ý; ghi chú thêm là tùy chọn).
+   Từ chối vẫn phải ghi lý do. Mục của góp ý lưu ở cột `contract_negotiation_comment_section` (`012-comment-sections.sql`).
 3. Sale trả lời/đánh dấu đã xử lý góp ý, **Tạo phiên bản mới** rồi gửi lại (lần trước `CHANGES_REQUESTED` → `SUPERSEDED`).
    Sau khi khách từ chối: **Thương lượng tiếp** (về 1) hoặc **Đóng draft** (6). Lần bị từ chối giữ trạng thái `REJECTED`
    vì CHECK `CK_ReviewRequest_Followup` chỉ cho quyết định trên dòng `REJECTED`.
@@ -148,7 +169,7 @@ xóa ciphertext khi rời hàng đợi. Callback `GET /api/sms/esms/callback` ch
 - Tạo PDF, kiểm tra rồi xác nhận kích hoạt. Sửa nội dung yêu cầu xem trước lại.
 - Các API mới là `/api/internal/contract-templates/word/extract`, `/word/preview`, `/word/activate`, cùng session/CSRF/quyền nội bộ hiện có.
 - File gốc, DOCX cố định và JSON được lưu private storage với SHA-256. Snapshot nháp giữ khóa và hash DOCX, hỗ trợ xem trước PDF và tải DOCX.
-- `003-template-fields.sql` bổ sung bảng trường mẫu trong bootstrap, có thể chạy lại trên DB đã cài. Schema chính là `MasterDB-Optimize_v1.sql`.
+- `003-template-fields.sql` bổ sung bảng trường mẫu (chạy tay, có thể chạy lại trên DB đã cài). Schema chính là `MasterDB-Optimize_v1.sql`.
 - Chạy `InternalWordSampleTests` với `CONTRACK_WORD_SAMPLE_ROOT` và `CONTRACK_MASTER_TEST_CONNECTION` để nghiệm thu năm file. Dữ liệu kiểm thử trong DB được tự dọn.
 
 ### API trích chữ cũ
@@ -167,8 +188,8 @@ xóa ciphertext khi rời hàng đợi. Callback `GET /api/sms/esms/callback` ch
   ID BIGINT là chuỗi JSON. API legacy không được ánh xạ trong chế độ Internal.
 - `001-internal-drafts.sql` nâng current_version_id lên BIGINT, thêm unique username,
   sửa index email khách thành filtered unique để cho phép nhiều email NULL.
-- `002-contract-review.sql` thêm luồng gửi khách xem và hàng đợi SMS; `003-draft-content.sql` thêm
-  3 bảng nội dung nháp. Các script idempotent, chạy tay (SSMS hoặc `sqlcmd -I`); app không tự chạy.
+- `002-contract-review.sql` thêm luồng gửi khách xem và hàng đợi SMS; `003-template-fields.sql` thêm
+  bảng trường mẫu. Các script idempotent, chạy tay (SSMS hoặc `sqlcmd -I`); app không tự chạy.
 - File mẫu riêng nằm ở `Backend/private-storage/internal-templates`; metadata/hash nằm
   trong FILE_STORAGE. Có thể đổi đường dẫn bằng `InternalStorage__Root`.
 - Tạo/cập nhật document, version, items, terms, dynamic values và audit trong transaction.

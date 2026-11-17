@@ -232,9 +232,11 @@ public sealed class CustomerSupportTicketsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var content = request.MessageContent ?? request.Content;
-        if (string.IsNullOrWhiteSpace(content))
+        var hasImage = !string.IsNullOrWhiteSpace(request.AttachmentUrl)
+            || (request.AttachmentUrls is { Count: > 0 } && request.AttachmentUrls.Any(u => !string.IsNullOrWhiteSpace(u)));
+        if (string.IsNullOrWhiteSpace(content) && !hasImage)
         {
-            return BadRequest(new { message = "Vui lòng nhập nội dung phản hồi." });
+            return BadRequest(new { message = "Vui lòng nhập nội dung tin nhắn hoặc chọn hình ảnh để gửi." });
         }
 
         var tenant = _currentTenant.GetRequiredTenant();

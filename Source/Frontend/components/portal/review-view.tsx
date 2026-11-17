@@ -11,15 +11,20 @@ import ReviewWord from "./review-word";
 import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
 import PortalHeader from "./portal-header";
+import PortalSigningPanel from "./portal-signing-panel";
 import { dateTime } from "@/services/internal-api";
 import { CustomerApiError, customerApi, customerStatusLabel, handleAuthError, isOpenReview, type CustomerReviewDetail, type ReviewComment } from "@/services/customer-api";
 
 type Decision = "APPROVE" | "REQUEST_CHANGES" | "REJECT";
 const decisions: Record<Decision, { title: string; description: string; note: string; required: boolean }> = {
   APPROVE: { title: "Đồng ý hợp đồng", description: "Bạn xác nhận đồng ý với nội dung phiên bản này. Nhân viên sẽ kiểm tra nội bộ trước bước ký.", note: "Ghi chú (tùy chọn)", required: false },
-  REQUEST_CHANGES: { title: "Yêu cầu sửa", description: "Nhân viên sẽ sửa và gửi lại phiên bản mới cho bạn.", note: "Nội dung cần sửa *", required: true },
+  REQUEST_CHANGES: { title: "Gửi yêu cầu sửa", description: "Các góp ý theo mục của bạn được gửi cho nhân viên. Nhân viên sẽ sửa và gửi lại phiên bản mới.", note: "Ghi chú thêm (tùy chọn)", required: false },
   REJECT: { title: "Từ chối hợp đồng", description: "Bạn không đồng ý với hợp đồng này. Người phụ trách sẽ quyết định thương lượng tiếp hoặc đóng hồ sơ.", note: "Lý do từ chối *", required: true },
 };
+/** Parts of the contract a comment can be about besides a term (ContractReviewPolicy.CommentSections). */
+const sections: [string, string][] = [["PARTIES", "Thông tin các bên"], ["DATES", "Thời hạn hợp đồng"], ["ITEMS", "Hạng mục và giá trị"], ["PAYMENT", "Lịch thanh toán"]];
+/** One value per target: "" = general, "sec:<KEY>" = a section, "term:<key>" = a term. */
+const targetOf = (c: ReviewComment) => c.termKey ? `term:${c.termKey}` : c.section ? `sec:${c.section}` : "";
 
 /** onAuthLost marks a session opened from an emailed link: it replaces the list links and the password-login redirects. */
 export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?: () => void }) {
@@ -36,7 +41,8 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
   const open = isOpenReview(review.status);
   async function sendComment() {
     setBusy(true); setError("");
-    try { const c = await customerApi<ReviewComment>(`/reviews/${id}/comments`, "POST", { termKey: term || null, content: comment.trim() });
+    try { const c = await customerApi<ReviewComment>(`/reviews/${id}/comments`, "POST", { termKey: term.startsWith("term:") ? term.slice(5) : null,
+        section: term.startsWith("sec:") ? term.slice(4) : null, content: comment.trim() });
       setReview(r => r && { ...r, comments: [...r.comments, c] }); setComment(""); }
     catch (e) { fail(e); } finally { setBusy(false); }
   }
@@ -45,8 +51,10 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
     try { setReview(await customerApi<CustomerReviewDetail>(`/reviews/${id}/respond`, "POST", { decision, note: note.trim() || null, documentHash: review!.documentHash, rowVersion: review!.rowVersion })); setDecision(null); }
     catch (e) { fail(e); setDecision(null); } finally { setBusy(false); }
   }
-  const byTerm = (key: string | null) => review.comments.filter(c => c.termKey === key);
   const terms = review.content.terms;
+  const targets = [{ value: "", title: "Góp ý chung" }, ...sections.map(([key, title]) => ({ value: `sec:${key}`, title })),
+    ...terms.map((t, i) => ({ value: `term:${t.key}`, title: `Điều ${i + 1}. ${t.title}`, fixed: !t.editable }))];
+  const mine = review.comments.filter(c => c.fromCustomer).length;
   return <><PortalHeader onLogout={onAuthLost}/><div className={s.page}>
     <div className={s.titleRow}><div>{!onAuthLost && <Link href="/portal/contracts" className={s.muted} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><ArrowLeft size={16}/>Hợp đồng của bạn</Link>}
       <h1>{review.contractName}</h1><p className={s.muted}>Phiên bản {review.versionNo} · gửi lúc {dateTime(review.sentAt)}</p></div>
@@ -54,25 +62,30 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
     {review.message && <p className={ui.notice} style={{ marginBottom: 16 }}>Lời nhắn của nhân viên: {review.message}</p>}
     {error && <p role="alert" className={ui.error} style={{ marginBottom: 16 }}>{error}</p>}
     {!open && <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>{review.respondedAt ? `Bạn đã phản hồi lúc ${dateTime(review.respondedAt)}.` : "Lần gửi này không còn nhận phản hồi."}{review.customerNote ? ` Ghi chú: ${review.customerNote}` : ""}</p>}
+    {review.status === "APPROVED" && (review.content.partyType === "BUSINESS"
+      ? <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>Hợp đồng doanh nghiệp được ký trên giấy: sau khi công ty duyệt, nhân viên sẽ gửi bản in để đại diện doanh nghiệp ký và đóng dấu đỏ. Bạn không cần ký điện tử trên Portal.</p>
+      : <PortalSigningPanel reviewId={id}/>)}
     {open && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
       <button className={ui.primaryButton} disabled={busy} onClick={() => { setDecision("APPROVE"); setNote(""); }}><Check size={16}/>Đồng ý</button>
-      <button className={ui.secondaryButton} disabled={busy} onClick={() => { setDecision("REQUEST_CHANGES"); setNote(""); }}><PenLine size={16}/>Yêu cầu sửa</button>
+      <button className={ui.secondaryButton} disabled={busy || mine === 0} title={mine === 0 ? "Thêm góp ý cho mục cần sửa trước" : undefined}
+        onClick={() => { setDecision("REQUEST_CHANGES"); setNote(""); }}><PenLine size={16}/>Gửi yêu cầu sửa{mine ? ` (${mine} góp ý)` : ""}</button>
       <button className={ui.secondaryButton} disabled={busy} onClick={() => { setDecision("REJECT"); setNote(""); }}><XCircle size={16}/>Từ chối</button></div>}
     <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", alignItems: "start" }}>
-      {review.content.templateSnapshot?.wordStorageKey ? <ReviewWord key={review.id} id={review.id}/> : <DraftPreview content={review.content}/>}
-      <section className={ui.card} aria-label="Góp ý theo điều khoản"><h2 style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 16 }}><MessageSquare size={18}/>Góp ý</h2>
-        {[{ key: null as string | null, title: "Góp ý chung" }, ...terms.map((t, i) => ({ key: t.key as string | null, title: `Điều ${i + 1}. ${t.title}` }))].map(group => {
-          const list = byTerm(group.key); if (!list.length) return null;
-          return <div key={group.key ?? "general"} style={{ marginTop: 12 }}><strong style={{ fontSize: 13 }}>{group.title}</strong>
+      {review.content.templateSnapshot?.wordStorageKey ? <ReviewWord key={review.id} id={review.id}/> : <DraftPreview content={review.content}/> }
+      <section className={ui.card} aria-label="Góp ý và yêu cầu sửa theo mục"><h2 style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 16 }}><MessageSquare size={18}/>Góp ý / yêu cầu sửa theo mục</h2>
+        {open && <p className={s.muted} style={{ marginTop: 4 }}>Chọn mục cần sửa (thông tin các bên, hạng mục, thanh toán, từng điều khoản…), ghi nội dung rồi bấm Thêm góp ý. Khi xong, bấm Gửi yêu cầu sửa.</p>}
+        {targets.map(group => {
+          const list = review.comments.filter(c => targetOf(c) === group.value); if (!list.length) return null;
+          return <div key={group.value || "general"} style={{ marginTop: 12 }}><strong style={{ fontSize: 13 }}>{group.title}</strong>
             {list.map(c => <div key={c.id} style={{ borderLeft: "3px solid var(--border)", paddingLeft: 10, marginTop: 6, marginLeft: c.parentId ? 16 : 0 }}>
               <p style={{ fontSize: 12 }} className={s.muted}>{c.fromCustomer ? "Bạn" : c.authorName} · {dateTime(c.createdAt)}{c.resolved ? " · Đã xử lý" : ""}</p>
               <p style={{ whiteSpace: "pre-wrap" }}>{c.content}</p></div>)}</div>;
         })}
         {!review.comments.length && <p className={s.muted} style={{ marginTop: 8 }}>Chưa có góp ý.</p>}
         {open && <div style={{ display: "grid", gap: 8, marginTop: 16 }}>
-          <label className={s.label}>Góp ý cho<select className={ui.field} value={term} onChange={e => setTerm(e.target.value)}><option value="">Góp ý chung</option>{terms.filter(t => t.editable).map((t, i) => <option key={t.key} value={t.key}>Điều {i + 1}. {t.title}</option>)}</select></label>
-          <label className={s.label}>Nội dung<Textarea maxLength={4000} value={comment} onChange={e => setComment(e.target.value)} placeholder="Nhập góp ý của bạn…"/></label>
-          <button className={ui.secondaryButton} disabled={busy || !comment.trim()} onClick={() => void sendComment()}>Gửi góp ý</button></div>}
+          <label className={s.label}>Mục<select className={ui.field} value={term} onChange={e => setTerm(e.target.value)}>{targets.filter(t => !("fixed" in t && t.fixed)).map(t => <option key={t.value} value={t.value}>{t.title}</option>)}</select></label>
+          <label className={s.label}>Góp ý / nội dung cần sửa<Textarea maxLength={4000} value={comment} onChange={e => setComment(e.target.value)} placeholder="Ví dụ: Đề nghị sửa đơn giá hạng mục 2 thành…"/></label>
+          <button className={ui.secondaryButton} disabled={busy || !comment.trim()} onClick={() => void sendComment()}>Thêm góp ý</button></div>}
       </section>
     </div>
     <Dialog open={!!decision} onOpenChange={v => { if (!busy && !v) setDecision(null); }}><DialogContent>

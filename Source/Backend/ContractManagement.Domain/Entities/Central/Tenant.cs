@@ -36,10 +36,10 @@ public sealed class Tenant
 
     public TenantDatabase TenantDatabase { get; set; } = new()
     {
-        DatabaseKey = "master",
-        DatabaseName = "MasterDB",
+        DatabaseKey = "shared-contrackdb",
+        DatabaseName = "ConTrackDB",
         Mode = TenantDatabaseMode.Shared,
-        ConnectionString = "server=localhost;database=MasterDB;uid=sa;pwd=123;TrustServerCertificate=True;Encrypt=False;"
+        ConnectionString = string.Empty
     };
 
     /// <summary>

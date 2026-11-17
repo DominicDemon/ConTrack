@@ -72,6 +72,12 @@ const navItems: NavItem[] = [
     requiredPermissions: [RBAC_PERMISSIONS.contractApprovalDecide],
   },
   {
+    label: "Ký hợp đồng",
+    icon: FileSignature,
+    href: "/contract-signing",
+    requiredPermissions: [RBAC_PERMISSIONS.contractElectronicSigningDirector],
+  },
+  {
     label: "Mẫu hợp đồng",
     icon: LibraryBig,
     href: "/admin/contract-templates",

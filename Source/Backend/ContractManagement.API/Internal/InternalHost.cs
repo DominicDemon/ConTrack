@@ -5,6 +5,7 @@ using ContractManagement.API.Domains.Email;
 using ContractManagement.API.Domains.Support;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Infrastructure.Persistence.Application;
+using ContractManagement.Application.Features.Contracts.Signing;
 using ContractManagement.Infrastructure.Persistence.Master;
 using ContractManagement.Infrastructure.Sms;
 using Microsoft.AspNetCore.DataProtection;
@@ -17,9 +18,17 @@ namespace ContractManagement.API.Internal;
 
 public static class InternalHost
 {
-    private const string UserKey = "Internal.EmployeeId.v1";
+    internal const string UserKey = "Internal.EmployeeId.v1";
     public static async Task Run(WebApplicationBuilder builder, string[] args)
     {
+        if (builder.Environment.IsDevelopment() && OperatingSystem.IsWindows())
+        {
+            // The default Windows EventLog provider can throw when a local developer
+            // cannot write to the .NET Runtime event source, aborting requests while
+            // Data Protection reports an ordinary development warning.
+            builder.Logging.ClearProviders();
+            builder.Logging.AddConsole();
+        }
         var masterConn = builder.Configuration.GetConnectionString("MasterDatabase");
         if (string.IsNullOrWhiteSpace(masterConn))
         {
@@ -35,6 +44,7 @@ public static class InternalHost
         builder.Services.AddMasterDatabase(builder.Configuration);
         builder.Services.AddScoped<IInternalRepository, InternalRepository>();
         builder.Services.AddScoped<InternalDraftService>();
+        builder.Services.AddScoped<InternalSigningDemoService>();
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
         builder.Services.AddScoped<InternalWordDocument>();
         builder.Services.AddScoped<InternalWordTemplates>();
@@ -43,27 +53,41 @@ public static class InternalHost
         builder.Services.AddScoped<ContractProgressService>();
         builder.Services.AddScoped<IEmployeeAdmin, EmployeeAdminRepository>();
         builder.Services.AddScoped<ICatalogAdmin, CatalogRepository>();
-        // Ticket workflow from main reads TICKET_* through the application context, here pointed at MASTER (no tenant in Internal mode).
-        builder.Services.AddDbContext<MasterSupportContext>(o =>
-            o.UseSqlServer(builder.Configuration.GetConnectionString("MasterDatabase"), sql => sql.EnableRetryOnFailure()));
-        builder.Services.AddScoped<DbDtctechContext>(s => s.GetRequiredService<MasterSupportContext>());
         builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
         builder.Services.AddScoped<IContractReviewRepository, ContractReviewRepository>();
+        builder.Services.AddScoped<IInternalSigningService, InternalSigningService>();
+        builder.Services.AddScoped<ICustomerSigningService, CustomerSigningService>();
+        builder.Services.AddScoped<IElectronicSigningPdfService, ContractManagement.Infrastructure.Files.ElectronicSigningPdfService>();
         builder.Services.AddScoped<ICustomerPortalRepository, CustomerPortalRepository>();
         builder.Services.AddScoped<SmsCallbackProcessor>();
-        builder.Services.Configure<EsmsOptions>(builder.Configuration.GetSection("Esms"));
-        builder.Services.AddDataProtection();
+        builder.Services.AddOptions<EsmsOptions>().Bind(builder.Configuration.GetSection("Esms"))
+            .Validate(o => !o.Enabled || (!string.IsNullOrWhiteSpace(o.ApiKey) && !string.IsNullOrWhiteSpace(o.SecretKey)
+                && !string.IsNullOrWhiteSpace(o.Brandname) && Uri.TryCreate(o.BaseUrl, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps),
+                "Enabled eSMS requires API key, secret, brandname and an HTTPS base URL.")
+            .ValidateOnStart();
+        var dataProtection = builder.Services.AddDataProtection();
+        // Keep local internal sessions isolated from legacy keys protected for a different
+        // Windows identity. Reusing those keys can make Kestrel abort every session request.
+        if (builder.Environment.IsDevelopment() && OperatingSystem.IsWindows())
+        {
+            var keyDirectory = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "..", ".local", "internal-data-protection-dev"));
+            Directory.CreateDirectory(keyDirectory);
+            dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keyDirectory));
+        }
         builder.Services.AddSingleton<SmsOutboxWriter>();
         if (builder.Configuration.GetValue<bool>("Esms:Enabled")) builder.Services.AddHttpClient<ISmsSender, EsmsSmsSender>(h => h.Timeout = TimeSpan.FromSeconds(30));
         else builder.Services.AddSingleton<ISmsSender, FakeSmsSender>();
         builder.Services.AddHostedService<SmsOutboxWorker>();
         builder.Services.AddOptions<SmtpEmailOptions>().Bind(builder.Configuration.GetSection(SmtpEmailOptions.SectionName));
         builder.Services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
+        builder.Services.AddScoped<ContractExpiryReminders>();
+        builder.Services.AddHostedService<ContractExpiryReminderWorker>();
         builder.Services.AddScoped<ReviewLinkMailer>();
         builder.Services.AddScoped<ReviewLinkOtp>();
         builder.Services.AddMemoryCache();
-        builder.Services.AddSingleton(new InternalTemplateStorage(builder.Configuration["InternalStorage:Root"]
-            ?? Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "private-storage", "internal-templates"))));
+        ScanEndpoints.Register(builder.Services, builder.Configuration);
+        builder.Services.AddSingleton(new InternalTemplateStorage(InternalTemplateStorage.ResolveRoot(
+            builder.Configuration["InternalStorage:Root"], builder.Environment.ContentRootPath, AppContext.BaseDirectory)));
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new StringLongConverter()));
         builder.Services.AddDistributedMemoryCache();
         var secure = builder.Environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;
@@ -78,7 +102,9 @@ public static class InternalHost
             RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "local", _ => new() {
                 PermitLimit = 15, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
             o.AddPolicy("customer-login", context => RateLimitPartition.GetFixedWindowLimiter("customer:" + (context.Connection.RemoteIpAddress?.ToString() ?? "local"), _ => new() {
-                PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 })); });
+                PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+            o.AddPolicy("public-signing", context => RateLimitPartition.GetFixedWindowLimiter("public-signing:" + (context.Connection.RemoteIpAddress?.ToString() ?? "local"), _ => new() {
+                PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 })); });
         // Program.cs returns into this host before its Swagger registration, so Internal mode registers its own.
         builder.Services.AddEndpointsApiExplorer();
         builder.Services.AddSwaggerGen(o =>
@@ -89,6 +115,11 @@ public static class InternalHost
             o.AddSecurityRequirement(doc => new OpenApiSecurityRequirement { [new OpenApiSecuritySchemeReference("csrf", doc)] = [] });
         });
         var app = builder.Build();
+        if (RecoveryCommands.IsCommand(args))
+        {
+            Environment.ExitCode = await RecoveryCommands.RunAsync(args, app.Services);
+            return;
+        }
         app.Use(async (context, next) =>
         {
             context.Response.Headers.CacheControl = "no-store";
@@ -96,13 +127,21 @@ public static class InternalHost
             catch (ContractManagement.Domain.Internal.DraftValidationException e) { context.Response.StatusCode = 422; await context.Response.WriteAsJsonAsync(new { message = e.Message, code = "draft_validation", issues = e.Issues }); }
             catch (InternalAppException e) { context.Response.StatusCode = e.Status; await context.Response.WriteAsJsonAsync(new { message = e.Message, code = e.Code }); }
             catch (ArgumentException e) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = e.Message }); }
-            catch (BadHttpRequestException) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = "Dữ liệu gửi lên không hợp lệ." }); }
+            catch (BadHttpRequestException e) { app.Logger.LogWarning(e, "Bad HTTP request: {Message}", e.Message); context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = e.Message }); }
             catch (AntiforgeryValidationException) { context.Response.StatusCode = 400; await context.Response.WriteAsJsonAsync(new { message = "Phiên bảo vệ đã hết hạn. Tải lại trang và thử lại." }); }
             catch (DbUpdateException e) { app.Logger.LogWarning(e, "Internal database write failed"); context.Response.StatusCode = 409; await context.Response.WriteAsJsonAsync(new { message = "Dữ liệu trùng hoặc đã thay đổi. Kiểm tra rồi thử lại." }); }
-            catch (Exception e) when (!context.RequestAborted.IsCancellationRequested) { app.Logger.LogError(e, "Internal request failed"); context.Response.StatusCode = 500; await context.Response.WriteAsJsonAsync(new { message = "Không thể xử lý yêu cầu. Dữ liệu chưa được xác nhận lưu." }); }
+            catch (Exception e) when (!context.RequestAborted.IsCancellationRequested)
+            {
+                app.Logger.LogError(e, "Internal request failed: {Method} {Path}", context.Request.Method, context.Request.Path);
+                context.Response.StatusCode = 500;
+                var message = HttpMethods.IsGet(context.Request.Method)
+                    ? "Không thể tải dữ liệu yêu cầu. Vui lòng thử lại."
+                    : "Không thể xác nhận kết quả lưu. Hãy kiểm tra hồ sơ trước khi gửi lại.";
+                await context.Response.WriteAsJsonAsync(new { message });
+            }
         });
         if (app.Environment.IsDevelopment()) { app.UseSwagger(); app.UseSwaggerUI(); }
-        static bool IsCustomer(HttpContext c) => c.Request.Path.StartsWithSegments("/api/customer");
+        static bool IsCustomer(HttpContext c) => c.Request.Path.StartsWithSegments("/api/customer") || c.Request.Path.StartsWithSegments("/public/electronic-signing");
         app.UseWhen(IsCustomer, b => b.UseSession(customerSession));
         app.UseWhen(c => !IsCustomer(c), b => b.UseSession());
         app.UseRateLimiter();
@@ -197,7 +236,8 @@ public static class InternalHost
             Found(await s.HeadResolveAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct)));
         tickets.MapPost("/{id:int}/messages", async (int id, AdminReplyTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(input.MessageContent)) throw new ArgumentException("Vui lòng nhập nội dung phản hồi.");
+            var hasImage = !string.IsNullOrWhiteSpace(input.AttachmentUrl) || (input.AttachmentUrls?.Any(u => !string.IsNullOrWhiteSpace(u)) ?? false);
+            if (string.IsNullOrWhiteSpace(input.MessageContent) && !hasImage) throw new ArgumentException("Vui lòng nhập nội dung phản hồi hoặc đính kèm hình ảnh.");
             return Found(await s.AddAdminMessageAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct));
         });
         tickets.MapPatch("/{id:int}/status", async (int id, UpdateTicketStatusRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
@@ -222,7 +262,7 @@ public static class InternalHost
             if (!user.CanWrite && !user.CanCheck && !user.CanApprove && !user.CanManageTemplates) throw new InternalAppException(403, "Bạn không có quyền sử dụng chức năng hợp đồng.");
             var path = c.Request.Path.Value ?? "";
             if (!HttpMethods.IsGet(c.Request.Method) && !user.CanWrite && !user.CanCheck && !user.CanManageTemplates
-                && !path.Contains("/approval/") && !path.EndsWith("/internal-comments") && !path.EndsWith("/word-preview"))
+                && !path.Contains("/approval/") && !path.EndsWith("/internal-approval") && !path.EndsWith("/internal-comments") && !path.EndsWith("/word-preview"))
                 throw new InternalAppException(403, "Bạn chỉ có quyền xem và duyệt hồ sơ.");
             if (path.StartsWith("/api/internal/contract-templates/") && (path.EndsWith("/extract") || path.EndsWith("/preview") || path.EndsWith("/activate") || path.EndsWith("/import")) && !user.CanManageTemplates)
                 throw new InternalAppException(403, "Chỉ Hành chính được quản lý mẫu hợp đồng.");
@@ -233,6 +273,13 @@ public static class InternalHost
         secured.MapGet("/contract-drafts/{id:long}/approval", async (long id, HttpContext c, InternalApprovalService s, CancellationToken ct) => Results.Ok(await s.View(id, Current(c), ct)));
         secured.MapPost("/contract-drafts/{id:long}/approval/{action}", async (long id, string action, ApprovalAction input, HttpContext c, InternalApprovalService s, CancellationToken ct) => { await s.Act(id, action, input, Current(c), ct); return Results.NoContent(); });
         secured.MapPost("/contract-drafts/{id:long}/internal-comments", async (long id, InternalCommentInput input, HttpContext c, InternalApprovalService s, CancellationToken ct) => { await s.Comment(id, input, Current(c), ct); return Results.NoContent(); });
+        // Any signed-in employee: the board sees every contract ending within 30 days, others the ones they are in charge of.
+        api.MapGet("/contracts/expiring", async (HttpContext c, IInternalRepository r, ContractExpiryReminders reminders, CancellationToken ct) =>
+        {
+            var user = await User(c, r, ct);
+            RequirePasswordChanged(user);
+            return Results.Ok(await reminders.Expiring(ContractExpiryReminders.Today(DateTime.UtcNow), user.CanManageAll ? null : user.Id, ct));
+        });
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
         secured.MapGet("/contract-progress", async ([AsParameters] ProgressFilter filter, HttpContext c, ContractProgressService service, CancellationToken ct) => Results.Ok(await service.List(filter, Current(c), ct)));
         secured.MapGet("/checklist-rules", () => Results.Ok(ContractChecklistService.Catalog));
@@ -296,12 +343,30 @@ public static class InternalHost
             if (!Current(c).CanManageAll) throw new InternalAppException(403, "Bạn không có quyền xem danh sách nhân viên.");
             return Results.Ok(await r.Employees(ct));
         });
-        secured.MapGet("/contract-drafts", async (string? search, string? ownerId, int? status, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+        secured.MapGet("/contract-drafts", async (string? search, string? ownerId, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
             var user = Current(c); long? owner = user.CanManageAll ? null : user.Id;
             if (!string.IsNullOrEmpty(ownerId)) { if (!user.CanManageAll) throw new InternalAppException(403, "Không được lọc nháp của nhân viên khác.");
                 if (!long.TryParse(ownerId, out var parsed) || parsed <= 0) throw new ArgumentException("Nhân viên không hợp lệ."); owner = parsed; }
-            return Results.Ok(await r.Drafts(owner, search, status, ct));
+            return Results.Ok(await r.Drafts(owner, search, status, ct, partyType));
+        });
+        secured.MapGet("/contract-signing-demo/availability", (IHostEnvironment environment) => Results.Ok(new { available = environment.IsDevelopment() }));
+        secured.MapPost("/contract-signing-demo", async (HttpContext c, InternalSigningDemoService demo, CancellationToken ct) =>
+            Results.Ok(await demo.Create(Current(c), ct)));
+        secured.MapGet("/contract-archive", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+        {
+            if (!Current(c).CanManageAll) throw new InternalAppException(403, "Kho hợp đồng chỉ dành cho quản trị viên công ty.");
+            return Results.Ok(await r.ContractArchive(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType));
+        });
+        secured.MapGet("/contract-signing-monitor", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+        {
+            if (!Current(c).CanManageAll) throw new InternalAppException(403, "Theo dõi ký chỉ dành cho quản trị viên công ty.");
+            return Results.Ok(await r.SigningMonitor(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType));
+        });
+        secured.MapGet("/contract-signing-monitor/{id:long}", async (long id, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+        {
+            if (!Current(c).CanManageAll) throw new InternalAppException(403, "Theo dõi ký chỉ dành cho quản trị viên công ty.");
+            return await r.SigningMonitorDetail(id, ct) is { } detail ? Results.Ok(detail) : Results.NotFound();
         });
         secured.MapGet("/contract-drafts/{id:long}", async (long id, HttpContext c, InternalDraftService s, CancellationToken ct) => Results.Ok(await s.Get(id, Current(c), ct)));
         secured.MapPost("/contract-drafts", async (SaveDraftRequest request, HttpContext c, InternalDraftService s, CancellationToken ct) => Results.Ok(await s.Save(null, request, Current(c), ct)));
@@ -309,6 +374,24 @@ public static class InternalHost
         secured.MapPost("/contract-drafts/{id:long}/send-review", async (long id, SendReviewRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
             Results.Ok(await r.SendReview(id, input, Current(c), ct)));
         secured.MapGet("/contract-drafts/{id:long}/reviews", async (long id, HttpContext c, IContractReviewRepository r, CancellationToken ct) => Results.Ok(await r.Reviews(id, Current(c), ct)));
+        secured.MapGet("/contract-drafts/{id:long}/versions", async (long id, HttpContext c, IContractReviewRepository r, CancellationToken ct) => Results.Ok(await r.VersionHistory(id, Current(c), ct)));
+        secured.MapGet("/contract-drafts/{id:long}/internal-approval", async (long id, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
+        {
+            var approval = await r.InternalApproval(id, Current(c), ct);
+            return approval is null ? Results.Content("null", "application/json") : Results.Ok(approval);
+        });
+        secured.MapPost("/contract-drafts/{id:long}/internal-approval", async (long id, InternalApprovalDecisionRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
+            Results.Ok(await r.ResolveInternalApproval(id, input, Current(c), ct)));
+        secured.MapGet("/company-signing/queue", async (HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.Queue(Current(c), ct)));
+        secured.MapPost("/contract-drafts/{id:long}/start-signing", async (long id, StartCompanySigningRequest input, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.Start(id, input, Current(c), ct)));
+        secured.MapGet("/contract-drafts/{id:long}/print-pdf", async (long id, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
+        { var (pdf, name) = await signing.PrintPdf(id, Current(c), ct); return Results.File(pdf, "application/pdf", name); });
+        secured.MapGet("/company-signing/{id:long}/document", async (long id, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
+            Results.File(await signing.CompanyDocument(id, Current(c), ct), "application/pdf", $"contract-{id}.pdf"));
+        secured.MapPost("/company-signing/{id:long}/sign", async (long id, CompanySignatureRequest input, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.SignCompany(id, input, Current(c), ct)));
         secured.MapPost("/contract-drafts/{id:long}/versions", async (long id, NewVersionRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
             Results.Ok(await r.CreateVersion(id, input, Current(c), ct)));
         secured.MapPost("/contract-reviews/{id:long}/followup", async (long id, FollowupRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
@@ -320,7 +403,8 @@ public static class InternalHost
         secured.MapPost("/contract-reviews/{id:long}/resend-link", async (long id, ResendLinkRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
             Results.Ok(await r.ResendLink(id, input, Current(c), ct)));
         secured.MapPost("/customers/{id:long}/reset-temp-password", async (long id, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
-        { await r.ResetTemporaryPassword(id, Current(c), ct); return Results.NoContent(); });
+            Results.Ok(await r.ResetTemporaryPassword(id, Current(c), ct)));
+        ScanEndpoints.Map(api);
         CustomerPortalEndpoints.Map(app);
         await app.RunAsync();
     }
@@ -347,6 +431,11 @@ public static class InternalHost
 public sealed class StringLongConverter : JsonConverter<long>
 {
     public override long Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
-        reader.TokenType == JsonTokenType.String && long.TryParse(reader.GetString(), out var value) ? value : throw new JsonException("IDs must be strings.");
+        reader.TokenType switch
+        {
+            JsonTokenType.Number => reader.GetInt64(),
+            JsonTokenType.String when long.TryParse(reader.GetString(), out var value) => value,
+            _ => throw new JsonException("IDs must be numeric values or numeric strings.")
+        };
     public override void Write(Utf8JsonWriter writer, long value, JsonSerializerOptions options) => writer.WriteStringValue(value.ToString(System.Globalization.CultureInfo.InvariantCulture));
 }

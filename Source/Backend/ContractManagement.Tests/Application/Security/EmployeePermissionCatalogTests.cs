@@ -7,7 +7,9 @@ public sealed class EmployeePermissionCatalogTests
 {
     public static IEnumerable<object[]> ExactPermissionMappings =>
     [
-        [EmployeeType.Sale, Expected(RbacPermissions.CustomerManage)],
+        [EmployeeType.Sale, Expected(
+            RbacPermissions.CustomerManage,
+            RbacPermissions.ContractSigningInitiate)],
         [EmployeeType.Marketing, Expected(RbacPermissions.CustomerManage)],
         [EmployeeType.AdminOfficer, Expected(
             RbacPermissions.CatalogManage,
@@ -29,6 +31,8 @@ public sealed class EmployeePermissionCatalogTests
             RbacPermissions.ContractReadTenant,
             RbacPermissions.ContractExecutionRead,
             RbacPermissions.ContractSigningManage,
+            RbacPermissions.ContractSigningInitiate,
+            RbacPermissions.ContractElectronicSigningDirector,
             RbacPermissions.ContractAcceptanceManage,
             RbacPermissions.ContractPaymentManage,
             RbacPermissions.ContractComplete,
@@ -83,6 +87,19 @@ public sealed class EmployeePermissionCatalogTests
         Assert.Contains(
             RbacPermissions.CustomerManage,
             EmployeePermissionCatalog.GetPermissions(EmployeeType.Marketing));
+    }
+
+    [Fact]
+    public void SalesCanInitiateSigningButCannotManageDirectorSigning()
+    {
+        var sales = EmployeePermissionCatalog.GetPermissions(EmployeeType.Sale);
+
+        Assert.Contains(RbacPermissions.ContractSigningInitiate, sales);
+        Assert.DoesNotContain(RbacPermissions.ContractSigningManage, sales);
+        Assert.DoesNotContain(RbacPermissions.ContractElectronicSigningDirector, sales);
+        Assert.DoesNotContain(
+            RbacPermissions.ContractElectronicSigningDirector,
+            EmployeePermissionCatalog.GetPermissions(EmployeeType.Technical));
     }
 
     [Fact]

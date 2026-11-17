@@ -21,6 +21,7 @@ using ContractManagement.API.Domains.CustomerAccess;
 using ContractManagement.API.Domains.Notifications;
 using ContractManagement.API.Domains.Discussions;
 using ContractManagement.Infrastructure.MultiTenancy.Interfaces;
+using ContractManagement.Application.Features.Contracts.Signing;
 
 namespace ContractManagement.Domains.Services.Contract
 {
@@ -2645,13 +2646,22 @@ namespace ContractManagement.Domains.Services.Contract
                                 .Select(approval => (byte?)approval.Status)
                                 .FirstOrDefaultAsync();
 
+                            var wasRejectedBySigningDirector = await _dbContext
+                                .ContractSigningSessions
+                                .AsNoTracking()
+                                .AnyAsync(signing =>
+                                    signing.ContractId == contract.ContractId
+                                    && signing.VersionId == sourceVersion.VersionId
+                                    && signing.Status == (byte)ElectronicSigningStatus.DirectorRejected);
+
                             var canBranchFromApproval =
-                                previousContractStatus == ContractStatus.Rejected
+                                wasRejectedBySigningDirector
+                                    || (previousContractStatus == ContractStatus.Rejected
                                     ? latestApprovalStatus ==
                                         (byte)ApprovalRequestStatus.Rejected
                                     : latestApprovalStatus is
                                         (byte)ApprovalRequestStatus.Returned
-                                        or (byte)ApprovalRequestStatus.Withdrawn;
+                                        or (byte)ApprovalRequestStatus.Withdrawn);
                             if (!canBranchFromApproval)
                             {
                                 throw new InvalidOperationException(

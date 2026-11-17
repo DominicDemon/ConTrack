@@ -90,7 +90,7 @@ public sealed class TenantSeedData : ITenantSeedData
         }
         catch
         {
-            // Bỏ qua nếu database (ví dụ MasterDB) không có bảng tbl_AuthorizationAudit.
+            // Bỏ qua nếu database không có bảng tbl_AuthorizationAudit.
         }
     }
 

@@ -82,6 +82,7 @@ import { ContractAuditLog } from "@/components/contracts/contract-audit-log";
 import { TransferResponsibilityModal } from "@/components/contracts/transfer-responsibility-modal";
 import { ContractApprovalPanel } from "@/components/contracts/contract-approval-panel";
 import { ContractSigningPanel } from "@/components/contracts/contract-signing-panel";
+import { ElectronicSigningStartPanel } from "@/components/contracts/electronic-signing-start-panel";
 import { ContractSubmittedArtifactActions } from "@/components/contracts/contract-submitted-artifact-actions";
 import { ContractPaymentDueAnchor } from "@/services/contract-completion-api";
 
@@ -797,6 +798,10 @@ export default function ContractDetailPage() {
     user?.permissions,
     RBAC_PERMISSIONS.contractSigningManage,
   );
+  const canInitiateElectronicSigning = hasPermission(
+    user?.permissions,
+    RBAC_PERMISSIONS.contractSigningInitiate,
+  );
   const canManageAcceptance = hasPermission(
     user?.permissions,
     RBAC_PERMISSIONS.contractAcceptanceManage,
@@ -1302,6 +1307,14 @@ export default function ContractDetailPage() {
           )}
 
           <TabsContent value="signature">
+            <ElectronicSigningStartPanel
+              contractId={contract.contractId}
+              versionId={contract.currentVersion.versionId}
+              versionLocked={contract.currentVersion.isLocked}
+              canInitiate={canInitiateElectronicSigning}
+              customerName={contract.customer.customerFullName || contract.customer.customerCompany || ""}
+              customerPhone={contract.customer.customerMobile || ""}
+            />
             <ContractSigningPanel
               contract={contract}
               canManageSigning={canManageSigning}

@@ -39,6 +39,10 @@ export interface TicketMessageDto {
   ticketMessageType: string;
   ticketMessageAttachmentUrl?: string | null;
   ticketMessageAttachmentName?: string | null;
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  attachmentUrls?: string[];
+  attachmentNames?: string[];
   createdAt: string;
 }
 
@@ -94,6 +98,10 @@ export interface TicketDto {
   viewerRole?: "DEPARTMENT_HEAD" | "STAFF" | "CUSTOMER" | "SYSADMIN" | string | null;
   viewerEmployeeId?: number | null;
   viewerDepartmentId?: number | null;
+  attachmentUrl?: string | null;
+  attachmentName?: string | null;
+  attachmentUrls?: string[];
+  attachmentNames?: string[];
   assignments?: TicketEmployeeAssignmentDto[];
   messages?: TicketMessageDto[];
 }
@@ -101,6 +109,10 @@ export interface TicketDto {
 export interface ReplyTicketRequestDto {
   messageContent: string;
   isInternalNote?: boolean;
+  attachmentName?: string;
+  attachmentUrl?: string;
+  attachmentNames?: string[];
+  attachmentUrls?: string[];
 }
 
 export interface UpdateTicketStatusRequestDto {

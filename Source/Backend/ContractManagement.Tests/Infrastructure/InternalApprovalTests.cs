@@ -138,6 +138,12 @@ public class InternalApprovalTests
         var resent = await reviews.SendReview(draft.Id, new(null, request.RowVersion, request.VersionRowVersion, true, DateTimeOffset.UtcNow.AddDays(1)), sale, default);
         Assert.Equal("SENT", resent.Status);
         Assert.Equal(2, mailbox.Messages.Count);
+        var currentCustomerView = await portal.Review(content.CustomerId, resent.Id, default);
+        await portal.Respond(content.CustomerId, resent.Id, new("APPROVE", null, currentCustomerView.DocumentHash, currentCustomerView.RowVersion), null, null, default);
+        var finalCheck = await reviews.InternalApproval(draft.Id, director, default);
+        Assert.NotNull(finalCheck);
+        Assert.Equal(0, finalCheck.Status);
+        Assert.Contains((await progress.List(new(Search: draft.Code, Stage: "FINAL_CHECK", Mine: true), director, default)).Items, row => row.Id == draft.Id);
         Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => reviews.SendReview(draft.Id, new(null, request.RowVersion, request.VersionRowVersion, true, DateTimeOffset.UtcNow.AddDays(1)), sale, default))).Status);
         Assert.Equal(2, mailbox.Messages.Count);
     }

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using ContractManagement.Domain.Entities.Master;
 using Microsoft.EntityFrameworkCore;
@@ -21,6 +21,8 @@ public partial class MasterDbContext : DbContext
     public virtual DbSet<Category> Categories { get; set; }
 
     public virtual DbSet<ContractAccessLink> ContractAccessLinks { get; set; }
+
+    public virtual DbSet<ContractCustomerOtpChallenge> ContractCustomerOtpChallenges { get; set; }
 
     public virtual DbSet<ContractApprovalRequest> ContractApprovalRequests { get; set; }
 
@@ -277,6 +279,25 @@ public partial class MasterDbContext : DbContext
                 .IsConcurrencyToken()
                 .HasColumnName("rowversion");
             entity.Property(e => e.TenantId).HasColumnName("tenant_id");
+        });
+
+        modelBuilder.Entity<ContractCustomerOtpChallenge>(entity =>
+        {
+            entity.ToTable("CONTRACT_CUSTOMER_OTP_CHALLENGE");
+            entity.HasKey(e => e.ContractCustomerOtpChallengeId);
+            entity.HasIndex(e => e.PublicChallengeId).IsUnique();
+            entity.HasIndex(e => new { e.ContractAccessLinkId, e.CreatedAt });
+            entity.Property(e => e.ContractCustomerOtpChallengeId).HasColumnName("contract_customer_otp_challenge_id");
+            entity.Property(e => e.ContractAccessLinkId).HasColumnName("contract_access_link_id");
+            entity.Property(e => e.ContractElectronicSignatureId).HasColumnName("contract_electronic_signature_id");
+            entity.Property(e => e.PublicChallengeId).HasMaxLength(64).IsUnicode(false).HasColumnName("public_challenge_id");
+            entity.Property(e => e.ProtectedOtp).HasMaxLength(512).IsUnicode(false).HasColumnName("protected_otp");
+            entity.Property(e => e.ExpiresAt).HasColumnName("expires_at");
+            entity.Property(e => e.FailedAttemptCount).HasColumnName("failed_attempt_count");
+            entity.Property(e => e.VerifiedAt).HasColumnName("verified_at");
+            entity.Property(e => e.UsedAt).HasColumnName("used_at");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())").HasColumnName("created_at");
+            entity.Property(e => e.Rowversion).IsRowVersion().IsConcurrencyToken().HasColumnName("rowversion");
         });
 
         modelBuilder.Entity<ContractApprovalRequest>(entity =>
@@ -567,6 +588,10 @@ public partial class MasterDbContext : DbContext
                 .HasColumnName("contract_negotiation_comment_source");
             entity.Property(e => e.ContractNegotiationCommentState).HasColumnName("contract_negotiation_comment_state");
             entity.Property(e => e.ContractNegotiationCommentTermid).HasColumnName("contract_negotiation_comment_termid");
+            entity.Property(e => e.ContractNegotiationCommentSection)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasColumnName("contract_negotiation_comment_section");
             entity.Property(e => e.ContractVersionId).HasColumnName("contract_version_id");
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("(sysutcdatetime())")
@@ -2233,6 +2258,11 @@ public partial class MasterDbContext : DbContext
             entity.HasIndex(x => x.TemplateId).IsUnique().HasFilter("[version_id] IS NULL");
             entity.HasIndex(x => x.VersionId).IsUnique().HasFilter("[version_id] IS NOT NULL");
         });
+        // DDL defines a NOT NULL unique pair, but no physical primary key.
+        // Use that existing uniqueness for EF tracking without changing the database.
+        modelBuilder.Entity<EmployeeDepartment>()
+            .HasKey(x => new { x.EmployeeId, x.DepartmentId });
+
         OnModelCreatingPartial(modelBuilder);
     }
 

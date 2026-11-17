@@ -56,12 +56,12 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
             if (stage == "DRAFT") entered = version.ContractVersionVersionNo > 1 || doc.ContractDocumentCode?.StartsWith("HD-") == true ? version.ContractVersionCreatedDate : null;
             if (review is not null && version.ContractVersionIslocked)
             {
-                stage = review.ContractReviewRequestStatus switch { "SENT" or "VIEWED" => "CUSTOMER", "CHANGES_REQUESTED" or "REJECTED" => "CHANGES", "APPROVED" => "SIGNATURE", _ => stage };
+                stage = review.ContractReviewRequestStatus switch { "SENT" or "VIEWED" => "CUSTOMER", "CHANGES_REQUESTED" or "REJECTED" => "CHANGES", "APPROVED" => doc.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? "FINAL_CHECK" : "SIGNATURE", _ => stage };
                 entered = stage == "CUSTOMER" ? review.SentAt : review.RespondedAt;
             }
             if (doc.ContractDocumentStatus is 4 or 5 or 6) { stage = "CLOSED"; entered = null; }
-            var department = stage switch { "OFFICE" or "RETURNED" => "Hành chính", "DIRECTOR" => "Sếp", "CUSTOMER" => "Khách hàng", "SIGNATURE" => "Các bên ký", "CLOSED" => "Đã đóng", _ => "Sale" };
-            var mine = stage switch { "OFFICE" or "RETURNED" => actor.CanCheck, "DIRECTOR" => actor.CanApprove, "DRAFT" or "APPROVED" or "CHANGES" => actor.CanWrite && doc.EmployeeId == actor.Id, _ => false };
+            var department = stage switch { "OFFICE" or "RETURNED" => "Hành chính", "DIRECTOR" or "FINAL_CHECK" => "Sếp", "CUSTOMER" => "Khách hàng", "SIGNATURE" => "Các bên ký", "CLOSED" => "Đã đóng", _ => "Sale" };
+            var mine = stage switch { "OFFICE" or "RETURNED" => actor.CanCheck, "DIRECTOR" or "FINAL_CHECK" => actor.CanApprove, "DRAFT" or "APPROVED" or "CHANGES" => actor.CanWrite && doc.EmployeeId == actor.Id, _ => false };
             if (filter.Mine && !mine || filter.WaitingDays.HasValue && (entered is null || now - entered < TimeSpan.FromDays(filter.WaitingDays.Value))) continue;
             var config = checklists.GetValueOrDefault(version.ContractVersionId);
             var configured = config?.Configured ?? false;

@@ -307,10 +307,11 @@ public class ContractReviewTests
             Assert.Equal(1000000 * 0.95m * 1.1m, view2.Content.Totals.Total);
             var approved = await portal.Respond(customerA.Id, second.Id, new("APPROVE", null, view2.DocumentHash, view2.RowVersion), null, null, default);
             Assert.Equal(ContractReviewStatus.Approved, approved.Status);
-            var approval = await db.ContractApprovalRequests.SingleAsync(a => a.ContractDocumentId == draft.Id && a.ContractVersionId == second.VersionId);
+            var approval = await db.ContractApprovalRequests.SingleAsync(a => a.ContractDocumentId == draft.Id && a.ContractVersionId == second.VersionId && a.InternalStage == "APPROVED");
             Assert.Equal("APPROVED", approval.InternalStage); Assert.Equal(saleId, approval.SubmittedByEmployeeId);
-            Assert.Equal(3, (await drafts.Get(draft.Id, sale, default)).Status);
-            Assert.Contains(await repo.Drafts(null, null, 3, default), d => d.Id == draft.Id);
+            Assert.True(await db.ContractApprovalRequests.AnyAsync(a => a.ContractDocumentId == draft.Id && a.ContractReviewRequestId == second.Id && a.InternalStage == null && a.ContractApprovalRequestStatus == 0));
+            Assert.Equal(2, (await drafts.Get(draft.Id, sale, default)).Status);
+            Assert.Contains(await repo.Drafts(null, null, 2, default), d => d.Id == draft.Id);
             var approvedNotice = await db.Notifications.SingleAsync(n => n.NotificationEventkey == $"review:{second.Id}:APPROVED");
             Assert.True(await db.NotificationRecipients.AnyAsync(r => r.NotificationId == approvedNotice.NotificationId && r.EmployeeId == officeId));
 

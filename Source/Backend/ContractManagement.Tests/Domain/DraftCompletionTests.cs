@@ -26,6 +26,17 @@ public class DraftCompletionTests
         c.PaymentMode="AMOUNT"; c.Milestones=[new("1","Một","PAY",Amount:100)];
         InternalDraftPolicy.Prepare(c,Template); Assert.NotEmpty(c.MissingFields);
     }
+    [Fact] public void FixedTitleOnlyTermIsCompleteButEditableEmptyTermIsMissing()
+    {
+        // A Word section such as the signature heading has a title and no text; the sale cannot edit it, so it must not block sending.
+        var t = Template with { Terms = [.. Template.Terms, new("WORD_9", "ĐẠI DIỆN BÊN A ĐẠI DIỆN BÊN B", "", false)] };
+        var c = Draft(); c.Terms = t.Terms.ToList(); c.Milestones = [new("1","Một","PAY",100)];
+        InternalDraftPolicy.Prepare(c, t);
+        Assert.Empty(c.MissingFields);
+        c.Terms = [.. t.Terms, new("EXTRA", "Bổ sung", "")];
+        InternalDraftPolicy.Prepare(c, t);
+        Assert.Contains("Nội dung điều khoản", c.MissingFields);
+    }
     [Theory] [InlineData("N","11")] [InlineData("N","abc")] [InlineData("D","2026-02-30")] [InlineData("S","C")]
     public void TypedFieldsRejectInvalidValues(string key,string value) { var c=Draft();c.Fields[key]=value;Assert.Throws<ArgumentException>(()=>InternalDraftPolicy.Prepare(c,Template)); }
     [Fact] public void TemplateRejectsUnknownPlaceholderAndCoreShadowing()

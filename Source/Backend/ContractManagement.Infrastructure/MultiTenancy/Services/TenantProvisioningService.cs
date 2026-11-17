@@ -56,7 +56,7 @@ public sealed class TenantProvisioningService
                 tenant.TenantId,
                 tenant.TenantCode,
                 tenant.TenantName,
-                tenant.TenantDatabase?.DatabaseName ?? "MasterDB",
+                tenant.TenantDatabase?.DatabaseName ?? GetSharedDatabaseName(),
                 tenant.TenantDatabase?.Mode ?? TenantDatabaseMode.Shared,
                 tenant.Status))
             .ToList();
@@ -181,8 +181,12 @@ public sealed class TenantProvisioningService
                 cancellationToken);
 
             var sharedConnectionString =
-                _configuration.GetConnectionString("DefaultConnection")
-                ?? _configuration.GetConnectionString("CentralDatabase");
+                _configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrWhiteSpace(sharedConnectionString))
+            {
+                sharedConnectionString =
+                    _configuration.GetConnectionString("CentralDatabase");
+            }
             if (!string.IsNullOrWhiteSpace(sharedConnectionString)
                 && !string.Equals(sharedConnectionString, connectionString, StringComparison.OrdinalIgnoreCase))
             {
@@ -199,7 +203,7 @@ public sealed class TenantProvisioningService
                 {
                     _logger.LogWarning(
                         seedSharedEx,
-                        "Đồng bộ tài khoản InitialManager vào MasterDB cho tenant {TenantCode} bị bỏ qua.",
+                        "Đồng bộ tài khoản InitialManager vào shared database cho tenant {TenantCode} bị bỏ qua.",
                         tenantCode);
                 }
             }
@@ -300,6 +304,23 @@ public sealed class TenantProvisioningService
             };
 
         return connectionStringBuilder.ConnectionString;
+    }
+
+    private string GetSharedDatabaseName()
+    {
+        var connectionString = _configuration.GetConnectionString("DefaultConnection");
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            connectionString = _configuration.GetConnectionString("CentralDatabase");
+        }
+
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "ConnectionStrings:DefaultConnection or CentralDatabase must be configured.");
+        }
+
+        return new SqlConnectionStringBuilder(connectionString).InitialCatalog;
     }
 
     private static string Truncate(

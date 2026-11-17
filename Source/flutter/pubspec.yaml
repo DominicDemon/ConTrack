@@ -39,6 +39,12 @@ dependencies:
   http: ^1.6.0
   flutter_dotenv: ^6.0.1
   shared_preferences: ^2.5.5
+  cunning_document_scanner: ^3.0.4
+  file_picker: ^13.2.0
+  pdf: ^3.13.1
+  image: ^4.12.0
+  http_parser: ^4.1.2
+  cross_file: ^0.3.5+5
 
 dev_dependencies:
   flutter_test:

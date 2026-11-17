@@ -52,7 +52,8 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
   const [confirmed, setConfirmed] = useState(false);
   const [active, setActive] = useState("");
   const inputs = useRef<Record<string, HTMLTextAreaElement | null>>({});
-  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+  const previewUrl = preview?.url;
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
   function invalidate() { setPreviewCurrent(false); setConfirmed(false); setError(""); }
   async function extract(file?: File) {
     if (!file) return;
@@ -72,15 +73,7 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
       const result = await internalApi<Extraction>("/contract-templates/word/extract", "POST", original);
       setSource(original); setExtraction(result); setName(result.name); setBlocks(result.blocks);
       setActive("");
-
-      const type = /ĐNTT/i.test(file.name) ? 5 : /BienBan|Biên bản/i.test(file.name) ? 3 : /PLHD|PLHĐ/i.test(file.name) ? 2 : 1;
-      setDocumentType(type);
-      const pdf = await internalApi<{ pdfBase64: string; previewToken: string }>("/contract-templates/word/preview", "POST", {
-        ...original, documentBase64: result.documentBase64, sourceToken: result.sourceToken,
-        name: result.name, documentType: type, blocks: result.blocks.map(({ images, ...block }) => { void images; return block; }), fields: [], sampleValues: {}, manualContent: true, tables: [], additions: [],
-      });
-      setPreview({ url: URL.createObjectURL(wordBlob(pdf.pdfBase64, "application/pdf")), token: pdf.previewToken });
-      setPreviewCurrent(true);
+      setDocumentType(/ĐNTT/i.test(file.name) ? 5 : /BienBan|Biên bản/i.test(file.name) ? 3 : /PLHD|PLHĐ/i.test(file.name) ? 2 : 1);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   function payload() {
@@ -133,7 +126,7 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
     invalidate();
     input?.focus();
   }
-  const headings = blocks.filter(b => b.tableId == null && /^(Điều\s+\d|Phụ lục|HỢP ĐỒNG|BIÊN BẢN)/i.test(b.text.trim()));
+  const headings = blocks.filter(b => b.heading && b.text.trim());
   function addTable() {
     if (!activeBlock || !activeBlock.location.startsWith("Nội dung")) return;
     // Insert after the whole existing table when an original table cell is selected.
@@ -220,11 +213,10 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
   </section>;
   const previewPane = <section className={styles.pane} aria-label="Khung xem trước">
     <div className={styles.toolbar}><strong>Bản in từ Word</strong>
-      <Button type="button" variant="outline" disabled={!extraction || busy} onClick={() => void render()}>Cập nhật bản xem trước</Button>
-      <p className={styles.selection} role="status">{busy ? "Đang dựng bản xem trước…" : previewCurrent ? "Đã cập nhật theo nội dung bên trái." : preview ? "Nội dung đã thay đổi. Bấm cập nhật để xem bản mới trước khi kích hoạt." : "Bố cục, ảnh và đường viền được lấy từ file Word."}</p>
+      <p className={styles.selection} role="status">{(extraction && !previewCurrent && !error) ? "Đang cập nhật bản in theo nội dung bên trái…" : previewCurrent ? "Đã cập nhật theo nội dung bên trái." : "Bố cục, ảnh và đường viền được lấy từ file Word."}</p>
     </div>
     <div className={styles.scroll}>
-      {preview ? <><a href={preview.url} target="_blank" rel="noreferrer">Mở PDF</a><WordPdfViewer key={preview.url} url={preview.url}/></> : <p className={styles.empty}>{busy ? "Đang chuyển Word sang bản xem trước…" : extraction ? "Chưa dựng được bản xem trước. Bấm cập nhật để thử lại." : "Chọn file Word để xem bản in tại đây."}</p>}
+      {preview ? <><a href={preview.url} target="_blank" rel="noreferrer">Mở PDF</a><WordPdfViewer key={preview.url} url={preview.url}/></> : <p className={styles.empty}>{busy ? "Đang chuyển Word sang bản xem trước…" : extraction ? "Chưa dựng được bản xem trước. Sửa nội dung để thử lại." : "Chọn file Word để xem bản in tại đây."}</p>}
     </div>
   </section>;
   return <>

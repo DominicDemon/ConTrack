@@ -38,6 +38,9 @@ public sealed class SupportTicketDto
     public int? ViewerEmployeeId { get; set; }
     public int? ViewerDepartmentId { get; set; }
 
+    public List<string> AttachmentUrls { get; set; } = [];
+    public List<string> AttachmentNames { get; set; } = [];
+
     public List<TicketEmployeeAssignmentDto> Assignments { get; set; } = [];
     public List<SupportTicketMessageDto> Messages { get; set; } = [];
 }
@@ -87,8 +90,10 @@ public sealed class SupportTicketMessageDto
     public string TicketMessageType { get; set; } = "TEXT";
     public string? TicketMessageAttachmentUrl { get; set; }
     public string? TicketMessageAttachmentName { get; set; }
-    public string? AttachmentUrl => TicketMessageAttachmentUrl;
-    public string? AttachmentName => TicketMessageAttachmentName;
+    public List<string> AttachmentUrls { get; set; } = [];
+    public List<string> AttachmentNames { get; set; } = [];
+    public string? AttachmentUrl => TicketMessageAttachmentUrl ?? AttachmentUrls.FirstOrDefault();
+    public string? AttachmentName => TicketMessageAttachmentName ?? AttachmentNames.FirstOrDefault();
     public DateTime CreatedAt { get; set; }
 }
 
@@ -107,6 +112,22 @@ public sealed class AdminNotificationDto
     public string Department { get; set; } = "KỸ THUẬT";
     public int? TargetEmployeeId { get; set; }
     public string ActionKey { get; set; } = "new-ticket";
+    public DateTime CreatedAtUtc { get; set; }
+    public DateTime? ReadAtUtc { get; set; }
+}
+
+public sealed class CustomerNotificationDto
+{
+    public int NotificationId { get; set; }
+    public int CustomerId { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string Body { get; set; } = string.Empty;
+    public string SubjectType { get; set; } = "SupportTicket";
+    public int SubjectId { get; set; }
+    public string TicketCode { get; set; } = string.Empty;
+    public string Department { get; set; } = string.Empty;
+    public string Priority { get; set; } = "Medium";
+    public string ActionKey { get; set; } = "ticket-resolved";
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? ReadAtUtc { get; set; }
 }
@@ -159,13 +180,19 @@ public sealed class CustomerReplyTicketRequestDto
     public string? MessageContent { get; set; }
     public string? AttachmentName { get; set; }
     public string? AttachmentUrl { get; set; }
+    public List<string>? AttachmentNames { get; set; }
+    public List<string>? AttachmentUrls { get; set; }
     public string? AttachmentType { get; set; }
 }
 
 public sealed class AdminReplyTicketRequestDto
 {
-    public string MessageContent { get; set; } = string.Empty;
+    public string? MessageContent { get; set; }
     public bool? IsInternalNote { get; set; }
+    public string? AttachmentName { get; set; }
+    public string? AttachmentUrl { get; set; }
+    public List<string>? AttachmentNames { get; set; }
+    public List<string>? AttachmentUrls { get; set; }
 }
 
 public sealed class UpdateTicketStatusRequestDto

@@ -39,6 +39,7 @@ using ContractManagement.Middleware.MultiTenancy;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.HttpOverrides;
 using ContractManagement.API.Helpers;
+using ContractManagement.API.Filters;
 using ContractManagement.API.Domains.CustomerAccess;
 using ContractManagement.API.Domains.Notifications;
 using ContractManagement.API.Domains.Discussions;
@@ -47,6 +48,8 @@ using ContractManagement.API.Domains.Email;
 using ContractManagement.API.Domains.Recovery;
 using ContractManagement.API.Domains.Support;
 using ContractManagement.Infrastructure.Persistence.Master;
+using ContractManagement.Application.Features.Contracts.Signing;
+using ContractManagement.Application.Features.Internal;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -139,6 +142,9 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddContractManagementInfrastructure(
     builder.Configuration);
 builder.Services.AddMasterDatabase(builder.Configuration);
+builder.Services.AddSingleton(new InternalTemplateStorage(InternalTemplateStorage.ResolveRoot(
+    builder.Configuration["InternalStorage:Root"], builder.Environment.ContentRootPath, AppContext.BaseDirectory)));
+builder.Services.AddScoped<IInternalRepository, InternalRepository>();
 
 builder.Services.AddOptions<SmtpEmailOptions>()
     .Bind(builder.Configuration.GetSection(SmtpEmailOptions.SectionName))
@@ -172,12 +178,34 @@ builder.Services.AddOptions<CustomerOtpOptions>()
         ? builder.Configuration.GetSection(SmtpEmailOptions.SectionName).Get<SmtpEmailOptions>()?.IsConfigured() == true
         : string.Equals(options.Provider, "Fake", StringComparison.OrdinalIgnoreCase)
             ? builder.Environment.IsDevelopment()
-            : string.Equals(options.Provider, "Http", StringComparison.OrdinalIgnoreCase)
+            : string.Equals(options.Provider, "GsmModem", StringComparison.OrdinalIgnoreCase)
+                ? builder.Configuration.GetSection(GsmModemConfiguration.SectionName)
+                    .Get<GsmModemConfiguration>()?.IsValid == true
+                : string.Equals(options.Provider, "Http", StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(options.ProviderEndpoint)
                 && !string.IsNullOrWhiteSpace(options.ProviderApiKey),
-        "CustomerOtp:Provider must be Fake (Development only), Http (endpoint/API key required), or Smtp (host, port 587, username, app password, from address and timeout 1-45 seconds required).")
+        "CustomerOtp:Provider must be Fake (Development only), GsmModem (valid physical modem configuration), Http (endpoint/API key required), or Smtp (valid SMTP configuration).")
     .ValidateOnStart();
 builder.Services.AddSingleton<CustomerAccessCryptography>();
+
+builder.Services.AddOptions<GsmModemConfiguration>()
+    .Bind(builder.Configuration.GetSection(GsmModemConfiguration.SectionName))
+    .Validate(options => !builder.Configuration.GetValue<bool>("ElectronicSigning:Enabled")
+        && !string.Equals(builder.Configuration["CustomerOtp:Provider"], "GsmModem", StringComparison.OrdinalIgnoreCase)
+        || options.IsValid,
+        "GsmModem requires a port name, a supported baud rate, and a command timeout from 3 to 60 seconds.")
+    .ValidateOnStart();
+builder.Services.AddOptions<ElectronicSigningFeatureOptions>()
+    .Bind(builder.Configuration.GetSection(ElectronicSigningFeatureOptions.SectionName))
+    .Validate(options => !options.Enabled
+        || builder.Configuration.GetSection(GsmModemConfiguration.SectionName)
+            .Get<GsmModemConfiguration>()?.IsValid == true,
+        "ElectronicSigning.Enabled requires a configured physical GSM modem.")
+    .ValidateOnStart();
+builder.Services.AddScoped<ElectronicSigningEnabledFilter>();
+builder.Services.AddSingleton<GsmModemCustomerOtpDeliveryProvider>();
+builder.Services.AddSingleton<IGsmModemSmsProvider>(serviceProvider =>
+    serviceProvider.GetRequiredService<GsmModemCustomerOtpDeliveryProvider>());
 
 var otpProvider = builder.Configuration["CustomerOtp:Provider"] ?? "Fake";
 if (string.Equals(otpProvider, "Smtp", StringComparison.OrdinalIgnoreCase))
@@ -187,6 +215,11 @@ if (string.Equals(otpProvider, "Smtp", StringComparison.OrdinalIgnoreCase))
 else if (string.Equals(otpProvider, "Fake", StringComparison.OrdinalIgnoreCase))
 {
     builder.Services.AddSingleton<ICustomerOtpDeliveryProvider, FakeCustomerOtpDeliveryProvider>();
+}
+else if (string.Equals(otpProvider, "GsmModem", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddSingleton<ICustomerOtpDeliveryProvider>(serviceProvider =>
+        serviceProvider.GetRequiredService<GsmModemCustomerOtpDeliveryProvider>());
 }
 else
 {
@@ -415,6 +448,9 @@ builder.Services.AddScoped<
     IContractSigningService,
     ContractSigningService>();
 builder.Services.AddScoped<
+    IElectronicSigningService,
+    ElectronicSigningService>();
+builder.Services.AddScoped<
     IContractCompletionService,
     ContractCompletionService>();
 builder.Services.AddScoped<IContractHandoverService, ContractHandoverService>();
@@ -470,6 +506,8 @@ builder.Services.AddOptions<TemplatePdfRenderingOptions>()
 
 builder.Services.AddSingleton<IContractTemplatePdfRenderer,
     LibreOfficeContractTemplatePdfRenderer>();
+builder.Services.AddScoped<IElectronicSigningPdfService,
+    ContractManagement.Infrastructure.Files.ElectronicSigningPdfService>();
 
 builder.Services.AddScoped<
     IContractTemplateService,

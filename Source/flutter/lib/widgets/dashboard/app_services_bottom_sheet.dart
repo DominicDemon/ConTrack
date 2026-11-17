@@ -345,6 +345,18 @@ class __AppServicesBottomSheetContentState
                       ),
                       _buildItem(
                         context,
+                        id: 'signed_scans',
+                        title: 'Bản ký giấy',
+                        icon: Icons.document_scanner_outlined,
+                        color: primaryColor,
+                        bgColor: onPrimaryColor,
+                        onTapNormal: () {
+                          Navigator.of(context).pop();
+                          Navigator.of(context).pushNamed('/scans/login');
+                        },
+                      ),
+                      _buildItem(
+                        context,
                         id: 'support_tickets',
                         title: 'Hỗ trợ Ticket',
                         icon: Icons.support_agent_rounded,

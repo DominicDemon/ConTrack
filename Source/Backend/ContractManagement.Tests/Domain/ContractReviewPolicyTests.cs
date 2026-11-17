@@ -46,6 +46,9 @@ public class ContractReviewPolicyTests
         Assert.Throws<ArgumentException>(() => ContractReviewPolicy.Respond(S.Sent, "REQUEST_CHANGES", " "));
         Assert.Throws<ArgumentException>(() => ContractReviewPolicy.Respond(S.Sent, "REJECT", null));
         Assert.Throws<ArgumentException>(() => ContractReviewPolicy.Respond(S.Sent, "MAYBE", "x"));
+        // Comments by section are the change request themselves; a rejection still needs its reason.
+        Assert.Equal((S.ChangesRequested, D.Negotiating), ContractReviewPolicy.Respond(S.Sent, "REQUEST_CHANGES", null, hasComments: true));
+        Assert.Throws<ArgumentException>(() => ContractReviewPolicy.Respond(S.Sent, "REJECT", null, hasComments: true));
     }
 
     [Theory]

@@ -27,4 +27,7 @@ SELECT @workflow, v.step_order, v.name, r.system_role_id, 1
 FROM (VALUES (1,N'Hành chính kiểm tra','INTERNAL_LEGAL'),(2,N'Sếp duyệt','INTERNAL_ADMIN')) v(step_order,name,role_code)
 JOIN SYSTEM_ROLE r ON r.system_role_code=v.role_code
 WHERE NOT EXISTS (SELECT 1 FROM APPROVAL_WORKFLOW_STEP s WHERE s.approval_workflow_id=@workflow AND s.approval_workflow_step_order=v.step_order);
+IF NOT EXISTS (SELECT 1 FROM APPROVAL_WORKFLOW WHERE approval_workflow_code='CONTRACT_INTERNAL_CHECK')
+    INSERT APPROVAL_WORKFLOW(approval_workflow_code,approval_workflow_name,approval_workflow_objecttype,approval_workflow_isactive,approval_workflow_createdat)
+    VALUES ('CONTRACT_INTERNAL_CHECK', N'Quản lý duyệt bản chốt trước khi ký','CONTRACT',1,@now);
 COMMIT;

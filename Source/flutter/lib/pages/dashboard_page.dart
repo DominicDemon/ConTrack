@@ -154,6 +154,14 @@ class _DashboardPageState extends State<DashboardPage> {
         bgColor: onPrimaryColor,
         onTap: () {},
       ),
+      'signed_scans': QuickActionData(
+        id: 'signed_scans',
+        title: "Bản ký giấy",
+        icon: Icons.document_scanner_outlined,
+        color: primaryColor,
+        bgColor: onPrimaryColor,
+        onTap: () => Navigator.of(context).pushNamed('/scans/login'),
+      ),
       'support_tickets': QuickActionData(
         id: 'support_tickets',
         title: "Hỗ trợ Ticket",

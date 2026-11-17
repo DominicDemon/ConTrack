@@ -16,8 +16,8 @@ public class MasterDatabaseTests
         using var db = new MasterDbContext(new DbContextOptionsBuilder<MasterDbContext>()
             .UseSqlServer("Server=unused;Database=unused;Integrated Security=True").Options);
         var entities = db.Model.GetEntityTypes().ToList();
-        Assert.Equal(65, entities.Count);
-        Assert.Equal(741, entities.Sum(entity => entity.GetProperties().Count()));
+        Assert.Equal(73, entities.Count);
+        Assert.Equal(833, entities.Sum(entity => entity.GetProperties().Count()));
         Assert.All(entities, entity => Assert.NotNull(entity.FindPrimaryKey()));
         Assert.Empty(entities.SelectMany(entity => entity.GetForeignKeys()));
         Assert.Equal(new[] { "EmployeeId", "DepartmentId" },
@@ -59,7 +59,7 @@ public class MasterDatabaseTests
             var table = StoreObjectIdentifier.Table(entity.GetTableName()!, entity.GetSchema());
             return entity.GetProperties().Select(property => $"{table.Name}.{property.GetColumnName(table)}");
         }).ToHashSet(StringComparer.Ordinal);
-        Assert.Equal(741, columns.Count);
+        Assert.Equal(833, columns.Count);
         Assert.True(columns.SetEquals(mapped), "EF mappings must match all live table and column names.");
 
         // Every SELECT is compiled and executed by SQL Server, including column types.

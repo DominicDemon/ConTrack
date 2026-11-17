@@ -9,7 +9,15 @@ using Microsoft.Extensions.Options;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
-public sealed class ContractReviewRepository(MasterDbContext db, IInternalRepository drafts, SmsOutboxWriter sms, ReviewLinkMailer mailer, IConfiguration config, InternalApprovalService approval) : IContractReviewRepository
+public sealed class ContractReviewRepository(
+    MasterDbContext db,
+    IInternalRepository drafts,
+    SmsOutboxWriter sms,
+    ReviewLinkMailer mailer,
+    IConfiguration config,
+    InternalApprovalService approval,
+    IOptions<EsmsOptions>? smsOptions = null,
+    IHostEnvironment? environment = null) : IContractReviewRepository
 {
     public const string InternalCheckWorkflow = "CONTRACT_INTERNAL_CHECK";
     private string PortalUrl => config["CustomerPortal:BaseUrl"] ?? "http://localhost:3000/portal";
@@ -120,6 +128,87 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
         return await Summaries(documentId, ct);
     }
 
+    public async Task<List<DraftVersionHistoryItem>> VersionHistory(long documentId, InternalUser actor, CancellationToken ct)
+    {
+        var doc = await OwnedDocument(documentId, actor, ct);
+        var currentVersionId = doc.ContractDocumentCurrentVersionId;
+        return await db.ContractVersions.AsNoTracking()
+            .Where(v => v.ContractDocumentId == documentId)
+            .OrderByDescending(v => v.ContractVersionVersionNo)
+            .Select(v => new DraftVersionHistoryItem(v.ContractVersionId, v.ContractVersionVersionNo,
+                ContractVersionNotes.Display(v.ContractVersionChangenote), v.ContractVersionCreatedDate, v.ContractVersionId == currentVersionId,
+                v.ContractVersionIslocked, v.ContractVersionSnapshothash))
+            .ToListAsync(ct);
+    }
+
+    public async Task<InternalApprovalState?> InternalApproval(long documentId, InternalUser actor, CancellationToken ct)
+    {
+        await OwnedDocument(documentId, actor, ct);
+        var request = await db.ContractApprovalRequests.AsNoTracking()
+            .Where(x => x.ContractDocumentId == documentId && x.InternalStage == null && x.ContractReviewRequestId != null)
+            .OrderByDescending(x => x.ContractApprovalRequestId)
+            .Select(x => new { x.ContractApprovalRequestId, x.ContractApprovalRequestStatus, x.SubmittedAt,
+                x.ContractApprovalRequestDecisioncomment, x.ApprovalWorkflowId })
+            .FirstOrDefaultAsync(ct);
+        if (request is null) return null;
+        var workflowName = await db.ApprovalWorkflows.AsNoTracking()
+            .Where(x => x.ApprovalWorkflowId == request.ApprovalWorkflowId)
+            .Select(x => x.ApprovalWorkflowName).FirstOrDefaultAsync(ct) ?? "Kiá»ƒm tra ná»™i bá»™";
+        var currentVersionId = await db.ContractDocuments.AsNoTracking().Where(d => d.ContractDocumentId == documentId)
+            .Select(d => d.ContractDocumentCurrentVersionId).SingleAsync(ct);
+        var signingStarted = currentVersionId.HasValue && await db.ContractElectronicSignatures.AsNoTracking()
+            .AnyAsync(x => x.ContractDocumentId == documentId && x.ContractVersionId == currentVersionId.Value, ct);
+        return new(request.ContractApprovalRequestId, request.ContractApprovalRequestStatus, request.SubmittedAt, workflowName,
+            request.ContractApprovalRequestDecisioncomment, signingStarted);
+    }
+
+    public Task<InternalApprovalState> ResolveInternalApproval(long documentId, InternalApprovalDecisionRequest request, InternalUser actor, CancellationToken ct) =>
+        ReviewData.InTransaction(db, async () =>
+        {
+            if (!actor.CanApprove) throw new InternalAppException(403, "Bạn không có quyền duyệt bản chốt.");
+            var doc = await OwnedDocument(documentId, actor, ct);
+            var approval = await db.ContractApprovalRequests
+                .Where(x => x.ContractDocumentId == documentId && x.InternalStage == null && x.ContractReviewRequestId != null)
+                .OrderByDescending(x => x.ContractApprovalRequestId)
+                .FirstOrDefaultAsync(ct) ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y yÃªu cáº§u phÃª duyá»‡t.");
+            if (approval.ContractApprovalRequestStatus != 0 || doc.ContractDocumentStatus != ContractDocumentStatus.PendingApproval)
+                throw new InternalAppException(409, "YÃªu cáº§u phÃª duyá»‡t Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½ hoáº·c há»“ sÆ¡ khÃ´ng cÃ²n chá» duyá»‡t.");
+            if (doc.ContractDocumentCurrentVersionId != approval.ContractVersionId)
+                throw new InternalAppException(409, "YÃªu cáº§u phÃª duyá»‡t khÃ´ng cÃ²n trÃªn phiÃªn báº£n hiá»‡n hÃ nh.");
+            if (approval.ContractReviewRequestId is not long reviewId
+                || !await db.ContractReviewRequests.AnyAsync(r => r.ContractReviewRequestId == reviewId
+                    && r.ContractDocumentId == documentId && r.ContractVersionId == approval.ContractVersionId
+                    && r.ContractReviewRequestStatus == ContractReviewStatus.Approved, ct))
+                throw new InternalAppException(409, "KhÃ¡ch chÆ°a Ä‘á»“ng Ã½ Ä‘Ãºng phiÃªn báº£n Ä‘ang chá» phÃª duyá»‡t.");
+
+            var comment = InternalDraftPolicy.Text(request.Comment, 2000);
+            if (!request.Approve && comment.Length == 0)
+                throw new ArgumentException("Vui lÃ²ng ghi rÃµ lÃ½ do tá»« chá»‘i phÃª duyá»‡t.");
+            var now = DateTime.UtcNow;
+            approval.ContractApprovalRequestStatus = request.Approve ? 1 : 2;
+            approval.ContractApprovalRequestResolvedAt = now;
+            approval.ResolvedByEmployeeId = actor.Id;
+            approval.ContractApprovalRequestDecisioncomment = comment.Length == 0 ? null : comment;
+            doc.ContractDocumentStatus = request.Approve ? ContractDocumentStatus.PendingSignature : ContractDocumentStatus.Negotiating;
+            doc.UpdatedDate = now;
+            if (!request.Approve)
+            {
+                var version = await db.ContractVersions.SingleAsync(v => v.ContractVersionId == approval.ContractVersionId, ct);
+                version.ContractVersionIslocked = false;
+                version.ContractVersionLockeddate = null;
+                version.ContractVersionLockedbyemployeeid = null;
+                version.ContractVersionSnapshothash = null;
+            }
+            ReviewData.Audit(db, request.Approve ? "INTERNAL_APPROVAL_APPROVED" : "INTERNAL_APPROVAL_REJECTED",
+                "CONTRACT_APPROVAL_REQUEST", approval.ContractApprovalRequestId, "EMPLOYEE", actor.Id, now);
+            await db.SaveChangesAsync(ct);
+            var workflowName = await db.ApprovalWorkflows.AsNoTracking()
+                .Where(x => x.ApprovalWorkflowId == approval.ApprovalWorkflowId)
+                .Select(x => x.ApprovalWorkflowName).FirstOrDefaultAsync(ct) ?? "Kiá»ƒm tra ná»™i bá»™";
+            return new InternalApprovalState(approval.ContractApprovalRequestId, approval.ContractApprovalRequestStatus,
+                approval.SubmittedAt, workflowName, approval.ContractApprovalRequestDecisioncomment, true);
+        }, ct);
+
     public async Task<DraftRecord> CreateVersion(long documentId, NewVersionRequest request, InternalUser actor, CancellationToken ct)
     {
         await ReviewData.InTransaction(db, async () =>
@@ -136,7 +225,7 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
             {
                 ContractDocumentId = documentId, ContractTemplateId = current.ContractTemplateId,
                 ContractVersionVersionNo = await db.ContractVersions.Where(v => v.ContractDocumentId == documentId).MaxAsync(v => v.ContractVersionVersionNo, ct) + 1,
-                ContractVersionChangenote = note.Length == 0 ? "Phiên bản mới sau phản hồi của khách" : note,
+                ContractVersionChangenote = ContractVersionNotes.ForWorking(note.Length == 0 ? "Phiên bản mới sau phản hồi của khách" : note),
                 ContractVersionSubtotal = current.ContractVersionSubtotal, ContractVersionTotaldiscount = current.ContractVersionTotaldiscount,
                 ContractVersionTotalvat = current.ContractVersionTotalvat, ContractVersionTotalamount = current.ContractVersionTotalamount,
                 ContractVersionCurrencycode = current.ContractVersionCurrencycode, ContractVersionEffectiveDate = current.ContractVersionEffectiveDate,
@@ -165,7 +254,7 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
                     ContractNegotiationCommentTermid = x.ContractNegotiationCommentTermid is { } oldTerm && termMap.TryGetValue(oldTerm, out var mapped) ? checked((int)mapped.ContractTermTermid) : null,
                     ContractNegotiationCommentCarriedforwardfromcommentid = checked((int)x.ContractNegotiationCommentId), ContractNegotiationCommentCarriedforwardfromversionid = checked((int)from),
                     ContractNegotiationCommentSource = x.ContractNegotiationCommentSource, ContractNegotiationCommentContent = x.ContractNegotiationCommentContent,
-                    AuthorCustomerId = x.AuthorCustomerId, RecordedByEmployeeId = x.RecordedByEmployeeId, CreatedAt = now });
+                    ContractNegotiationCommentSection = x.ContractNegotiationCommentSection, AuthorCustomerId = x.AuthorCustomerId, RecordedByEmployeeId = x.RecordedByEmployeeId, CreatedAt = now });
             }
             foreach (var x in await db.ContractDynamicValues.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from).ToListAsync(ct))
             { x.ContractDynamicValueId = 0; x.ContractVersionId = next.ContractVersionId; db.ContractDynamicValues.Add(x); }
@@ -214,7 +303,7 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task ResetTemporaryPassword(long customerId, InternalUser actor, CancellationToken ct)
+    public async Task<ResetTemporaryPasswordResult> ResetTemporaryPassword(long customerId, InternalUser actor, CancellationToken ct)
     {
         if (!actor.CanManageAll && !await db.ContractDocuments.AnyAsync(d => d.CustomerId == customerId && d.EmployeeId == actor.Id && d.TenantId == null, ct))
             throw new InternalAppException(403, "Bạn không phụ trách khách hàng này.");
@@ -225,17 +314,21 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
         var since = now.AddHours(-1);
         if (await db.SmsOutboxes.CountAsync(s => s.CustomerId == customerId && s.SmsOutboxPurpose == SmsPurpose.TemporaryPassword && s.CreatedAt > since, ct) >= 3)
             throw new InternalAppException(429, "Đã cấp lại mật khẩu tạm 3 lần trong 1 giờ. Thử lại sau.");
-        IssueTemporaryPassword(customer, phone, null, actor.Id, now);
+        var password = IssueTemporaryPassword(customer, phone, null, actor.Id, now);
         ReviewData.Audit(db, "RESET_TEMP_PASSWORD", "CUSTOMER", customerId, "EMPLOYEE", actor.Id, now);
         await db.SaveChangesAsync(ct);
+        var simulated = smsOptions?.Value.Enabled != true || smsOptions.Value.Sandbox;
+        var discloseForDevelopment = environment?.IsDevelopment() == true && simulated;
+        return new(simulated, discloseForDevelopment ? phone : null, discloseForDevelopment ? password : null);
     }
 
-    private void IssueTemporaryPassword(Customer customer, string phone, long? documentId, long actor, DateTime now)
+    private string IssueTemporaryPassword(Customer customer, string phone, long? documentId, long actor, DateTime now)
     {
         var password = TemporaryPassword.Generate(); // never returned or logged
         customer.CustomerPasswordHash = new PasswordHasher<Customer>().HashPassword(customer, password);
         customer.UpdatedAt = now; customer.UpdatedBy = actor;
         sms.Enqueue(db, SmsPurpose.TemporaryPassword, customer.CustomerId, documentId, phone, sms.TemporaryPasswordMessage(PortalUrl, phone, password), now);
+        return password;
     }
 
     private async Task<ContractDocument> OwnedDocument(long id, InternalUser actor, CancellationToken ct)
@@ -383,7 +476,8 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             if (input.DocumentHash != review.ContractReviewRequestDocumentHash) throw new InternalAppException(409, "Nội dung hợp đồng đã thay đổi. Tải lại trang để xem bản mới nhất.");
             var note = InternalDraftPolicy.Text(input.Note, 4000);
             (string Review, int Document) next;
-            try { next = ContractReviewPolicy.Respond(review.ContractReviewRequestStatus, input.Decision ?? "", note); }
+            var hasComments = await db.ContractNegotiationComments.AnyAsync(c => c.ContractReviewRequestId == reviewId && c.AuthorCustomerId == customerId, ct);
+            try { next = ContractReviewPolicy.Respond(review.ContractReviewRequestStatus, input.Decision ?? "", note, hasComments); }
             catch (InvalidOperationException e) { throw new InternalAppException(409, e.Message); }
             var doc = await db.ContractDocuments.SingleAsync(d => d.ContractDocumentId == review.ContractDocumentId, ct);
             var now = DateTime.UtcNow;
@@ -392,7 +486,13 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             review.RespondedIpAddress = ip is { Length: > 45 } ? ip[..45] : ip; review.RespondedUserAgent = userAgent is { Length: > 1000 } ? userAgent[..1000] : userAgent;
             doc.ContractDocumentStatus = next.Document; doc.UpdatedDate = now;
             var approved = next.Review == ContractReviewStatus.Approved;
-            if (approved) doc.ContractDocumentStatus = ContractDocumentStatus.PendingSignature;
+            if (approved)
+            {
+                var workflow = await db.ApprovalWorkflows.Where(w => w.ApprovalWorkflowCode == ContractReviewRepository.InternalCheckWorkflow && w.ApprovalWorkflowIsactive)
+                    .Select(w => (long?)w.ApprovalWorkflowId).FirstOrDefaultAsync(ct) ?? throw new InvalidOperationException("Missing CONTRACT_INTERNAL_CHECK workflow; seed it in the MASTER database script.");
+                db.ContractApprovalRequests.Add(new ContractApprovalRequest { ContractDocumentId = doc.ContractDocumentId, ContractVersionId = review.ContractVersionId,
+                    ApprovalWorkflowId = workflow, SubmittedByEmployeeId = doc.EmployeeId, SubmittedAt = now, ContractApprovalRequestStatus = 0, ContractReviewRequestId = reviewId });
+            }
             var recipients = new HashSet<long> { doc.EmployeeId };
             if (approved) recipients.UnionWith(await (from er in db.EmployeeRoles join r in db.SystemRoles on er.SystemRoleId equals r.SystemRoleId
                 join e in db.Employees on er.EmployeeId equals e.EmployeeId
@@ -468,6 +568,9 @@ internal static class ReviewData
         if (!string.IsNullOrWhiteSpace(input.TermKey))
             termId = checked((int)(await db.ContractTerms.Where(t => t.ContractDocumentId == review.ContractDocumentId && t.ContractVersionId == review.ContractVersionId
                 && t.ContractTermTermcode == input.TermKey && t.ContractTermIsnegotiable).Select(t => (long?)t.ContractTermTermid).FirstOrDefaultAsync(ct) ?? throw new ArgumentException("Điều khoản không thuộc phiên bản này hoặc không cho phép thương lượng.")));
+        // A comment is about one term or one other section of the contract, never both.
+        var section = termId is null && !string.IsNullOrWhiteSpace(input.Section) ? input.Section.Trim() : null;
+        if (section is not null && !ContractReviewPolicy.CommentSections.ContainsKey(section)) throw new ArgumentException("Mục góp ý không hợp lệ.");
         if (input.ParentCommentId is { } parent)
         {
             if (!await db.ContractNegotiationComments.AnyAsync(c => c.ContractNegotiationCommentId == parent && c.ContractReviewRequestId == review.ContractReviewRequestId, ct))
@@ -475,7 +578,7 @@ internal static class ReviewData
             parentId = checked((int)parent);
         }
         var comment = new ContractNegotiationComment { ContractDocumentId = review.ContractDocumentId, ContractVersionId = review.ContractVersionId,
-            ContractNegotiationCommentTermid = termId, ContractNegotiationCommentParentcommentid = parentId, ContractNegotiationCommentContent = content,
+            ContractNegotiationCommentTermid = termId, ContractNegotiationCommentSection = section, ContractNegotiationCommentParentcommentid = parentId, ContractNegotiationCommentContent = content,
             ContractReviewRequestId = review.ContractReviewRequestId, ContractNegotiationCommentState = 0, CreatedAt = DateTime.UtcNow, ContractNegotiationCommentSource = "" };
         db.ContractNegotiationComments.Add(comment);
         return comment;
@@ -491,7 +594,9 @@ internal static class ReviewData
             select new { c, TermKey = t == null ? null : t.ContractTermTermcode, TermTitle = t == null ? null : t.ContractTermTermtitle, Employee = e == null ? null : e.EmployeeDisplayName })
             .ToListAsync(ct);
         return rows.GroupBy(x => x.c.ContractReviewRequestId!.Value).ToDictionary(g => g.Key, g => g.Select(x => new ReviewComment(x.c.ContractNegotiationCommentId,
-            x.TermKey, x.TermTitle, x.c.ContractNegotiationCommentParentcommentid, x.c.ContractNegotiationCommentContent,
-            x.c.AuthorCustomerId is null ? x.Employee ?? "Nhân viên" : "Khách hàng", x.c.AuthorCustomerId is not null, x.c.ContractNegotiationCommentState == 1, x.c.CreatedAt)).ToList());
+            x.TermKey, x.TermTitle ?? (x.c.ContractNegotiationCommentSection is { } section ? ContractReviewPolicy.CommentSections.GetValueOrDefault(section) : null),
+            x.c.ContractNegotiationCommentParentcommentid, x.c.ContractNegotiationCommentContent,
+            x.c.AuthorCustomerId is null ? x.Employee ?? "Nhân viên" : "Khách hàng", x.c.AuthorCustomerId is not null, x.c.ContractNegotiationCommentState == 1, x.c.CreatedAt,
+            x.c.ContractNegotiationCommentSection)).ToList());
     }
 }

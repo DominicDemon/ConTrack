@@ -10,6 +10,13 @@ abstract class AppConfig {
     return const String.fromEnvironment('API_BASE_URL');
   }
 
+  /// Máy chủ API nội bộ (không gồm /api); mặc định cùng máy chủ với [apiBaseUrl].
+  static String get internalApiBaseUrl {
+    final own = dotenv.env['API_INTERNAL_BASE_URL'];
+    final url = own != null && own.isNotEmpty ? own : apiBaseUrl;
+    return url.replaceFirst(RegExp(r'/+$'), '').replaceFirst(RegExp(r'/api$'), '');
+  }
+
   static const String appName = 'Digitizing Contract';
 
   static const int apiTimeoutSeconds = 30;

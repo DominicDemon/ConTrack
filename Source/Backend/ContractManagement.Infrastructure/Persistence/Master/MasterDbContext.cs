@@ -588,6 +588,10 @@ public partial class MasterDbContext : DbContext
                 .HasColumnName("contract_negotiation_comment_source");
             entity.Property(e => e.ContractNegotiationCommentState).HasColumnName("contract_negotiation_comment_state");
             entity.Property(e => e.ContractNegotiationCommentTermid).HasColumnName("contract_negotiation_comment_termid");
+            entity.Property(e => e.ContractNegotiationCommentSection)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasColumnName("contract_negotiation_comment_section");
             entity.Property(e => e.ContractVersionId).HasColumnName("contract_version_id");
             entity.Property(e => e.CreatedAt)
                 .HasDefaultValueSql("(sysutcdatetime())")

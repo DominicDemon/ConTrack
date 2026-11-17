@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { format } from "date-fns";
-import { ArrowLeft, CheckCircle2, ChevronDown, Download, Eye, FilePlus2, Loader2, RefreshCw, Search } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ChevronDown, FilePlus2, Loader2, RefreshCw, Search } from "lucide-react";
 import { useScanAccess } from "@/components/internal/scan-access";
-import { blobErrorMessage, FileKeyCancelled, useFileKey } from "@/components/internal/file-key";
+import { FileKeyCancelled, useFileKey } from "@/components/internal/file-key";
 import {
   formatDateTime,
   formatFileSize,
@@ -17,6 +17,7 @@ import {
 } from "@/components/signed-scans/format";
 import { ScanKeywordsSection } from "@/components/signed-scans/scan-keywords-section";
 import { StatusBadge } from "@/components/signed-scans/status-badge";
+import { ScanFileButtons } from "./scan-file-buttons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -461,10 +462,9 @@ function SavedNotice({ job }: { job: ScannedJobDetail }) {
 /** One scan of an old paper contract: the file, what OCR read and, optionally, a contract made from it. */
 export function ScannedJobPage({ jobId }: { jobId: string }) {
   const { can } = useScanAccess();
-  const { ensureKey, withFileKey } = useFileKey();
+  const { withFileKey } = useFileKey();
   const [job, setJob] = useState<ScannedJobDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [opening, setOpening] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
@@ -496,43 +496,6 @@ export function ScannedJobPage({ jobId }: { jobId: string }) {
     }
   };
 
-  const isPdf = useMemo(() => job?.contentType === "application/pdf", [job]);
-
-  const open = async (download: boolean) => {
-    if (!job) return;
-    let preview: Window | null = null;
-    setOpening(true);
-    try {
-      // The key is asked first, so the new tab is still opened from the click that gave it.
-      if (isPdf && !download) {
-        await ensureKey();
-        preview = window.open("about:blank", "_blank");
-      }
-      const blob = await withFileKey((key) => scannedContractsApi.jobFile(job.jobId, key), {
-        beforeAsk: () => preview?.close(),
-        afterAsk: () => {
-          if (isPdf && !download) preview = window.open("about:blank", "_blank");
-        },
-      });
-      const url = URL.createObjectURL(new Blob([blob], { type: job.contentType }));
-      if (preview) {
-        preview.opener = null;
-        preview.location.replace(url);
-      } else {
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = job.fileName;
-        link.click();
-      }
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (openError) {
-      preview?.close();
-      if (!(openError instanceof FileKeyCancelled)) toast.error(await blobErrorMessage(openError, "Không mở được tệp."));
-    } finally {
-      setOpening(false);
-    }
-  };
-
   return (
     <>
       <div>
@@ -561,16 +524,7 @@ export function ScannedJobPage({ jobId }: { jobId: string }) {
               <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
                 <CardTitle>Bản scan</CardTitle>
                 <div className="flex gap-2">
-                  {isPdf && (
-                    <Button variant="outline" size="sm" disabled={opening} onClick={() => void open(false)}>
-                      {opening ? <Loader2 className="size-4 animate-spin" /> : <Eye className="size-4" />}
-                      Xem
-                    </Button>
-                  )}
-                  <Button variant="outline" size="sm" disabled={opening} onClick={() => void open(true)}>
-                    <Download className="size-4" />
-                    Tải về
-                  </Button>
+                  <ScanFileButtons load={(key) => scannedContractsApi.jobFile(job.jobId, key)} fileName={job.fileName} contentType={job.contentType} />
                 </div>
               </CardHeader>
               <CardContent>

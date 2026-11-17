@@ -4,7 +4,7 @@ import DraftPreview from "./draft-preview";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, CopyPlus, KeyRound, Mail, MessageSquare, Send, XCircle, Handshake, RefreshCw } from "lucide-react";
+import { Check, CopyPlus, KeyRound, Mail, MessageSquare, Send, XCircle, Handshake, RefreshCw, Printer, Upload } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -64,7 +64,10 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     || (record.status === 1 && record.locked && (latest?.status === "CHANGES_REQUESTED" || (latest?.status === "REJECTED" && latest.followupDecision === "NEGOTIATE")));
   const awaitingDecision = record.status === 7 && latest?.status === "REJECTED" && !latest.followupDecision;
   const awaitingInternalApproval = record.status === 2 && approval?.status === 0;
-  const canStartSigning = user.canManageAll && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
+  /** A business signs the printed contract and stamps its red seal; a person signs electronically. */
+  const business = record.content.partyType === "BUSINESS";
+  const canStartSigning = !business && user.canManageAll && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
+  const canPrint = business && record.status === 3 && approval?.status === 1;
   const customerApproved = latest?.status === "APPROVED";
   const signingComplete = record.status === 4 || record.status === 5;
   const companySigned = signingProgress?.signers.some(signer => signer.party === "Công ty" && signer.status === 1) ?? false;
@@ -73,8 +76,11 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     { title: "Hoàn thiện bản nháp", detail: record.status === 0 ? (record.sendBlockedReason ?? "Điền đủ nội dung, thông tin khách hàng và điều khoản.") : "Phiên bản hợp đồng đã được lưu.", done: record.status !== 0, current: record.status === 0 },
     { title: "Khách hàng duyệt nội dung", detail: customerApproved ? "Khách hàng đã đồng ý phiên bản này." : latest && ["SENT", "VIEWED"].includes(latest.status) ? "Đang chờ khách xem và phản hồi." : "Gửi phiên bản đã hoàn thiện để khách xác nhận nội dung.", done: customerApproved, current: !customerApproved && record.status === 1 },
     { title: "Quản lý duyệt bản chốt", detail: approval?.status === 1 ? "Đã được quản lý phê duyệt." : awaitingInternalApproval ? "Đang chờ quản lý công ty duyệt." : "Chỉ mở sau khi khách hàng đồng ý.", done: approval?.status === 1, current: awaitingInternalApproval },
-    { title: "Công ty ký trước", detail: companySigned ? "Đại diện công ty đã ký." : approval?.signingStarted ? "Đang chờ đại diện công ty ký trong hàng đợi." : "Sau khi duyệt, tạo phiên ký và ký với tư cách công ty.", done: companySigned, current: record.status === 3 && !companySigned },
-    { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned },
+    ...business ? [
+      { title: "In, ký và đóng dấu đỏ", detail: signingComplete ? "Hai bên đã ký giấy." : approval?.status === 1 ? "In hợp đồng; đại diện hai bên ký, doanh nghiệp đóng dấu đỏ." : "Sau khi quản lý duyệt, in hợp đồng để ký giấy.", done: signingComplete, current: record.status === 3 },
+      { title: "Lưu bản ký giấy", detail: signingComplete ? "Bản scan đã được xác nhận, hồ sơ đã ký." : "Scan bản đã đóng dấu, tải lên màn Bản ký giấy và xác nhận.", done: signingComplete, current: false },
+    ] : [{ title: "Công ty ký trước", detail: companySigned ? "Đại diện công ty đã ký." : approval?.signingStarted ? "Đang chờ đại diện công ty ký trong hàng đợi." : "Sau khi duyệt, tạo phiên ký và ký với tư cách công ty.", done: companySigned, current: record.status === 3 && !companySigned },
+    { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned }],
   ];
 
   function ask(c: Confirm) { setConfirmed(false); setConfirm(c); setNote(""); setExpiry(inSevenDays()); setError(""); setNotice(""); }
@@ -140,9 +146,18 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
+  async function printContract() {
+    setError(""); const tab = window.open("", "_blank"); // opened before the await so the popup is not blocked
+    try {
+      const response = await fetch(`/api/internal/contract-drafts/${encodeURIComponent(record.id)}/print-pdf`, { credentials: "same-origin", cache: "no-store" });
+      if (!response.ok) throw new Error(((await response.json().catch(() => null)) as { message?: string } | null)?.message ?? "Không tải được PDF hợp đồng.");
+      const url = URL.createObjectURL(await response.blob());
+      if (tab) tab.location.href = url; else window.location.href = url;
+    } catch (e) { tab?.close(); setError((e as Error).message); }
+  }
   return <section className={ui.card} style={{ margin: "0 0 16px" }} aria-label="Gửi khách xem">
     <div className={s.workflowGuide} aria-label="Các bước ký hợp đồng">
-      <div className={s.workflowGuideHeader}><div><strong>Quy trình ký hợp đồng</strong><p>Khách duyệt nội dung → quản lý duyệt bản chốt → công ty ký trước → khách hàng ký sau.</p></div>{approval?.signingStarted && !signingComplete && <Link className={ui.secondaryButton} href="/workspace/contracts/company-signing">Mở hàng đợi ký công ty</Link>}</div>
+      <div className={s.workflowGuideHeader}><div><strong>Quy trình ký hợp đồng</strong><p>{business ? "Khách hàng doanh nghiệp: khách duyệt nội dung → quản lý duyệt bản chốt → in hợp đồng, ký và đóng dấu đỏ → tải bản scan lên." : "Khách hàng cá nhân: khách duyệt nội dung → quản lý duyệt bản chốt → công ty ký trước → khách hàng ký sau."}</p></div>{approval?.signingStarted && !signingComplete && <Link className={ui.secondaryButton} href="/workspace/contracts/company-signing">Mở hàng đợi ký công ty</Link>}</div>
       <ol className={s.workflowSteps}>{workflowSteps.map((step, index) => <li key={step.title} className={`${s.workflowStep} ${step.done ? s.workflowStepDone : step.current ? s.workflowStepCurrent : ""}`}>
         <span className={s.workflowStepNumber}>{step.done ? <Check size={14}/> : index + 1}</span><div><strong>{step.title}</strong><p>{step.detail}</p></div>
       </li>)}</ol>
@@ -169,6 +184,8 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
         {canStartSigning && <button className={ui.primaryButton} disabled={busy || dirty || signerName.trim().length < 2 || !signerPhone.trim()} onClick={() => void startSigning()}>
           <Send size={16}/>Tạo phiên ký
         </button>}
+        {canPrint && <><button className={ui.primaryButton} disabled={busy} onClick={() => void printContract()}><Printer size={16}/>In hợp đồng (PDF)</button>
+          <Link className={ui.secondaryButton} href={`/workspace/signed-contracts/${encodeURIComponent(record.id)}`}><Upload size={16}/>Tải bản ký giấy</Link></>}
         {latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất tin nhắn"
           onClick={() => void resetCustomerPassword()}><KeyRound size={16}/>Cấp lại mật khẩu tạm</button>}
       </div>
@@ -228,7 +245,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
           {replyTo?.comment.id === c.id && <div style={{ display: "grid", gap: 8, marginBottom: 8 }}>
             <Textarea aria-label="Nội dung trả lời" maxLength={4000} value={reply} onChange={e => setReply(e.target.value)}/>
             <div style={{ display: "flex", gap: 8 }}><button className={ui.primaryButton} disabled={busy || !reply.trim()} onClick={() => void act(async () => {
-              await internalApi(`/contract-reviews/${replyTo.review}/comments`, "POST", { termKey: c.termKey, parentCommentId: c.id, content: reply.trim() }); setReplyTo(null); })}>Gửi trả lời</button>
+              await internalApi(`/contract-reviews/${replyTo.review}/comments`, "POST", { termKey: c.termKey, section: c.section ?? null, parentCommentId: c.id, content: reply.trim() }); setReplyTo(null); })}>Gửi trả lời</button>
               <button className={ui.secondaryButton} onClick={() => setReplyTo(null)}>Hủy</button></div>
           </div>}
         </div>)}

@@ -81,7 +81,7 @@ public sealed record ContractArchiveEntry(long Id, string Code, string Name, str
     DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, int SignatureCount, DateTime? LastSignedAt);
 public sealed record SigningMonitorEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
     DateTime UpdatedAt, int Status, long VersionNo, int SignatureCount, int SignedCount, bool CompanySigned, bool CustomerSigned,
-    string? LatestReviewStatus, DateTime? LastSignedAt);
+    string? LatestReviewStatus, DateTime? LastSignedAt, bool Paper = false);
 public sealed record SigningTimelineEvent(DateTime At, string Category, string Title, string? Detail, string State);
 public sealed record SigningMonitorDetail(long Id, string Code, string Name, string CustomerName, string EmployeeName,
     DateTime CreatedAt, DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, string? SnapshotHash,
@@ -115,9 +115,10 @@ public interface IInternalRepository
     Task<List<ProductOption>> Products(string? search, CancellationToken ct);
     Task<bool> ProductsExist(IEnumerable<long> ids, CancellationToken ct);
     Task<List<EmployeeOption>> Employees(CancellationToken ct);
-    Task<List<DraftSummary>> Drafts(long? owner, string? search, int? status, CancellationToken ct);
-    Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct);
-    Task<List<SigningMonitorEntry>> SigningMonitor(string? search, int? status, CancellationToken ct);
+    /// <param name="partyType">PERSON or BUSINESS (the contract's party in its current version); null for both.</param>
+    Task<List<DraftSummary>> Drafts(long? owner, string? search, int? status, CancellationToken ct, string? partyType = null);
+    Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct, string? partyType = null);
+    Task<List<SigningMonitorEntry>> SigningMonitor(string? search, int? status, CancellationToken ct, string? partyType = null);
     Task<SigningMonitorDetail?> SigningMonitorDetail(long id, CancellationToken ct);
     Task<DraftRecord?> Draft(long id, CancellationToken ct);
     Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct);

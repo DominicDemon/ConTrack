@@ -29,8 +29,10 @@ public sealed record SigningStartResult(long CompanySignatureId, long DocumentId
 public sealed record CompanySigningQueueItem(long SignatureId, long DocumentId, long VersionId, string Code, string ContractName, string CustomerName, string SignerName, DateTime CreatedAt);
 public sealed record CompanySignatureRequest(string SignaturePngBase64, bool Confirmed);
 public sealed record StartCompanySigningRequest(string SignerName, string SignerPhone, string? SignerTitle);
-public sealed record CommentInput(string? TermKey, long? ParentCommentId, string? Content);
-public sealed record ReviewComment(long Id, string? TermKey, string? TermTitle, long? ParentId, string Content, string AuthorName, bool FromCustomer, bool Resolved, DateTime CreatedAt);
+/// <param name="Section">A key of ContractReviewPolicy.CommentSections when the comment is about a part of the contract other than a term.</param>
+public sealed record CommentInput(string? TermKey, long? ParentCommentId, string? Content, string? Section = null);
+/// <param name="TermTitle">The term's title, or the section's name for a comment by section.</param>
+public sealed record ReviewComment(long Id, string? TermKey, string? TermTitle, long? ParentId, string Content, string AuthorName, bool FromCustomer, bool Resolved, DateTime CreatedAt, string? Section = null);
 public sealed record ReviewSummary(long Id, long VersionId, long VersionNo, string Status, DateTime SentAt, string SentByName, string? Message, DateTime? FirstViewedAt,
     string? CustomerNote, DateTime? RespondedAt, string? FollowupDecision, string? FollowupNote, DateTime? FollowupDecidedAt, string RowVersion, List<ReviewComment> Comments,
     DateTime? LinkExpiresAt, bool? LinkEmailSent = null); // LinkEmailSent is only set on the send/resend response
@@ -57,6 +59,8 @@ public interface IInternalSigningService
     Task<SigningStartResult> Start(long documentId, StartCompanySigningRequest request, InternalUser actor, CancellationToken ct);
     Task<byte[]> CompanyDocument(long signatureId, InternalUser actor, CancellationToken ct);
     Task<SigningStartResult> SignCompany(long signatureId, CompanySignatureRequest request, InternalUser actor, CancellationToken ct);
+    /// <summary>The approved PDF of a business contract, printed to be signed and stamped with the red seal on paper.</summary>
+    Task<(byte[] Pdf, string FileName)> PrintPdf(long documentId, InternalUser actor, CancellationToken ct);
 }
 
 // Customer portal

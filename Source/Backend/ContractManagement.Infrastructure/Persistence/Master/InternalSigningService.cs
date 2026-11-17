@@ -53,10 +53,10 @@ public sealed class InternalSigningService(
         InTransaction(async () =>
         {
             RequireManager(actor);
-            var document = await db.ContractDocuments.SingleOrDefaultAsync(x => x.ContractDocumentId == documentId && x.TenantId == null, ct)
-                ?? throw new InternalAppException(404, "Không tìm thấy hồ sơ hợp đồng.");
-            if (document.ContractDocumentStatus != ContractDocumentStatus.PendingSignature || document.ContractDocumentCurrentVersionId is not long versionId)
-                throw new InternalAppException(409, "Hồ sơ chưa được khách hàng duyệt và quản lý phê duyệt, hoặc không còn ở trạng thái chờ ký.");
+            var (document, version, customer, content) = await Approved(documentId, ct);
+            var versionId = version.ContractVersionId;
+            if (content.PartyType == InternalDraftPolicy.Business)
+                throw new InternalAppException(409, "Hợp đồng doanh nghiệp không ký điện tử: in hợp đồng, ký và đóng dấu đỏ rồi tải bản scan ở màn Bản ký giấy.");
 
             var name = request.SignerName?.Trim() ?? "";
             var phone = PhoneNumber.Normalize(request.SignerPhone);
@@ -64,26 +64,9 @@ public sealed class InternalSigningService(
             if (phone is null) throw new ArgumentException("Nhập số điện thoại người đại diện hợp lệ.");
 
             if (await db.ContractElectronicSignatures.AnyAsync(x => x.ContractDocumentId == documentId && x.ContractVersionId == versionId, ct))
-                throw new InternalAppException(409, "PhiÃªn báº£n nÃ y Ä‘Ã£ cÃ³ luá»“ng kÃ½.");
-            var version = await db.ContractVersions.SingleAsync(x => x.ContractVersionId == versionId && x.ContractDocumentId == documentId, ct);
-            if (!version.ContractVersionIslocked || string.IsNullOrWhiteSpace(version.ContractVersionSnapshothash))
-                throw new InternalAppException(409, "PhiÃªn báº£n chÆ°a Ä‘Æ°á»£c khÃ³a vÃ  báº£o vá»‡ hash.");
-            var reviewApproved = await db.ContractReviewRequests.AnyAsync(x => x.ContractDocumentId == documentId
-                && x.ContractVersionId == versionId && x.ContractReviewRequestStatus == ContractReviewStatus.Approved, ct);
-            var approvalApproved = await db.ContractApprovalRequests.AnyAsync(x => x.ContractDocumentId == documentId
-                && x.ContractVersionId == versionId && x.ContractApprovalRequestStatus == 1, ct);
-            if (!reviewApproved || !approvalApproved) throw new InternalAppException(409, "Cáº§n cÃ³ xÃ¡c nháº­n cá»§a khÃ¡ch vÃ  phÃª duyá»‡t ná»™i bá»™ cho cÃ¹ng phiÃªn báº£n.");
-
-            var customer = await db.Customers.SingleAsync(x => x.CustomerId == document.CustomerId && x.CustomerStatus == 1, ct);
+                throw new InternalAppException(409, "Phiên bản này đã có luồng ký.");
             var customerPhone = PhoneNumber.Normalize(customer.CustomerPersonalPhone)
-                ?? throw new InternalAppException(409, "Sá»‘ Ä‘iá»‡n thoáº¡i khÃ¡ch hÃ ng khÃ´ng há»£p lá»‡.");
-            var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleOrDefaultAsync(x => x.ContractDocumentId == documentId
-                && x.ContractVersionId == versionId && x.FieldKey == InternalRepository.SnapshotKey, ct)
-                ?? throw new InternalAppException(409, "Thiáº¿u snapshot há»£p Ä‘á»“ng Ä‘Ã£ khÃ³a.");
-            if (!SnapshotHash.Compute(snapshot.FieldValue).Equals(version.ContractVersionSnapshothash, StringComparison.OrdinalIgnoreCase))
-                throw new InternalAppException(409, "Snapshot há»£p Ä‘á»“ng khÃ´ng khá»›p hash Ä‘Ã£ duyá»‡t.");
-            var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)
-                ?? throw new InternalAppException(409, "Snapshot há»£p Ä‘á»“ng khÃ´ng há»£p lá»‡.");
+                ?? throw new InternalAppException(409, "Số điện thoại khách hàng không hợp lệ.");
             var rendered = RenderContractPdf(document, version, customer, content);
             var pdf = rendered.Content;
             var hash = Convert.ToHexString(SHA256.HashData(pdf)).ToLowerInvariant();
@@ -142,6 +125,42 @@ public sealed class InternalSigningService(
                 throw;
             }
         }, ct);
+
+    public async Task<(byte[] Pdf, string FileName)> PrintPdf(long documentId, InternalUser actor, CancellationToken ct)
+    {
+        var (document, version, customer, content) = await Approved(documentId, ct);
+        if (!actor.CanManageAll && document.EmployeeId != actor.Id && !actor.Permissions.Contains("contract.signed_evidence.view"))
+            throw new InternalAppException(403, "Chỉ người phụ trách, quản lý hoặc bộ phận lưu bản ký giấy được in hợp đồng.");
+        if (content.PartyType != InternalDraftPolicy.Business)
+            throw new InternalAppException(409, "Hợp đồng cá nhân ký điện tử bằng OTP, không in để ký giấy.");
+        return (RenderContractPdf(document, version, customer, content).Content, (document.ContractDocumentCode ?? $"contract-{documentId}") + ".pdf");
+    }
+
+    /// <summary>The current version of a contract awaiting signature: locked, approved by the customer and the manager, its snapshot matching the approved hash.</summary>
+    private async Task<(ContractDocument Document, ContractVersion Version, Customer Customer, DraftContent Content)> Approved(long documentId, CancellationToken ct)
+    {
+        var document = await db.ContractDocuments.SingleOrDefaultAsync(x => x.ContractDocumentId == documentId && x.TenantId == null, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy hồ sơ hợp đồng.");
+        if (document.ContractDocumentStatus != ContractDocumentStatus.PendingSignature || document.ContractDocumentCurrentVersionId is not long versionId)
+            throw new InternalAppException(409, "Hồ sơ chưa được khách hàng duyệt và quản lý phê duyệt, hoặc không còn ở trạng thái chờ ký.");
+        var version = await db.ContractVersions.SingleAsync(x => x.ContractVersionId == versionId && x.ContractDocumentId == documentId, ct);
+        if (!version.ContractVersionIslocked || string.IsNullOrWhiteSpace(version.ContractVersionSnapshothash))
+            throw new InternalAppException(409, "Phiên bản chưa được khóa và bảo vệ bằng mã kiểm tra.");
+        var reviewApproved = await db.ContractReviewRequests.AnyAsync(x => x.ContractDocumentId == documentId
+            && x.ContractVersionId == versionId && x.ContractReviewRequestStatus == ContractReviewStatus.Approved, ct);
+        var approvalApproved = await db.ContractApprovalRequests.AnyAsync(x => x.ContractDocumentId == documentId
+            && x.ContractVersionId == versionId && x.ContractApprovalRequestStatus == 1, ct);
+        if (!reviewApproved || !approvalApproved) throw new InternalAppException(409, "Cần có xác nhận của khách và phê duyệt nội bộ cho cùng phiên bản.");
+        var customer = await db.Customers.SingleAsync(x => x.CustomerId == document.CustomerId && x.CustomerStatus == 1, ct);
+        var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleOrDefaultAsync(x => x.ContractDocumentId == documentId
+            && x.ContractVersionId == versionId && x.FieldKey == InternalRepository.SnapshotKey, ct)
+            ?? throw new InternalAppException(409, "Thiếu nội dung hợp đồng đã khóa.");
+        if (!SnapshotHash.Compute(snapshot.FieldValue).Equals(version.ContractVersionSnapshothash, StringComparison.OrdinalIgnoreCase))
+            throw new InternalAppException(409, "Nội dung hợp đồng không khớp mã kiểm tra đã duyệt.");
+        var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)
+            ?? throw new InternalAppException(409, "Nội dung hợp đồng không hợp lệ.");
+        return (document, version, customer, content);
+    }
 
     public async Task<byte[]> CompanyDocument(long signatureId, InternalUser actor, CancellationToken ct)
     {
@@ -293,6 +312,12 @@ public sealed class InternalSigningService(
         var bodyFont = new XFont("Arial", 9.5, XFontStyleEx.Regular);
         var smallFont = new XFont("Arial", 8, XFontStyleEx.Regular);
         var labelFont = new XFont("Arial", 8.5, XFontStyleEx.Bold);
+        var italicFont = new XFont("Arial", 9.5, XFontStyleEx.Italic);
+        var labelItalicFont = new XFont("Arial", 8.5, XFontStyleEx.BoldItalic);
+        // Bilingual layout of the company's printed contracts: English first, Vietnamese (in italics) under or after it.
+        var bilingual = content.LanguageMode == InternalDraftPolicy.Bilingual;
+        string L(string vi, string en) => bilingual ? $"{en} / {vi}" : vi;
+        string Both(string key, string vi) => bilingual && content.FieldsEn?.GetValueOrDefault(key) is { Length: > 0 } en && en != vi ? $"{en}\n{vi}" : vi;
         var innerWidth = 0d;
         var bottom = 0d;
 
@@ -320,11 +345,16 @@ public sealed class InternalSigningService(
                 DrawCentered("Độc lập – Tự do – Hạnh phúc", smallFont, new XSolidBrush(navy), y, 13); y += 17;
                 var ruleY = y;
                 graphics.DrawLine(new XPen(border, 0.8), margin + 105, ruleY, page.Width.Point - margin - 105, ruleY); y += 17;
-                DrawCentered(document.ContractDocumentName, titleFont, new XSolidBrush(navy), y, 24); y += 25;
-                DrawCentered($"Số: {document.ContractDocumentCode ?? $"HD-{document.ContractDocumentId}"}  ·  Phiên bản {version.ContractVersionVersionNo}", smallFont, new XSolidBrush(muted), y, 13); y += 20;
+                if (bilingual && !string.IsNullOrWhiteSpace(content.NameEn))
+                {
+                    DrawCentered(content.NameEn, titleFont, new XSolidBrush(navy), y, 24); y += 22;
+                    DrawCentered(document.ContractDocumentName, new XFont("Arial", 13, XFontStyleEx.BoldItalic), new XSolidBrush(navy), y, 20); y += 23;
+                }
+                else { DrawCentered(document.ContractDocumentName, titleFont, new XSolidBrush(navy), y, 24); y += 25; }
+                DrawCentered($"{L("Số", "No.")}: {document.ContractDocumentCode ?? $"HD-{document.ContractDocumentId}"}  ·  {L("Phiên bản", "Version")} {version.ContractVersionVersionNo}", smallFont, new XSolidBrush(muted), y, 13); y += 20;
                 var badge = new XRect(margin, y, innerWidth, 22);
                 graphics.DrawRectangle(new XPen(border, 0.7), new XSolidBrush(pale), badge);
-                DrawCentered("BẢN CHỐT HỢP ĐỒNG · CHỜ KÝ", smallFont, new XSolidBrush(teal), y + 4, 14);
+                DrawCentered(L("BẢN CHỐT HỢP ĐỒNG · CHỜ KÝ", "FINAL CONTRACT · AWAITING SIGNATURE"), smallFont, new XSolidBrush(teal), y + 4, 14);
                 y += 34;
             }
             else
@@ -408,24 +438,26 @@ public sealed class InternalSigningService(
         string Field(string key, string fallback = "") => content.Fields.GetValueOrDefault(key)?.Trim() is { Length: > 0 } value ? value : fallback;
         var customerRows = new List<(string Label, string Value)>
         {
-            ("Tên pháp lý", Field("CUSTOMER_COMPANY", customer.CustomerDisplayName)),
-            ("Đại diện", Field("CUSTOMER_CONTACT_NAME", customer.CustomerDisplayName)),
-            ("Chức vụ", Field("CUSTOMER_CONTACT_TITLE")),
-            ("Địa chỉ", Field("CUSTOMER_ADDRESS")),
-            ("Điện thoại", Field("CUSTOMER_CONTACT_PHONE", customer.CustomerPersonalPhone ?? string.Empty)),
+            (L("Tên pháp lý", "Name"), Both("CUSTOMER_COMPANY", Field("CUSTOMER_COMPANY", customer.CustomerDisplayName))),
+            (L("Đại diện", "Represented by"), Field("CUSTOMER_CONTACT_NAME", customer.CustomerDisplayName)),
+            (L("Chức vụ", "Position"), Both("CUSTOMER_CONTACT_TITLE", Field("CUSTOMER_CONTACT_TITLE"))),
+            (L("Địa chỉ", "Address"), Both("CUSTOMER_ADDRESS", Field("CUSTOMER_ADDRESS"))),
+            (L("Điện thoại", "Tel"), Field("CUSTOMER_CONTACT_PHONE", customer.CustomerPersonalPhone ?? string.Empty)),
             ("Email", Field("CUSTOMER_EMAIL", customer.CustomerEmail ?? string.Empty)),
-            ("Mã số thuế", Field("CUSTOMER_TAX_CODE"))
+            (L("Mã số thuế", "Tax code"), Field("CUSTOMER_TAX_CODE"))
         }.Where(item => !string.IsNullOrWhiteSpace(item.Value)).ToList();
         var providerRows = new List<(string Label, string Value)>
         {
-            ("Tên pháp lý", Field("PROVIDER_LEGAL_NAME")),
-            ("Đại diện", Field("PROVIDER_REPRESENTATIVE_NAME")),
-            ("Chức vụ", Field("PROVIDER_REPRESENTATIVE_TITLE")),
-            ("Địa chỉ", Field("PROVIDER_ADDRESS")),
-            ("Điện thoại", Field("PROVIDER_PHONE")),
-            ("Mã số thuế", Field("PROVIDER_TAX_CODE")),
-            ("Tài khoản", string.Join(" · ", new[] { Field("PROVIDER_BANK_ACCOUNT_NUMBER"), Field("PROVIDER_BANK_NAME") }.Where(x => x.Length > 0)))
+            (L("Tên pháp lý", "Name"), Both("PROVIDER_LEGAL_NAME", Field("PROVIDER_LEGAL_NAME"))),
+            (L("Đại diện", "Represented by"), Field("PROVIDER_REPRESENTATIVE_NAME")),
+            (L("Chức vụ", "Position"), Both("PROVIDER_REPRESENTATIVE_TITLE", Field("PROVIDER_REPRESENTATIVE_TITLE"))),
+            (L("Địa chỉ", "Address"), Both("PROVIDER_ADDRESS", Field("PROVIDER_ADDRESS"))),
+            (L("Điện thoại", "Tel"), Field("PROVIDER_PHONE")),
+            (L("Mã số thuế", "Tax code"), Field("PROVIDER_TAX_CODE")),
+            (L("Tài khoản", "Bank account"), string.Join(" · ", new[] { Field("PROVIDER_BANK_ACCOUNT_NUMBER"), Both("PROVIDER_BANK_NAME", Field("PROVIDER_BANK_NAME")) }.Where(x => x.Length > 0)))
         }.Where(item => !string.IsNullOrWhiteSpace(item.Value)).ToList();
+        // Bilingual labels need a wider label column, so the two party cards are stacked instead of side by side.
+        var labelWidth = bilingual ? 118d : 62d;
 
         double CardHeight(List<(string Label, string Value)> rows, double valueWidth) => 26 + rows.Sum(row => Math.Max(15, Wrap(row.Value, smallFont, valueWidth).Count * 10.5 + 4)) + 9;
         void DrawPartyCard(double x, double width, string title, List<(string Label, string Value)> rows, double cardHeight)
@@ -437,11 +469,11 @@ public sealed class InternalSigningService(
             var rowY = y + 29;
             foreach (var row in rows)
             {
-                graphics.DrawString(row.Label, smallFont, new XSolidBrush(muted), new XRect(x + 9, rowY, 62, 13), XStringFormats.TopLeft);
-                var lines = Wrap(row.Value, smallFont, width - 85);
+                graphics.DrawString(row.Label, smallFont, new XSolidBrush(muted), new XRect(x + 9, rowY, labelWidth, 13), XStringFormats.TopLeft);
+                var lines = Wrap(row.Value, smallFont, width - labelWidth - 23);
                 foreach (var line in lines)
                 {
-                    graphics.DrawString(line, smallFont, new XSolidBrush(navy), new XRect(x + 75, rowY, width - 84, 13), XStringFormats.TopLeft);
+                    graphics.DrawString(line, smallFont, new XSolidBrush(navy), new XRect(x + labelWidth + 13, rowY, width - labelWidth - 22, 13), XStringFormats.TopLeft);
                     rowY += 10.5;
                 }
                 rowY += 4;
@@ -450,7 +482,7 @@ public sealed class InternalSigningService(
 
         void DrawItemsHeader(double[] columns)
         {
-            var labels = new[] { "Hạng mục", "SL", "Đơn giá", "Thành tiền" };
+            var labels = new[] { L("Hạng mục", "Item"), L("SL", "Qty"), L("Đơn giá", "Unit price"), L("Thành tiền", "Amount") };
             var x = margin;
             for (var i = 0; i < columns.Length; i++)
             {
@@ -465,24 +497,42 @@ public sealed class InternalSigningService(
         NewPage(first: true);
         if (!string.IsNullOrWhiteSpace(Field("CONTRACT_LEGAL_BASES")))
         {
-            AddSectionTitle("CĂN CỨ HỢP ĐỒNG");
+            AddSectionTitle(L("CĂN CỨ HỢP ĐỒNG", "LEGAL BASES"));
             AddParagraph(Field("CONTRACT_LEGAL_BASES"), bodyFont, new XSolidBrush(navy));
         }
 
-        AddSectionTitle("THÔNG TIN CÁC BÊN");
-        var gap = 12d;
-        var cardWidth = (innerWidth - gap) / 2;
-        var cardValueWidth = cardWidth - 84;
-        var cardsHeight = Math.Max(CardHeight(customerRows, cardValueWidth), CardHeight(providerRows, cardValueWidth));
-        EnsureSpace(cardsHeight + 12);
-        var cardTop = y;
-        DrawPartyCard(margin, cardWidth, $"BÊN A · {Field("CUSTOMER_COMPANY", customer.CustomerDisplayName)}", customerRows, cardsHeight);
-        DrawPartyCard(margin + cardWidth + gap, cardWidth, $"BÊN B · {Field("PROVIDER_LEGAL_NAME", "NHÀ CUNG CẤP")}", providerRows, cardsHeight);
-        y = cardTop + cardsHeight + 13;
-        AddParagraph($"Thời hạn hiệu lực: từ {content.EffectiveDate?.ToString("dd/MM/yyyy") ?? "—"} đến {content.ExpireDate?.ToString("dd/MM/yyyy") ?? "—"}.",
+        AddSectionTitle(L("THÔNG TIN CÁC BÊN", "THE PARTIES"));
+        var customerTitle = $"{L("BÊN A", "PARTY A")} · {Field("CUSTOMER_COMPANY", customer.CustomerDisplayName)}";
+        var providerTitle = $"{L("BÊN B", "PARTY B")} · {Field("PROVIDER_LEGAL_NAME", "NHÀ CUNG CẤP")}";
+        if (bilingual)
+        {
+            foreach (var (title, rows) in new[] { (customerTitle, customerRows), (providerTitle, providerRows) })
+            {
+                var height = CardHeight(rows, innerWidth - labelWidth - 23);
+                EnsureSpace(height + 12);
+                DrawPartyCard(margin, innerWidth, title, rows, height);
+                y += height + 10;
+            }
+            y += 3;
+        }
+        else
+        {
+            var gap = 12d;
+            var cardWidth = (innerWidth - gap) / 2;
+            var cardValueWidth = cardWidth - labelWidth - 23;
+            var cardsHeight = Math.Max(CardHeight(customerRows, cardValueWidth), CardHeight(providerRows, cardValueWidth));
+            EnsureSpace(cardsHeight + 12);
+            var cardTop = y;
+            DrawPartyCard(margin, cardWidth, customerTitle, customerRows, cardsHeight);
+            DrawPartyCard(margin + cardWidth + gap, cardWidth, providerTitle, providerRows, cardsHeight);
+            y = cardTop + cardsHeight + 13;
+        }
+        var effective = content.EffectiveDate?.ToString("dd/MM/yyyy") ?? "—";
+        var expire = content.ExpireDate?.ToString("dd/MM/yyyy") ?? "—";
+        AddParagraph((bilingual ? $"Term: from {effective} to {expire}.\n" : "") + $"Thời hạn hiệu lực: từ {effective} đến {expire}.",
             smallFont, new XSolidBrush(muted), spaceAfter: 7);
 
-        AddSectionTitle("HẠNG MỤC VÀ GIÁ TRỊ HỢP ĐỒNG");
+        AddSectionTitle(L("HẠNG MỤC VÀ GIÁ TRỊ HỢP ĐỒNG", "ITEMS AND CONTRACT VALUE"));
         var columns = new[] { innerWidth * .42, innerWidth * .10, innerWidth * .22, innerWidth * .26 };
         DrawItemsHeader(columns);
         foreach (var item in content.Items)
@@ -512,7 +562,7 @@ public sealed class InternalSigningService(
         var currency = string.IsNullOrWhiteSpace(version.ContractVersionCurrencycode) ? "VND" : version.ContractVersionCurrencycode;
         var totals = new[]
         {
-            ("Tạm tính", content.Totals.Subtotal), ("Giảm giá", content.Totals.Discount),
+            (L("Tạm tính", "Subtotal"), content.Totals.Subtotal), (L("Giảm giá", "Discount"), content.Totals.Discount),
             ($"VAT ({content.VatPercent:0.##}%)", content.Totals.Vat)
         };
         y += 7;
@@ -525,15 +575,23 @@ public sealed class InternalSigningService(
         }
         EnsureSpace(27);
         graphics.DrawLine(new XPen(border, 0.8), margin + innerWidth * .55, y, margin + innerWidth, y); y += 5;
-        graphics.DrawString("TỔNG GIÁ TRỊ", labelFont, new XSolidBrush(navy), new XRect(margin + innerWidth * .55, y, innerWidth * .23, 18), XStringFormats.TopLeft);
+        graphics.DrawString(L("TỔNG GIÁ TRỊ", "TOTAL"), labelFont, new XSolidBrush(navy), new XRect(margin + innerWidth * .55, y, innerWidth * .23, 18), XStringFormats.TopLeft);
         graphics.DrawString($"{FormatMoney(content.Totals.Total)} {currency}", new XFont("Arial", 11, XFontStyleEx.Bold), new XSolidBrush(teal),
             new XRect(margin + innerWidth * .78, y, innerWidth * .22, 18), XStringFormats.TopRight);
         y += 27;
 
-        AddSectionTitle("ĐIỀU KHOẢN HỢP ĐỒNG");
+        AddSectionTitle(L("ĐIỀU KHOẢN HỢP ĐỒNG", "TERMS AND CONDITIONS"));
         for (var i = 0; i < content.Terms.Count; i++)
         {
             var term = content.Terms[i];
+            if (bilingual && !string.IsNullOrWhiteSpace(term.TitleEn))
+            {
+                AddParagraph($"ARTICLE {i + 1}: {term.TitleEn}", labelFont, new XSolidBrush(navy), spaceAfter: 1);
+                AddParagraph($"ĐIỀU {i + 1}: {term.Title}", labelItalicFont, new XSolidBrush(navy), spaceAfter: 3);
+                if (!string.IsNullOrWhiteSpace(term.ContentEn)) AddParagraph(term.ContentEn, bodyFont, new XSolidBrush(navy), indent: 8, spaceAfter: 3);
+                AddParagraph(term.Content, italicFont, new XSolidBrush(navy), indent: 8, spaceAfter: 9);
+                continue;
+            }
             AddParagraph($"Điều {i + 1}. {term.Title}", labelFont, new XSolidBrush(navy), spaceAfter: 3);
             AddParagraph(term.Content, bodyFont, new XSolidBrush(navy), indent: 8, spaceAfter: 9);
         }
@@ -541,7 +599,7 @@ public sealed class InternalSigningService(
         const double signatureBlockHeight = 132;
         EnsureSpace(signatureBlockHeight);
         var signatureTop = y;
-        AddSectionTitle("ĐẠI DIỆN CÁC BÊN KÝ TÊN");
+        AddSectionTitle(L("ĐẠI DIỆN CÁC BÊN KÝ TÊN", "SIGNATURES OF THE PARTIES"));
         var signatureY = y - 4;
         var slotWidth = (innerWidth - 24) / 2;
         var customerX = margin;
@@ -556,10 +614,10 @@ public sealed class InternalSigningService(
             if (!string.IsNullOrWhiteSpace(title))
                 graphics.DrawString(title, smallFont, new XSolidBrush(muted), new XRect(x + 8, signatureY + 41, slotWidth - 16, 12), XStringFormats.TopCenter);
             graphics.DrawLine(new XPen(border, 0.8), x + 18, signatureY + 84, x + slotWidth - 18, signatureY + 84);
-            graphics.DrawString("Ký và ghi rõ họ tên", smallFont, new XSolidBrush(muted), new XRect(x + 8, signatureY + 86, slotWidth - 16, 12), XStringFormats.TopCenter);
+            graphics.DrawString(L("Ký và ghi rõ họ tên", "Signature and full name"), smallFont, new XSolidBrush(muted), new XRect(x + 8, signatureY + 86, slotWidth - 16, 12), XStringFormats.TopCenter);
         }
-        DrawSignatureCard(customerX, "ĐẠI DIỆN BÊN A · KHÁCH HÀNG", Field("CUSTOMER_CONTACT_NAME", customer.CustomerDisplayName), Field("CUSTOMER_CONTACT_TITLE"));
-        DrawSignatureCard(companyX, "ĐẠI DIỆN BÊN B · CÔNG TY", Field("PROVIDER_REPRESENTATIVE_NAME"), Field("PROVIDER_REPRESENTATIVE_TITLE"));
+        DrawSignatureCard(customerX, bilingual ? "PARTY A / ĐẠI DIỆN BÊN A" : "ĐẠI DIỆN BÊN A · KHÁCH HÀNG", Field("CUSTOMER_CONTACT_NAME", customer.CustomerDisplayName), Field("CUSTOMER_CONTACT_TITLE"));
+        DrawSignatureCard(companyX, bilingual ? "PARTY B / ĐẠI DIỆN BÊN B" : "ĐẠI DIỆN BÊN B · CÔNG TY", Field("PROVIDER_REPRESENTATIVE_NAME"), Field("PROVIDER_REPRESENTATIVE_TITLE"));
         y = signatureTop + signatureBlockHeight;
 
         graphics.Dispose();
@@ -568,9 +626,9 @@ public sealed class InternalSigningService(
             using var footer = XGraphics.FromPdfPage(pages[index], XGraphicsPdfPageOptions.Append);
             footer.DrawLine(new XPen(border, 0.6), margin, pages[index].Height.Point - 31, pages[index].Width.Point - margin, pages[index].Height.Point - 31);
             footer.DrawString($"{document.ContractDocumentCode} · {document.ContractDocumentName}", smallFont, new XSolidBrush(muted),
-                new XRect(margin, pages[index].Height.Point - 25, innerWidth - 60, 13), XStringFormats.TopLeft);
-            footer.DrawString($"Trang {index + 1}/{pages.Count}", smallFont, new XSolidBrush(muted),
-                new XRect(pages[index].Width.Point - margin - 60, pages[index].Height.Point - 25, 60, 13), XStringFormats.TopRight);
+                new XRect(margin, pages[index].Height.Point - 25, innerWidth - 90, 13), XStringFormats.TopLeft);
+            footer.DrawString($"{L("Trang", "Page")} {index + 1}/{pages.Count}", smallFont, new XSolidBrush(muted),
+                new XRect(pages[index].Width.Point - margin - 90, pages[index].Height.Point - 25, 90, 13), XStringFormats.TopRight);
         }
 
         using var stream = new MemoryStream();

@@ -4,13 +4,14 @@ import { Archive, RefreshCw, Files } from "lucide-react";
 import { useInternalUser } from "@/components/internal/internal-shell";
 import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
-import { internalApi, dateTime, documentStatusLabel, type ContractArchiveEntry } from "@/services/internal-api";
+import { internalApi, dateTime, documentStatusLabel, partyTypeLabel, type ContractArchiveEntry } from "@/services/internal-api";
 
 export default function ContractArchivePage() {
   const user = useInternalUser();
   const [rows, setRows] = useState<ContractArchiveEntry[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
+  const [party, setParty] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
   const [reload, setReload] = useState(0);
@@ -24,13 +25,14 @@ export default function ContractArchivePage() {
       const params = new URLSearchParams();
       if (search.trim()) params.set("search", search.trim());
       if (status) params.set("status", status);
+      if (party) params.set("partyType", party);
       void internalApi<ContractArchiveEntry[]>(`/contract-archive?${params}`)
         .then(data => { if (active) setRows(data); })
         .catch(e => { if (active) setError(e.message); })
         .finally(() => { if (active) setBusy(false); });
     }, 250);
     return () => { active = false; clearTimeout(timer); };
-  }, [user.canManageAll, search, status, reload]);
+  }, [user.canManageAll, search, status, party, reload]);
 
   if (!user.canManageAll) return <div className={s.page}><p role="alert" className={ui.error}>Kho hợp đồng chỉ dành cho quản trị viên công ty.</p></div>;
 
@@ -43,9 +45,12 @@ export default function ContractArchivePage() {
         <select aria-label="Lọc trạng thái" className={ui.field} style={{ maxWidth: 220 }} value={status} onChange={e => setStatus(e.target.value)}>
           <option value="">Tất cả trạng thái</option>{Object.entries(documentStatusLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
         </select>
+        <select aria-label="Lọc loại khách hàng" className={ui.field} style={{ maxWidth: 280 }} value={party} onChange={e => setParty(e.target.value)}>
+          <option value="">Tất cả loại khách hàng</option>{Object.entries(partyTypeLabel).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+        </select>
         <button className={ui.secondaryButton} disabled={busy} onClick={() => setReload(v => v + 1)} aria-label="Làm mới"><RefreshCw size={16}/></button>
       </div>
-      {busy ? <div className={s.empty}>Đang tải kho hợp đồng…</div> : rows.length === 0 ? <div className={s.empty}><Files size={42} strokeWidth={1.3}/><strong>{search || status ? "Không tìm thấy hợp đồng phù hợp" : "Chưa có hồ sơ trong kho"}</strong><p>{search || status ? "Thử đổi từ khóa hoặc bộ lọc." : "Hồ sơ sẽ xuất hiện tại đây sau khi được tạo trong không gian nội bộ."}</p></div> :
+      {busy ? <div className={s.empty}>Đang tải kho hợp đồng…</div> : rows.length === 0 ? <div className={s.empty}><Files size={42} strokeWidth={1.3}/><strong>{search || status || party ? "Không tìm thấy hợp đồng phù hợp" : "Chưa có hồ sơ trong kho"}</strong><p>{search || status || party ? "Thử đổi từ khóa hoặc bộ lọc." : "Hồ sơ sẽ xuất hiện tại đây sau khi được tạo trong không gian nội bộ."}</p></div> :
         <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Hợp đồng</th><th>Khách hàng</th><th>Người phụ trách</th><th>Trạng thái</th><th>Phiên bản</th><th>Chữ ký</th><th>Cập nhật</th></tr></thead><tbody>
           {rows.map(row => <tr key={row.id}><td>{row.name}<div className={s.muted} style={{ fontSize: 10, marginTop: 4 }}>{row.code}</div></td><td>{row.customerName}</td><td>{row.employeeName}</td><td><span className={s.badge}>{documentStatusLabel[row.status] ?? row.status}</span></td><td>v{row.versionNo}{row.versionLocked && <div className={s.muted}>Đã khóa</div>}</td><td>{row.signatureCount}{row.lastSignedAt && <div className={s.muted}>{dateTime(row.lastSignedAt)}</div>}</td><td className={s.muted}>{dateTime(row.updatedAt)}</td></tr>)}
         </tbody></table></div>}

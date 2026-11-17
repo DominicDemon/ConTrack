@@ -9,6 +9,7 @@ import { formatDateTime, formatFileSize, formatMoney } from "@/components/signed
 import { imagesToPdf } from "@/components/signed-scans/images-to-pdf";
 import { MAX_SCAN_BYTES, pageCountLabel, ScanPagesPicker, type ScanPages } from "@/components/signed-scans/scan-pages-picker";
 import { StatusBadge } from "@/components/signed-scans/status-badge";
+import { ScanFileButtons } from "./scan-file-buttons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -217,8 +218,9 @@ function BatchList({ batches }: { batches: ScannedBatch[] }) {
                     {job.contractId ? (
                       <StatusBadge tone="success">Đã tạo {job.contractCode}</StatusBadge>
                     ) : null}
+                    <ScanFileButtons load={(key) => scannedContractsApi.jobFile(job.jobId, key)} fileName={job.fileName} />
                     <Button asChild variant="outline" size="sm">
-                      <Link href={scannedJobHref(job.jobId)}>Xem</Link>
+                      <Link href={scannedJobHref(job.jobId)}>Chi tiết</Link>
                     </Button>
                   </span>
                 </li>
@@ -228,6 +230,17 @@ function BatchList({ batches }: { batches: ScannedBatch[] }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/** The contract's own scan file (CONTRACTS.file_storage_fileid), opened with the employee's key. */
+function ContractFileButtons({ contract }: { contract: ScannedContract }) {
+  if (!contract.fileId) return null;
+  return (
+    <ScanFileButtons
+      load={(key) => scannedContractsApi.contractFile(contract.contractId, key)}
+      fileName={contract.fileName ?? `${contract.contractCode}.pdf`}
+    />
   );
 }
 
@@ -260,11 +273,14 @@ function ContractTable({ contracts }: { contracts: ScannedContract[] }) {
                   {contract.contractValue != null ? formatMoney(contract.contractValue) : "—"}
                 </TableCell>
                 <TableCell className="pr-4 text-right">
-                  {contract.jobId && (
-                    <Button asChild variant="outline" size="sm">
-                      <Link href={scannedJobHref(contract.jobId)}>Chi tiết</Link>
-                    </Button>
-                  )}
+                  <span className="inline-flex flex-wrap justify-end gap-2">
+                    <ContractFileButtons contract={contract} />
+                    {contract.jobId && (
+                      <Button asChild variant="outline" size="sm">
+                        <Link href={scannedJobHref(contract.jobId)}>Chi tiết</Link>
+                      </Button>
+                    )}
+                  </span>
                 </TableCell>
               </TableRow>
             ))}
@@ -279,11 +295,14 @@ function ContractTable({ contracts }: { contracts: ScannedContract[] }) {
             <p className="text-muted-foreground">
               {contract.customerName ?? "—"} · ký {formatDay(contract.signedDate)}
             </p>
-            {contract.jobId && (
-              <Button asChild variant="outline" size="sm" className="mt-2">
-                <Link href={scannedJobHref(contract.jobId)}>Chi tiết</Link>
-              </Button>
-            )}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <ContractFileButtons contract={contract} />
+              {contract.jobId && (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={scannedJobHref(contract.jobId)}>Chi tiết</Link>
+                </Button>
+              )}
+            </div>
           </li>
         ))}
       </ul>

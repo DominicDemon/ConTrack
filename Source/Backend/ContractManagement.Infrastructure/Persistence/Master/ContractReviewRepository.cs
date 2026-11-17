@@ -248,7 +248,7 @@ public sealed class ContractReviewRepository(
                     ContractNegotiationCommentTermid = x.ContractNegotiationCommentTermid is { } oldTerm && termMap.TryGetValue(oldTerm, out var mapped) ? checked((int)mapped.ContractTermTermid) : null,
                     ContractNegotiationCommentCarriedforwardfromcommentid = checked((int)x.ContractNegotiationCommentId), ContractNegotiationCommentCarriedforwardfromversionid = checked((int)from),
                     ContractNegotiationCommentSource = x.ContractNegotiationCommentSource, ContractNegotiationCommentContent = x.ContractNegotiationCommentContent,
-                    AuthorCustomerId = x.AuthorCustomerId, RecordedByEmployeeId = x.RecordedByEmployeeId, CreatedAt = now });
+                    ContractNegotiationCommentSection = x.ContractNegotiationCommentSection, AuthorCustomerId = x.AuthorCustomerId, RecordedByEmployeeId = x.RecordedByEmployeeId, CreatedAt = now });
             }
             foreach (var x in await db.ContractDynamicValues.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from).ToListAsync(ct))
             { x.ContractDynamicValueId = 0; x.ContractVersionId = next.ContractVersionId; db.ContractDynamicValues.Add(x); }
@@ -470,7 +470,8 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             if (input.DocumentHash != review.ContractReviewRequestDocumentHash) throw new InternalAppException(409, "Nội dung hợp đồng đã thay đổi. Tải lại trang để xem bản mới nhất.");
             var note = InternalDraftPolicy.Text(input.Note, 4000);
             (string Review, int Document) next;
-            try { next = ContractReviewPolicy.Respond(review.ContractReviewRequestStatus, input.Decision ?? "", note); }
+            var hasComments = await db.ContractNegotiationComments.AnyAsync(c => c.ContractReviewRequestId == reviewId && c.AuthorCustomerId == customerId, ct);
+            try { next = ContractReviewPolicy.Respond(review.ContractReviewRequestStatus, input.Decision ?? "", note, hasComments); }
             catch (InvalidOperationException e) { throw new InternalAppException(409, e.Message); }
             var doc = await db.ContractDocuments.SingleAsync(d => d.ContractDocumentId == review.ContractDocumentId, ct);
             var now = DateTime.UtcNow;
@@ -561,6 +562,9 @@ internal static class ReviewData
         if (!string.IsNullOrWhiteSpace(input.TermKey))
             termId = checked((int)(await db.ContractTerms.Where(t => t.ContractDocumentId == review.ContractDocumentId && t.ContractVersionId == review.ContractVersionId
                 && t.ContractTermTermcode == input.TermKey && t.ContractTermIsnegotiable).Select(t => (long?)t.ContractTermTermid).FirstOrDefaultAsync(ct) ?? throw new ArgumentException("Điều khoản không thuộc phiên bản này hoặc không cho phép thương lượng.")));
+        // A comment is about one term or one other section of the contract, never both.
+        var section = termId is null && !string.IsNullOrWhiteSpace(input.Section) ? input.Section.Trim() : null;
+        if (section is not null && !ContractReviewPolicy.CommentSections.ContainsKey(section)) throw new ArgumentException("Mục góp ý không hợp lệ.");
         if (input.ParentCommentId is { } parent)
         {
             if (!await db.ContractNegotiationComments.AnyAsync(c => c.ContractNegotiationCommentId == parent && c.ContractReviewRequestId == review.ContractReviewRequestId, ct))
@@ -568,7 +572,7 @@ internal static class ReviewData
             parentId = checked((int)parent);
         }
         var comment = new ContractNegotiationComment { ContractDocumentId = review.ContractDocumentId, ContractVersionId = review.ContractVersionId,
-            ContractNegotiationCommentTermid = termId, ContractNegotiationCommentParentcommentid = parentId, ContractNegotiationCommentContent = content,
+            ContractNegotiationCommentTermid = termId, ContractNegotiationCommentSection = section, ContractNegotiationCommentParentcommentid = parentId, ContractNegotiationCommentContent = content,
             ContractReviewRequestId = review.ContractReviewRequestId, ContractNegotiationCommentState = 0, CreatedAt = DateTime.UtcNow, ContractNegotiationCommentSource = "" };
         db.ContractNegotiationComments.Add(comment);
         return comment;
@@ -584,7 +588,9 @@ internal static class ReviewData
             select new { c, TermKey = t == null ? null : t.ContractTermTermcode, TermTitle = t == null ? null : t.ContractTermTermtitle, Employee = e == null ? null : e.EmployeeDisplayName })
             .ToListAsync(ct);
         return rows.GroupBy(x => x.c.ContractReviewRequestId!.Value).ToDictionary(g => g.Key, g => g.Select(x => new ReviewComment(x.c.ContractNegotiationCommentId,
-            x.TermKey, x.TermTitle, x.c.ContractNegotiationCommentParentcommentid, x.c.ContractNegotiationCommentContent,
-            x.c.AuthorCustomerId is null ? x.Employee ?? "Nhân viên" : "Khách hàng", x.c.AuthorCustomerId is not null, x.c.ContractNegotiationCommentState == 1, x.c.CreatedAt)).ToList());
+            x.TermKey, x.TermTitle ?? (x.c.ContractNegotiationCommentSection is { } section ? ContractReviewPolicy.CommentSections.GetValueOrDefault(section) : null),
+            x.c.ContractNegotiationCommentParentcommentid, x.c.ContractNegotiationCommentContent,
+            x.c.AuthorCustomerId is null ? x.Employee ?? "Nhân viên" : "Khách hàng", x.c.AuthorCustomerId is not null, x.c.ContractNegotiationCommentState == 1, x.c.CreatedAt,
+            x.c.ContractNegotiationCommentSection)).ToList());
     }
 }

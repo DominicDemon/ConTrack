@@ -155,13 +155,14 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     }
     public Task<List<EmployeeOption>> Employees(CancellationToken ct) => db.Employees.AsNoTracking().Where(e => e.EmployeeStatus == "ACTIVE")
         .OrderBy(e => e.EmployeeDisplayName).Select(e => new EmployeeOption(e.EmployeeId, e.EmployeeDisplayName)).ToListAsync(ct);
-    public async Task<List<DraftSummary>> Drafts(long? owner, string? search, int? status, CancellationToken ct)
+    public async Task<List<DraftSummary>> Drafts(long? owner, string? search, int? status, CancellationToken ct, string? partyType = null)
     {
+        var party = InternalDraftPolicy.PartyTypeMarker(partyType);
         var query = from d in db.ContractDocuments.AsNoTracking() join e in db.Employees on d.EmployeeId equals e.EmployeeId
             join c in db.Customers on d.CustomerId equals c.CustomerId
             join v in db.ContractDynamicValues on d.ContractDocumentId equals v.ContractDocumentId
             where (!status.HasValue || d.ContractDocumentStatus == status) && d.TenantId == null && v.FieldKey == SnapshotKey && v.ContractVersionId == d.ContractDocumentCurrentVersionId
-                && (!owner.HasValue || d.EmployeeId == owner)
+                && (!owner.HasValue || d.EmployeeId == owner) && (party == null || v.FieldValue.Contains(party))
                 && (search == null || d.ContractDocumentName.Contains(search) || d.ContractDocumentCode!.Contains(search) || c.CustomerDisplayName.Contains(search))
             orderby d.UpdatedDate ?? d.CreatedDate descending
             select new { d, e.EmployeeDisplayName, c.CustomerDisplayName, v.FieldValue, Latest = db.ContractReviewRequests
@@ -173,9 +174,13 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             x.CustomerDisplayName, x.d.EmployeeId, x.EmployeeDisplayName, x.d.UpdatedDate ?? x.d.CreatedDate,
             content.MissingFields.Count, x.d.ContractDocumentStatus, x.Latest); }).ToList();
     }
-    public async Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct)
+    /// <summary>Documents whose current version's snapshot is of the given party type (all when party is null).</summary>
+    private IQueryable<ContractDocument> OfParty(string? party) => party == null ? db.ContractDocuments.AsNoTracking()
+        : db.ContractDocuments.AsNoTracking().Where(d => db.ContractDynamicValues.Any(v => v.ContractDocumentId == d.ContractDocumentId
+            && v.ContractVersionId == d.ContractDocumentCurrentVersionId && v.FieldKey == SnapshotKey && v.FieldValue.Contains(party)));
+    public async Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct, string? partyType = null)
     {
-        var query = from d in db.ContractDocuments.AsNoTracking()
+        var query = from d in OfParty(InternalDraftPolicy.PartyTypeMarker(partyType))
             join e in db.Employees.AsNoTracking() on d.EmployeeId equals e.EmployeeId
             join c in db.Customers.AsNoTracking() on d.CustomerId equals c.CustomerId
             join v in db.ContractVersions.AsNoTracking() on d.ContractDocumentCurrentVersionId equals v.ContractVersionId
@@ -202,9 +207,9 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 x.ContractVersionIslocked, signing?.Count ?? 0, signing?.LastSignedAt);
         }).ToList();
     }
-    public async Task<List<SigningMonitorEntry>> SigningMonitor(string? search, int? status, CancellationToken ct)
+    public async Task<List<SigningMonitorEntry>> SigningMonitor(string? search, int? status, CancellationToken ct, string? partyType = null)
     {
-        var docs = await (from d in db.ContractDocuments.AsNoTracking()
+        var docs = await (from d in OfParty(InternalDraftPolicy.PartyTypeMarker(partyType))
             join e in db.Employees.AsNoTracking() on d.EmployeeId equals e.EmployeeId
             join c in db.Customers.AsNoTracking() on d.CustomerId equals c.CustomerId
             where d.TenantId == null && (!status.HasValue || d.ContractDocumentStatus == status)
@@ -234,6 +239,10 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var reviews = await db.ContractReviewRequests.AsNoTracking().Where(r => ids.Contains(r.ContractDocumentId))
             .GroupBy(r => r.ContractDocumentId).Select(g => new { Id = g.Key, Status = g.OrderByDescending(x => x.ContractReviewRequestId).Select(x => x.ContractReviewRequestStatus).FirstOrDefault() })
             .ToDictionaryAsync(x => x.Id, ct);
+        var business = InternalDraftPolicy.PartyTypeMarker(InternalDraftPolicy.Business)!;
+        var paper = (await db.ContractDynamicValues.AsNoTracking().Where(v => ids.Contains(v.ContractDocumentId) && versionIds.Contains(v.ContractVersionId)
+                && v.FieldKey == SnapshotKey && v.FieldValue.Contains(business)).Select(v => new { v.ContractDocumentId, v.ContractVersionId }).ToListAsync(ct))
+            .Where(v => currentVersions.GetValueOrDefault(v.ContractDocumentId) == v.ContractVersionId).Select(v => v.ContractDocumentId).ToHashSet();
         return docs.Select(x =>
         {
             ContractVersion? version = null;
@@ -243,7 +252,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             return new SigningMonitorEntry(x.d.ContractDocumentId, x.d.ContractDocumentCode ?? "", x.d.ContractDocumentName,
                 x.CustomerDisplayName, x.d.EmployeeId, x.EmployeeDisplayName, x.d.UpdatedDate ?? x.d.CreatedDate,
                 x.d.ContractDocumentStatus, hasVersion ? version!.ContractVersionVersionNo : 0,
-                signing?.Count ?? 0, signing?.Signed ?? 0, signing?.CompanySigned ?? false, signing?.CustomerSigned ?? false, review?.Status, signing?.Last);
+                signing?.Count ?? 0, signing?.Signed ?? 0, signing?.CompanySigned ?? false, signing?.CustomerSigned ?? false, review?.Status, signing?.Last, paper.Contains(x.d.ContractDocumentId));
         }).ToList();
     }
 
@@ -462,6 +471,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 for (var i = 0; i < content.Terms.Count; i++) { var term = content.Terms[i]; var entity = new ContractTerm {
                     ContractDocumentId = document.ContractDocumentId, ContractVersionId = version.ContractVersionId, ContractTermTermcode = term.Key,
                     ContractTermTermtitle = term.Title, ContractTermTermcontent = term.Content, ContractTermIsnegotiable = term.Editable,
+                    ContractTermTermtitleen = term.TitleEn, ContractTermTermcontenten = term.ContentEn,
                     ContractTermDisplayorder = i, CreatedAt = now }; db.ContractTerms.Add(entity); termMap[term.Key] = entity; }
                 await db.SaveChangesAsync(ct);
                 foreach (var comment in pendingComments) {

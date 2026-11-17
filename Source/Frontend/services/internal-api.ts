@@ -1,6 +1,6 @@
 export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean };
 export type DraftField = { key: string; label: string; required: boolean; dataType?: "TEXT" | "NUMBER" | "DATE" | "SELECT"; options?: string[]; min?: number | null; max?: number | null };
-export type DraftTerm = { key: string; title: string; content: string; editable: boolean };
+export type DraftTerm = { key: string; title: string; content: string; editable: boolean; titleEn?: string | null; contentEn?: string | null };
 export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; documentType?: number; wordStorageKey?: string | null; wordSha256?: string | null; manualWordContent?: boolean; fields: DraftField[]; terms: DraftTerm[] };
 export type CustomerOption = { id: string; name: string; phone: string; fields: Record<string, string> };
 export type CustomerInput = { name: string; phone: string; email: string; company: string; taxCode: string; address: string };
@@ -10,7 +10,7 @@ export type DraftItem = { productId: string | null; name: string; quantity: numb
 export type DraftTotals = { subtotal: number; discount: number; vat: number; total: number };
 export type BusinessOption = { id: string; name: string; taxCode: string; address: string; representative: string };
 export type DraftMilestone = { key: string; title: string; termKey: string; percent: number; amount: number; anchor: "DATE" | "SIGNED" | "HANDOVER"; offsetDays: number; dueDate: string | null; condition: string };
-export type DraftContent = { formatVersion?: number; partyType?: string; customerBusinessId?: string | null; paymentMode?: "PERCENT" | "AMOUNT"; milestones?: DraftMilestone[]; templateId: string; customerId: string; name: string; fields: Record<string, string>; items: DraftItem[]; terms: DraftTerm[]; vatPercent: number; effectiveDate: string | null; expireDate: string | null; templateSnapshot: TemplateDefinition | null; totals: DraftTotals; missingFields: string[] };
+export type DraftContent = { formatVersion?: number; partyType?: string; customerBusinessId?: string | null; paymentMode?: "PERCENT" | "AMOUNT"; milestones?: DraftMilestone[]; templateId: string; customerId: string; name: string; fields: Record<string, string>; items: DraftItem[]; terms: DraftTerm[]; vatPercent: number; effectiveDate: string | null; expireDate: string | null; templateSnapshot: TemplateDefinition | null; totals: DraftTotals; missingFields: string[]; languageMode?: "VI_EN" | null; nameEn?: string | null; fieldsEn?: Record<string, string> | null };
 export type DraftIssue = { code: string; path: string; message: string };
 export type CarriedDraftComment = { id: string; termKey: string | null; content: string; sourceCommentId: string | null; sourceVersionId: string | null; resolved: boolean };
 export type DraftRecord = { issues?: DraftIssue[]; carriedComments?: CarriedDraftComment[]; id: string; code: string; employeeId: string; employeeName: string; rowVersion: string; versionRowVersion: string; updatedAt: string; content: DraftContent };

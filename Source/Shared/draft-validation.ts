@@ -36,6 +36,8 @@ export function draftIssues(c: DraftContent): DraftIssue[] {
   if(!c.items.length) add("required","items","Hạng mục hợp đồng");
   c.items.forEach((m,i)=> {if(!m.name.trim() || m.quantity<=0 || m.unitPrice<0) add("invalid_item",`items.${i}`,`Hạng mục ${i+1}: tên, số lượng hoặc đơn giá không hợp lệ`);});
   if(!c.terms.length || c.terms.some(t=>!t.title.trim() || (t.editable !== false && !t.content.trim()))) add("required","terms","Nội dung điều khoản");
+  if(c.languageMode === "VI_EN" && !c.nameEn?.trim()) add("required","nameEn","Tên hợp đồng tiếng Anh");
+  if(c.languageMode === "VI_EN" && c.terms.some(t=>t.editable !== false && (!t.titleEn?.trim() || !t.contentEn?.trim()))) add("required","terms","Điều khoản tiếng Anh");
   const rows=c.milestones ?? [], summary=paymentSummary(c);
   if(!rows.length) add("required","milestones","Lịch thanh toán");
   rows.forEach((m,i)=>{

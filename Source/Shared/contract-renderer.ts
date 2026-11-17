@@ -20,5 +20,6 @@ export function renderContract(content: DraftContent) {
     SUBTOTAL: money(totals.subtotal), DISCOUNT: money(totals.discount), VAT: money(totals.vat), TOTAL_AMOUNT: money(totals.total),
     PAYMENT_SCHEDULE: milestones.map(m => `${m.title}: ${money(m.amount)} VND — ${m.due}${m.condition ? "; " + m.condition : ""}`).join("\n") };
   const resolve = (text: string) => text.replace(/\{\{([^{}]*)\}\}/g, (_, key: string) => fields[key]?.trim() || `[Chưa điền: ${key}]`);
-  return { totals, milestones, terms: content.terms.map(t => ({ ...t, title: (content.formatVersion ?? 1) < 2 ? t.title : resolve(t.title), content: (content.formatVersion ?? 1) < 2 ? t.content : resolve(t.content) })) };
+  const fill = (text: string) => (content.formatVersion ?? 1) < 2 ? text : resolve(text);
+  return { totals, milestones, terms: content.terms.map(t => ({ ...t, title: fill(t.title), content: fill(t.content), titleEn: t.titleEn ? fill(t.titleEn) : "", contentEn: t.contentEn ? fill(t.contentEn) : "" })) };
 }

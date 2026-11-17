@@ -38,4 +38,7 @@ public partial class ContractNegotiationComment
     public DateTime? UpdatedAt { get; set; }
 
     public byte[] Rowversion { get; set; } = null!;
+
+    /// <summary>Section of the contract the comment is about when it is not about a term (012-comment-sections.sql).</summary>
+    public string? ContractNegotiationCommentSection { get; set; }
 }

@@ -77,6 +77,8 @@ public static class InternalHost
         builder.Services.AddHostedService<SmsOutboxWorker>();
         builder.Services.AddOptions<SmtpEmailOptions>().Bind(builder.Configuration.GetSection(SmtpEmailOptions.SectionName));
         builder.Services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
+        builder.Services.AddScoped<ContractExpiryReminders>();
+        builder.Services.AddHostedService<ContractExpiryReminderWorker>();
         builder.Services.AddScoped<ReviewLinkMailer>();
         builder.Services.AddScoped<ReviewLinkOtp>();
         builder.Services.AddMemoryCache();
@@ -259,6 +261,13 @@ public static class InternalHost
             if (!HttpMethods.IsGet(c.Request.Method)) await c.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(c);
             return await next(invocation);
         });
+        // Any signed-in employee: the board sees every contract ending within 30 days, others the ones they are in charge of.
+        api.MapGet("/contracts/expiring", async (HttpContext c, IInternalRepository r, ContractExpiryReminders reminders, CancellationToken ct) =>
+        {
+            var user = await User(c, r, ct);
+            RequirePasswordChanged(user);
+            return Results.Ok(await reminders.Expiring(ContractExpiryReminders.Today(DateTime.UtcNow), user.CanManageAll ? null : user.Id, ct));
+        });
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
         secured.MapPost("/contract-templates/word/extract", async (TemplateFileInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
             Results.Ok(await service.Extract(input, Current(c).Id, ct)));
@@ -301,25 +310,25 @@ public static class InternalHost
             if (!Current(c).CanManageAll) throw new InternalAppException(403, "Bạn không có quyền xem danh sách nhân viên.");
             return Results.Ok(await r.Employees(ct));
         });
-        secured.MapGet("/contract-drafts", async (string? search, string? ownerId, int? status, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+        secured.MapGet("/contract-drafts", async (string? search, string? ownerId, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
             var user = Current(c); long? owner = user.CanManageAll ? null : user.Id;
             if (!string.IsNullOrEmpty(ownerId)) { if (!user.CanManageAll) throw new InternalAppException(403, "Không được lọc nháp của nhân viên khác.");
                 if (!long.TryParse(ownerId, out var parsed) || parsed <= 0) throw new ArgumentException("Nhân viên không hợp lệ."); owner = parsed; }
-            return Results.Ok(await r.Drafts(owner, search, status, ct));
+            return Results.Ok(await r.Drafts(owner, search, status, ct, partyType));
         });
         secured.MapGet("/contract-signing-demo/availability", (IHostEnvironment environment) => Results.Ok(new { available = environment.IsDevelopment() }));
         secured.MapPost("/contract-signing-demo", async (HttpContext c, InternalSigningDemoService demo, CancellationToken ct) =>
             Results.Ok(await demo.Create(Current(c), ct)));
-        secured.MapGet("/contract-archive", async (string? search, int? status, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+        secured.MapGet("/contract-archive", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
             if (!Current(c).CanManageAll) throw new InternalAppException(403, "Kho hợp đồng chỉ dành cho quản trị viên công ty.");
-            return Results.Ok(await r.ContractArchive(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct));
+            return Results.Ok(await r.ContractArchive(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType));
         });
-        secured.MapGet("/contract-signing-monitor", async (string? search, int? status, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+        secured.MapGet("/contract-signing-monitor", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
             if (!Current(c).CanManageAll) throw new InternalAppException(403, "Theo dõi ký chỉ dành cho quản trị viên công ty.");
-            return Results.Ok(await r.SigningMonitor(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct));
+            return Results.Ok(await r.SigningMonitor(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType));
         });
         secured.MapGet("/contract-signing-monitor/{id:long}", async (long id, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
@@ -344,6 +353,8 @@ public static class InternalHost
             Results.Ok(await signing.Queue(Current(c), ct)));
         secured.MapPost("/contract-drafts/{id:long}/start-signing", async (long id, StartCompanySigningRequest input, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
             Results.Ok(await signing.Start(id, input, Current(c), ct)));
+        secured.MapGet("/contract-drafts/{id:long}/print-pdf", async (long id, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
+        { var (pdf, name) = await signing.PrintPdf(id, Current(c), ct); return Results.File(pdf, "application/pdf", name); });
         secured.MapGet("/company-signing/{id:long}/document", async (long id, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
             Results.File(await signing.CompanyDocument(id, Current(c), ct), "application/pdf", $"contract-{id}.pdf"));
         secured.MapPost("/company-signing/{id:long}/sign", async (long id, CompanySignatureRequest input, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>

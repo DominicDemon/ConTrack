@@ -5,7 +5,7 @@ import { Activity, AlertTriangle, Check, Clock3, FilePlus2, RefreshCw, Search } 
 import { useInternalUser } from "@/components/internal/internal-shell";
 import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
-import { internalApi, dateTime, documentStatusLabel, type SigningMonitorEntry } from "@/services/internal-api";
+import { internalApi, dateTime, documentStatusLabel, partyTypeLabel, type SigningMonitorEntry } from "@/services/internal-api";
 
 const tabs = [
   { id: "all", label: "Tất cả" },
@@ -19,6 +19,7 @@ export default function ContractSigningMonitorPage() {
   const user = useInternalUser();
   const [rows, setRows] = useState<SigningMonitorEntry[]>([]);
   const [search, setSearch] = useState("");
+  const [party, setParty] = useState("");
   const [tab, setTab] = useState<(typeof tabs)[number]["id"]>("all");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
@@ -43,24 +44,25 @@ export default function ContractSigningMonitorPage() {
       setBusy(true); setError("");
       const params = new URLSearchParams();
       if (search.trim()) params.set("search", search.trim());
+      if (party) params.set("partyType", party);
       void internalApi<SigningMonitorEntry[]>(`/contract-signing-monitor?${params}`)
         .then(result => { if (active) setRows(result); })
         .catch(e => { if (active) setError(e.message); })
         .finally(() => { if (active) setBusy(false); });
     }, 200);
     return () => { active = false; clearTimeout(timer); };
-  }, [user.canManageAll, search, reload]);
+  }, [user.canManageAll, search, party, reload]);
 
   const counts = useMemo(() => ({
     all: rows.length,
     waiting: rows.filter(x => x.status === 3).length,
     signed: rows.filter(x => x.signedCount > 0).length,
-    untracked: rows.filter(x => [3, 4, 5].includes(x.status) && x.signatureCount === 0).length,
+    untracked: rows.filter(x => !x.paper && [3, 4, 5].includes(x.status) && x.signatureCount === 0).length,
   }), [rows]);
   const visible = rows.filter(row => tab === "all"
     || (tab === "waiting" && row.status === 3)
     || (tab === "signed" && row.signedCount > 0)
-    || (tab === "untracked" && [3, 4, 5].includes(row.status) && row.signatureCount === 0));
+    || (tab === "untracked" && !row.paper && [3, 4, 5].includes(row.status) && row.signatureCount === 0));
 
   async function createSigningDemo() {
     setDemoBusy(true); setError(""); setDemo(null);
@@ -114,19 +116,21 @@ export default function ContractSigningMonitorPage() {
       {tabs.map(item => <button key={item.id} role="tab" aria-selected={tab === item.id} className={tab === item.id ? s.signingTabActive : s.signingTab} onClick={() => setTab(item.id)}>{item.label}<span>{counts[item.id]}</span></button>)}
     </div>
 
-    <div className={s.signingToolbar}><label className={s.signingSearch}><Search size={16}/><input aria-label="Tìm hợp đồng" placeholder="Tìm theo mã, tên hợp đồng hoặc khách hàng" value={search} onChange={e => setSearch(e.target.value)}/></label><span className={s.muted}>{visible.length} hồ sơ · cập nhật tối đa 200</span></div>
+    <div className={s.signingToolbar}><label className={s.signingSearch}><Search size={16}/><input aria-label="Tìm hợp đồng" placeholder="Tìm theo mã, tên hợp đồng hoặc khách hàng" value={search} onChange={e => setSearch(e.target.value)}/></label><select aria-label="Lọc loại khách hàng" className={ui.field} style={{ maxWidth: 280 }} value={party} onChange={e => setParty(e.target.value)}><option value="">Tất cả loại khách hàng</option>{Object.entries(partyTypeLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className={s.muted}>{visible.length} hồ sơ · cập nhật tối đa 200</span></div>
     {error && <p role="alert" className={ui.error}>{error}</p>}
     {busy ? <div className={s.signingEmpty}>Đang tải tiến độ ký…</div> : visible.length === 0 ? <div className={s.signingEmpty}><Activity size={28}/><strong>{rows.length ? "Không có hồ sơ ở trạng thái này" : "Chưa có hồ sơ để theo dõi"}</strong><span>{rows.length ? "Thử chọn một trạng thái khác." : "Tạo một bản nháp hợp đồng để bắt đầu thử luồng ký điện tử."}</span>{rows.length === 0 && <Link href="/workspace/contracts/drafts/new" className={ui.primaryButton}><FilePlus2 size={16}/>Tạo bản nháp để thử luồng ký</Link>}</div> :
       <div className={s.signingRows}>
         {visible.map(row => {
-          const untracked = [3, 4, 5].includes(row.status) && row.signatureCount === 0;
+          const untracked = !row.paper && [3, 4, 5].includes(row.status) && row.signatureCount === 0;
           return <Link className={s.signingRow} key={row.id} href={`/workspace/contracts/signing/${row.id}`}>
             <div className={s.signingIdentity}><span className={s.signingCode}>{row.code || `#${row.id}`}</span><strong>{row.name}</strong><span>{row.customerName} <i>·</i> Phụ trách {row.employeeName}</span></div>
-            <div className={s.signingProgress} aria-label={`${row.signedCount} trên ${row.signatureCount} bên đã ký`}>
+            {row.paper ? <div className={s.signingProgress} aria-label="Ký giấy, đóng dấu đỏ">
+              <span className={[4, 5].includes(row.status) ? s.signingStepDone : row.status === 3 ? s.signingStepCurrent : s.signingStepWait}>{[4, 5].includes(row.status) ? <Check size={13}/> : <Clock3 size={13}/>} Ký giấy, đóng dấu</span>
+            </div> : <div className={s.signingProgress} aria-label={`${row.signedCount} trên ${row.signatureCount} bên đã ký`}>
               <span className={row.companySigned ? s.signingStepDone : row.status === 3 && !row.customerSigned ? s.signingStepCurrent : s.signingStepWait}>{row.companySigned ? <Check size={13}/> : <Clock3 size={13}/>} Công ty</span>
               <span className={s.signingConnector}/>
               <span className={row.customerSigned ? s.signingStepDone : row.companySigned ? s.signingStepCurrent : s.signingStepWait}>{row.customerSigned ? <Check size={13}/> : <Clock3 size={13}/>} Khách hàng</span>
-            </div>
+            </div>}
             <div className={s.signingState}>{untracked ? <span className={s.signingWarning}><AlertTriangle size={14}/> Thiếu dữ liệu ký điện tử</span> : <span className={s.badge}>{documentStatusLabel[row.status] ?? `Trạng thái ${row.status}`}</span>}<small>{row.signatureCount ? `${row.signedCount}/${row.signatureCount} chữ ký` : `Phiên bản ${row.versionNo}`}</small></div>
             <div className={s.signingUpdated}><small>Cập nhật</small><span>{dateTime(row.lastSignedAt ?? row.updatedAt)}</span></div>
           </Link>;

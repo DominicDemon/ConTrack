@@ -2,7 +2,7 @@
 import { draftIssues, focusIssue } from "../../../Shared/draft-validation";
 import { PartyEditor, PaymentEditor } from "./draft-details";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
@@ -16,6 +16,8 @@ import ReviewPanel from "./review-panel";
 import s from "./workspace.module.css";
 const blank = (): DraftContent => ({ formatVersion: 2, partyType: "", customerBusinessId: null, paymentMode: "PERCENT", milestones: [], templateId: "", customerId: "", name: "", fields: {}, items: [], terms: [], vatPercent: 0, effectiveDate: null, expireDate: null, templateSnapshot: null, totals: { subtotal: 0, discount: 0, vat: 0, total: 0 }, missingFields: [] });
 const newCustomer = (): CustomerInput => ({ name: "", phone: "", email: "", company: "", taxCode: "", address: "" });
+/** Same list as InternalDraftPolicy.EnglishFieldKeys: what reads differently in English; numbers and codes are shared. */
+const ENGLISH_FIELDS = ["CUSTOMER_COMPANY", "CUSTOMER_ADDRESS", "CUSTOMER_CONTACT_TITLE", "CUSTOMER_BANK_NAME", "PROVIDER_LEGAL_NAME", "PROVIDER_ADDRESS", "PROVIDER_REPRESENTATIVE_TITLE", "PROVIDER_BANK_NAME"];
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className={s.label}>{label}{children}</label>; }
 export default function DraftEditor({ id }: { id?: string }) {
   const router = useRouter(); const [content, setContent] = useState<DraftContent>(blank); const [record, setRecord] = useState<DraftRecord | null>(null);
@@ -52,6 +54,13 @@ export default function DraftEditor({ id }: { id?: string }) {
   }, []);
   const change = useCallback((update: (old: DraftContent) => DraftContent) => { setContent(update); setDirty(true); dirtyRef.current = true; setSuccess(""); }, []);
   const setField = (key: string, value: string) => change(c => ({ ...c, fields: { ...c.fields, [key]: value } }));
+  const bilingual = content.languageMode === "VI_EN";
+  const setTerm = (key: string, patch: Partial<DraftContent["terms"][number]>) => change(c => ({ ...c, terms: c.terms.map(t => t.key === key ? { ...t, ...patch } : t) }));
+  // A party field, plus its English wording for a bilingual contract (names, addresses, positions, banks).
+  const partyField = (f: TemplateDefinition["fields"][number]) => <Fragment key={f.key}>
+    <Field label={f.label + (f.required && !content.fields[f.key]?.trim() ? " · cần hoàn thiện" : "")}><input maxLength={4000} className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key, e.target.value)}/></Field>
+    {bilingual && ENGLISH_FIELDS.includes(f.key) && <Field label={`${f.label} (tiếng Anh)`}><input maxLength={4000} className={ui.field} lang="en" value={content.fieldsEn?.[f.key] ?? ""} onChange={e => { const value = e.target.value; change(c => ({ ...c, fieldsEn: { ...c.fieldsEn, [f.key]: value } })); }}/></Field>}
+  </Fragment>;
   const sourceTemplate = content.templateSnapshot ?? templates.find(t => t.id === content.templateId);
   const template = sourceTemplate && (!record?.locked ? completePartyFields(sourceTemplate) : sourceTemplate);
   const totals = estimateTotals(content);
@@ -93,7 +102,11 @@ export default function DraftEditor({ id }: { id?: string }) {
       {!id && <TemplateUpload disabled={busy} onImported={t => { setTemplates(old => [t, ...old]); void selectWordTemplate(t); }}/>}
       {wordInfo && <p role="status" className={s.muted}>{wordInfo}</p>}
       <p className={s.muted}>{template.manualWordContent ? "Thông tin nhận diện từ Word được điền sẵn vào hồ sơ. Bản in giữ nội dung Word đã lưu; hãy đối chiếu trước khi gửi khách." : template.isImported ? "Mẫu tải lên chưa được phê duyệt. Sửa nội dung file tại phần Nội dung hợp đồng; thông tin khách hàng không tự thay vào văn bản." : "Mẫu minh họa, chưa được công ty phê duyệt. Nội dung trống cần được người soạn bổ sung."}</p>
+      <Field label="Ngôn ngữ hợp đồng"><select className={ui.field} value={bilingual ? "VI_EN" : "VI"} disabled={!!template.wordStorageKey} title={template.wordStorageKey ? "Mẫu Word giữ nguyên nội dung của file" : undefined}
+        onChange={e => { const mode = e.target.value === "VI_EN" ? "VI_EN" : null; change(c => ({ ...c, languageMode: mode })); }}>
+        <option value="VI">Tiếng Việt</option><option value="VI_EN">Song ngữ Anh – Việt (tiếng Anh trước, tiếng Việt in nghiêng)</option></select></Field>
       <Field label="Tên hợp đồng *"><input required maxLength={1000} className={ui.field} placeholder="Ví dụ: Hợp đồng cung cấp phần mềm…" value={content.name} onChange={e => change(c => ({ ...c, name: e.target.value }))}/></Field>
+      {bilingual && <Field label="Tên hợp đồng tiếng Anh *"><input maxLength={1000} className={ui.field} lang="en" placeholder="Ví dụ: Supply and installation contract" value={content.nameEn ?? ""} onChange={e => { const value = e.target.value; change(c => ({ ...c, nameEn: value })); }}/></Field>}
       <div className={s.columns}><Field label="Ngày hiệu lực"><input type="date" className={ui.field} value={content.effectiveDate ?? ""} onChange={e => change(c => ({ ...c, effectiveDate: e.target.value || null }))}/></Field><Field label="Ngày hết hạn"><input type="date" className={ui.field} min={content.effectiveDate ?? undefined} value={content.expireDate ?? ""} onChange={e => change(c => ({ ...c, expireDate: e.target.value || null }))}/></Field></div>
     </div></section>
     <section id="customer-fields" tabIndex={-1} className={s.section}><h2><Users/>Khách hàng · Bên A</h2><div className={s.fields}>
@@ -102,9 +115,9 @@ export default function DraftEditor({ id }: { id?: string }) {
         <button type="button" className={ui.secondaryButton} onClick={() => setCustomerForm(customerForm ? null : newCustomer())}><Plus size={16}/>{customerForm ? "Đóng tạo khách hàng" : "Tạo nhanh khách hàng"}</button>
         {customerForm && <div className={s.lineItem}><strong style={{ fontSize: 14 }}>Khách hàng mới</strong>{([["name", "Tên hiển thị *"], ["phone", "Số điện thoại *"], ["email", "Email"], ["company", "Tên doanh nghiệp (nếu có)"], ["taxCode", "Mã số thuế doanh nghiệp"], ["address", "Địa chỉ"]] as const).map(([key, label]) => <Field key={key} label={label}><input className={ui.field} value={customerForm[key]} onChange={e => setCustomerForm({ ...customerForm, [key]: e.target.value })}/></Field>)}<button disabled={customerBusy} type="button" className={ui.primaryButton} onClick={createCustomer}>{customerBusy ? "Đang tạo…" : "Tạo và chọn khách hàng"}</button></div>}
       </>}
-      <PartyEditor content={content} change={change}/>{template.fields.filter(f => f.key.startsWith("CUSTOMER_")).map(f => <Field key={f.key} label={f.label + (f.required && !content.fields[f.key]?.trim() ? " · cần hoàn thiện" : "")}><input maxLength={4000} className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key, e.target.value)}/></Field>)}
+      <PartyEditor content={content} change={change}/>{template.fields.filter(f => f.key.startsWith("CUSTOMER_")).map(partyField)}
     </div></section>
-    {<section id="provider-fields" tabIndex={-1} className={s.section}><h2><Building2/>Công ty mình · Bên B</h2><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(f => <Field key={f.key} label={f.label + (f.required && !content.fields[f.key]?.trim() ? " · cần hoàn thiện" : "")}><input maxLength={4000} className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key, e.target.value)}/></Field>)}</div></section>}
+    {<section id="provider-fields" tabIndex={-1} className={s.section}><h2><Building2/>Công ty mình · Bên B</h2><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></section>}
     <section id="contract-items" tabIndex={-1} className={s.section}><h2><Wallet/>Hạng mục và giá trị</h2>
       {content.items.map((item, index) => <div key={index} className={s.lineItem}><header><strong style={{ fontSize: 12 }}>Hạng mục {index + 1}</strong><button type="button" className={s.iconButton} aria-label={`Xóa hạng mục ${index + 1}`} onClick={() => change(c => ({ ...c, items: c.items.filter((_, i) => i !== index) }))}><Trash2 size={16}/></button></header>
         <Field label="Tên sản phẩm / dịch vụ"><input required maxLength={500} className={ui.field} value={item.name} onChange={e => editItem(index, { name: e.target.value })}/></Field>
@@ -117,8 +130,10 @@ export default function DraftEditor({ id }: { id?: string }) {
     </section>
     <section id="contract-terms" tabIndex={-1} className={s.section}><h2><ListChecks/>{template.isImported ? "Nội dung hợp đồng" : "Điều khoản hợp đồng"}</h2>{!template.isImported && <Field label="Căn cứ hợp đồng"><textarea className={`${ui.field} ${s.termContent}`} maxLength={4000} value={content.fields.CONTRACT_LEGAL_BASES ?? ""} onChange={e => setField("CONTRACT_LEGAL_BASES", e.target.value)}/></Field>}
       <div style={{ marginTop: 18 }}>{content.terms.map((term, index) => <div className={s.lineItem} key={term.key}><header><strong style={{ fontSize: 12 }}>Điều {index + 1}{!term.editable ? " · Cố định theo mẫu" : ""}</strong><div><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === 0} aria-label={`Đưa điều ${index + 1} lên`} onClick={() => moveTerm(index, -1)}><ArrowUp size={15}/></button><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === content.terms.length - 1} aria-label={`Đưa điều ${index + 1} xuống`} onClick={() => moveTerm(index, 1)}><ArrowDown size={15}/></button><button type="button" className={s.iconButton} disabled={!term.editable} aria-label={`Xóa điều ${index + 1}`} onClick={() => change(c => ({ ...c, terms: c.terms.filter(t => t.key !== term.key) }))}><Trash2 size={15}/></button></div></header>
-        <Field label="Tiêu đề điều khoản"><input required disabled={!term.editable} maxLength={500} className={ui.field} value={term.title} onChange={e => change(c => ({ ...c, terms: c.terms.map(t => t.key === term.key ? { ...t, title: e.target.value } : t) }))}/></Field>
-        <Field label="Nội dung"><textarea disabled={!term.editable} maxLength={20000} className={`${ui.field} ${s.termContent}`} placeholder="Nhập nội dung điều khoản…" value={term.content} onChange={e => change(c => ({ ...c, terms: c.terms.map(t => t.key === term.key ? { ...t, content: e.target.value } : t) }))}/></Field>
+        <Field label="Tiêu đề điều khoản"><input required disabled={!term.editable} maxLength={500} className={ui.field} value={term.title} onChange={e => setTerm(term.key, { title: e.target.value })}/></Field>
+        <Field label="Nội dung"><textarea disabled={!term.editable} maxLength={20000} className={`${ui.field} ${s.termContent}`} placeholder="Nhập nội dung điều khoản…" value={term.content} onChange={e => setTerm(term.key, { content: e.target.value })}/></Field>
+        {bilingual && <><Field label={`Tiêu đề tiếng Anh${term.editable ? " *" : ""}`}><input maxLength={500} className={ui.field} lang="en" placeholder="Ví dụ: Scope of the work" value={term.titleEn ?? ""} onChange={e => setTerm(term.key, { titleEn: e.target.value })}/></Field>
+          <Field label={`Nội dung tiếng Anh${term.editable ? " *" : ""}`}><textarea maxLength={20000} className={`${ui.field} ${s.termContent}`} lang="en" placeholder="English text of this article…" value={term.contentEn ?? ""} onChange={e => setTerm(term.key, { contentEn: e.target.value })}/></Field></>}
       </div>)}</div><button type="button" disabled={!!content.templateSnapshot?.wordStorageKey} className={ui.secondaryButton} onClick={() => change(c => ({ ...c, terms: [...c.terms, { key: crypto.randomUUID(), title: "Điều khoản bổ sung", content: "", editable: true }] }))}><Plus size={16}/>Thêm điều khoản</button>
     </section><PaymentEditor content={content} change={change}/><section className={s.section}><h2>Thông tin bổ sung theo mẫu</h2>{template.fields.filter(f => !f.key.startsWith("CUSTOMER_") && !f.key.startsWith("PROVIDER_") && f.key !== "CONTRACT_LEGAL_BASES").map(f => <Field key={f.key} label={f.label + (f.required ? " *" : "")} >{f.dataType === "SELECT" ? <select className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}><option value="">Chọn giá trị</option>{f.options?.map(o => <option key={o}>{o}</option>)}</select> : <input className={ui.field} type={f.dataType === "DATE" ? "date" : f.dataType === "NUMBER" ? "number" : "text"} step="any" min={f.min ?? undefined} max={f.max ?? undefined} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}/>}</Field>)}</section><section className={ui.notice}><strong>Nháp có thể lưu khi chưa hoàn thiện</strong>{issues.length > 0 && <ul>{issues.map((issue,i) => <li key={i}><button type="button" className={ui.secondaryButton} onClick={() => focusIssue(issue.path)}>{issue.message}</button></li>)}</ul>}<p className={s.muted} style={{ marginTop: 6 }}>{missing.length ? `Cần bổ sung: ${missing.join(", ")}.` : "Đã đủ các trường thông tin của mẫu. Hợp đồng vẫn là bản nháp, chưa được duyệt hoặc ký."}</p></section>
   </fieldset></form></div>;

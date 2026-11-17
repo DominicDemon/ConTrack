@@ -35,8 +35,15 @@ public static class ContractReviewPolicy
     public static string? CanRespond(string reviewStatus) =>
         ContractReviewStatus.IsOpen(reviewStatus) ? null : "Lần gửi này đã được phản hồi hoặc không còn hiệu lực.";
 
+    /// <summary>Contract sections a customer can comment on besides a term; a comment with neither is a general comment.</summary>
+    public static readonly IReadOnlyDictionary<string, string> CommentSections = new Dictionary<string, string>
+    {
+        ["PARTIES"] = "Thông tin các bên", ["DATES"] = "Thời hạn hợp đồng", ["ITEMS"] = "Hạng mục và giá trị", ["PAYMENT"] = "Lịch thanh toán"
+    };
+
+    /// <param name="hasComments">The customer left comments by section in this review; they are the change request, so no extra note is needed.</param>
     /// <returns>(review status, document status) after the customer's decision.</returns>
-    public static (string Review, int Document) Respond(string reviewStatus, string decision, string? note)
+    public static (string Review, int Document) Respond(string reviewStatus, string decision, string? note, bool hasComments = false)
     {
         if (CanRespond(reviewStatus) is { } error) throw new InvalidOperationException(error);
         var result = decision switch
@@ -46,7 +53,9 @@ public static class ContractReviewPolicy
             "REJECT" => (ContractReviewStatus.Rejected, ContractDocumentStatus.Rejected),
             _ => throw new ArgumentException("Quyết định không hợp lệ.")
         };
-        if (decision != "APPROVE" && string.IsNullOrWhiteSpace(note)) throw new ArgumentException("Vui lòng nhập nội dung yêu cầu sửa hoặc lý do từ chối.");
+        if (decision == "REJECT" && string.IsNullOrWhiteSpace(note)) throw new ArgumentException("Vui lòng nhập lý do từ chối.");
+        if (decision == "REQUEST_CHANGES" && string.IsNullOrWhiteSpace(note) && !hasComments)
+            throw new ArgumentException("Thêm ít nhất một góp ý theo mục hoặc nhập nội dung cần sửa.");
         return result;
     }
 

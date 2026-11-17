@@ -2,15 +2,19 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-export type AddedContent = { id: string; afterBlockId: string; kind: "clause" | "paragraph" | "image"; title: string; text: string;
+export type AddedContent = { id: string; afterBlockId: string; kind: "clause" | "paragraph" | "definition" | "appendix" | "image"; title: string; text: string;
   imageBase64?: string; imageMime?: string; widthCm: number; align: "left" | "center" | "right"; order: number };
+const contentLabels: Record<AddedContent["kind"], string> = {
+  clause: "Điều khoản", paragraph: "Đoạn văn", definition: "Định nghĩa", appendix: "Phụ lục", image: "Ảnh",
+};
+
 export default function WordContentEditor({ value, disabled, onChange, onDelete }: {
   value: AddedContent; disabled: boolean; onChange: (value: AddedContent) => void; onDelete: () => void;
 }) {
   return <fieldset disabled={disabled} className="my-4 rounded border border-blue-200 p-3">
-    <legend>{value.kind === "image" ? "Ảnh mới" : value.kind === "clause" ? "Điều khoản mới" : "Đoạn mới"}</legend>
-    {value.kind !== "paragraph" && <label>{value.kind === "image" ? "Chú thích ảnh (không bắt buộc)" : "Tiêu đề điều khoản"}
-      <Input aria-label={value.kind === "image" ? "Chú thích ảnh" : "Tiêu đề điều khoản mới"} placeholder={value.kind === "clause" ? "Ví dụ: Điều 7: Trách nhiệm của Bên B" : ""}
+    <legend>{contentLabels[value.kind]}</legend>
+    {value.kind !== "paragraph" && <label>{value.kind === "image" ? "Chú thích ảnh (không bắt buộc)" : "Tiêu đề"}
+      <Input aria-label={value.kind === "image" ? "Chú thích ảnh" : "Tiêu đề mục mới"} placeholder={value.kind === "clause" ? "Ví dụ: Điều 7: Trách nhiệm của Bên B" : ""}
         value={value.title} maxLength={500} onChange={e => onChange({...value,title:e.target.value})}/></label>}
     {value.kind === "image" ? <>
       <div className="my-2 flex flex-wrap items-center gap-3">

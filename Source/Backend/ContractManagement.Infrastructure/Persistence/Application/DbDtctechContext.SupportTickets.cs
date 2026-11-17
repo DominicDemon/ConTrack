@@ -4,6 +4,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ContractManagement.Infrastructure.Persistence.Application;
 
+public sealed class MasterSupportContext(DbContextOptions<MasterSupportContext> options) : DbDtctechContext(options)
+{
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        base.OnModelCreating(modelBuilder);
+        ConfigureSupportTickets(modelBuilder);
+    }
+}
+
 public partial class DbDtctechContext
 {
     public virtual DbSet<TICKET_SUPPORT> TICKET_SUPPORT { get; set; } = null!;
@@ -12,6 +21,17 @@ public partial class DbDtctechContext
     public virtual DbSet<TICKET_HISTORY> TICKET_HISTORY { get; set; } = null!;
     public virtual DbSet<TICKET_SUPPORT_EMPLOYEE> TICKET_SUPPORT_EMPLOYEE { get; set; } = null!;
     public virtual DbSet<TICKET_TYPES> TICKET_TYPES { get; set; } = null!;
+
+    private static void ExcludeSupportTablesFromTenantMigrations(ModelBuilder modelBuilder)
+    {
+        // These tables are managed by the Master SQL scripts.
+        modelBuilder.Entity<TICKET_SUPPORT>().ToTable("TICKET_SUPPORT", t => t.ExcludeFromMigrations());
+        modelBuilder.Entity<TICKET_MESSAGE>().ToTable("TICKET_MESSAGE", t => t.ExcludeFromMigrations());
+        modelBuilder.Entity<TICKET_ATTACHMENTS>().ToTable("TICKET_ATTACHMENTS", t => t.ExcludeFromMigrations());
+        modelBuilder.Entity<TICKET_HISTORY>().ToTable("TICKET_HISTORY", t => t.ExcludeFromMigrations());
+        modelBuilder.Entity<TICKET_SUPPORT_EMPLOYEE>().ToTable("TICKET_SUPPORT_EMPLOYEE", t => t.ExcludeFromMigrations());
+        modelBuilder.Entity<TICKET_TYPES>().ToTable("TICKET_TYPES", t => t.ExcludeFromMigrations());
+    }
 
     public static void ConfigureSupportTickets(ModelBuilder modelBuilder)
     {

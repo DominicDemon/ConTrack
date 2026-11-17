@@ -6,6 +6,7 @@ using ContractManagement.Infrastructure.Sms;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
+using ContractManagement.Infrastructure.Persistence.Master;
 
 namespace ContractManagement.API.Internal;
 
@@ -94,6 +95,11 @@ public static class CustomerPortalEndpoints
             return Results.Ok(await r.Get(id, ct));
         });
         api.MapGet("/reviews", async (HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Reviews(Current(c).Id, ct)));
+        api.MapGet("/reviews/{id:long}/word", async (long id, bool? pdf, HttpContext c, ICustomerPortalRepository r, InternalWordTemplates word, CancellationToken ct) => {
+            await r.Review(Current(c).Id, id, ct);
+            var bytes = await word.CustomerWord(id, Current(c).Id, pdf != false, ct);
+            return Results.Ok(new { base64 = Convert.ToBase64String(bytes), contentType = pdf != false ? "application/pdf" : InternalWordDocument.Mime });
+        });
         api.MapGet("/reviews/{id:long}", async (long id, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Review(Current(c).Id, id, ct)));
         api.MapPost("/reviews/{id:long}/comments", async (long id, CommentInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
             Results.Ok(await r.Comment(Current(c).Id, id, input, ct)));

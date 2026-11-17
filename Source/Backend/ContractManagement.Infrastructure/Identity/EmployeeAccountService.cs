@@ -400,7 +400,8 @@ public sealed class EmployeeAccountService : IEmployeeAccountService
         bool asTracking,
         CancellationToken cancellationToken)
     {
-        var actorKind = _httpContextAccessor.HttpContext?.Session.GetString("ActorKind");
+        var session = _httpContextAccessor.HttpContext?.Features.Get<Microsoft.AspNetCore.Http.Features.ISessionFeature>()?.Session;
+        var actorKind = session?.GetString("ActorKind");
         if (string.Equals(actorKind, "Customer", StringComparison.OrdinalIgnoreCase) || employeeId < 0)
         {
             var custId = Math.Abs(employeeId);

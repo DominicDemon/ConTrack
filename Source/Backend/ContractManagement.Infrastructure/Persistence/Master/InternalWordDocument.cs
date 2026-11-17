@@ -216,9 +216,9 @@ public sealed class InternalWordDocument(IConfiguration configuration)
                     throw new ArgumentException("Tiêu đề hoặc nội dung chèn thêm quá dài.");
                 addedLength += item.Title.Length + item.Text.Length;
                 if (addedLength + blocks.Sum(b => b.Text.Length) > 100000) throw new ArgumentException("Nội dung mẫu vượt quá giới hạn.");
-                if (item.Kind == "clause" || item.Kind == "paragraph")
+                if (item.Kind is "clause" or "paragraph" or "definition" or "appendix")
                 {
-                    if (item.Kind == "clause")
+                    if (item.Kind != "paragraph")
                         pending.Add((item.AfterBlockId, item.Order, InheritParagraph(formatSource, item.Title, true)));
                     foreach (var line in item.Text.Split('\n'))
                         pending.Add((item.AfterBlockId, item.Order, InheritParagraph(formatSource, line)));
@@ -377,7 +377,7 @@ public sealed class InternalWordDocument(IConfiguration configuration)
         }
     }
 
-    public static byte[] Fill(byte[] bytes, IReadOnlyDictionary<string, string> values)
+    public static byte[] Fill(byte[] bytes, IReadOnlyDictionary<string, string> values, bool preserveUnknown = false)
     {
         using var stream = new MemoryStream();
         stream.Write(bytes);
@@ -388,6 +388,7 @@ public sealed class InternalWordDocument(IConfiguration configuration)
             var original = string.Concat(TextNodes(paragraph).Select(t => t.Text));
             foreach (Match match in Regex.Matches(original, @"\{\{([A-Z][A-Z0-9_]*)\}\}").Reverse())
             {
+                if (preserveUnknown && !values.ContainsKey(match.Groups[1].Value)) continue;
                 var current = string.Concat(TextNodes(paragraph).Select(t => t.Text));
                 var replacement = values.GetValueOrDefault(match.Groups[1].Value, "");
                 Replace(paragraph, current, current[..match.Index] + replacement + current[(match.Index + match.Length)..]);

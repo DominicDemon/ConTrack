@@ -160,7 +160,8 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!;
         if (!v.ContractVersionIslocked) DraftValidation.Recheck(content);
         var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone);
-        var blocked = ContractReviewPolicy.CanSend(d.ContractDocumentStatus, latest, v.ContractVersionIslocked, content.MissingFields.Count)
+        var internallyApproved = await db.ContractApprovalRequests.AnyAsync(a => a.ContractDocumentId == id && a.ContractVersionId == v.ContractVersionId && a.InternalStage == "APPROVED", ct);
+        var blocked = !internallyApproved ? "Cần Hành chính và Sếp duyệt trước khi gửi khách." : ContractReviewPolicy.CanSend(d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? ContractDocumentStatus.Draft : d.ContractDocumentStatus, latest, d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? false : v.ContractVersionIslocked, content.MissingFields.Count)
             ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null)
             ?? (ReviewLink.ContactEmail(content.Fields, customer.CustomerEmail) is null ? "Nhập email khách hàng trong hợp đồng để gửi link xem." : null);
         var carried = await (from comment in db.ContractNegotiationComments.AsNoTracking()
@@ -211,8 +212,12 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 }
                 else
                 {
+                    // The contract register follows Vietnam's calendar, including the New Year boundary.
+                    var date = now.AddHours(7);
+                    var allocation = await db.Database.SqlQuery<long>($"EXEC dbo.AllocateContractNumber @contract_year={date.Year}").ToListAsync(ct);
+                    var code = FormattableString.Invariant($"HD-{date:yyyyMMdd}-{allocation.Single():D6}");
                     document = new ContractDocument { CustomerId = content.CustomerId, EmployeeId = actor.Id, ContractTemplateId = content.TemplateId,
-                        ContractDocumentName = content.Name, ContractDocumentCode = "DRAFT-" + Guid.NewGuid().ToString("N"), ContractDocumentType = 1,
+                        ContractDocumentName = content.Name, ContractDocumentCode = code, ContractDocumentType = 1,
                         ContractDocumentStatus = 0, CreatedDate = now };
                     db.ContractDocuments.Add(document);
                     await db.SaveChangesAsync(ct);
@@ -221,8 +226,11 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     db.ContractVersions.Add(version);
                     await db.SaveChangesAsync(ct);
                     document.ContractDocumentCurrentVersionId = version.ContractVersionId;
+                    await ContractChecklistService.Capture(db, content.TemplateId, version.ContractVersionId, null, ct);
                 }
                 document.ContractDocumentName = content.Name;
+                content.ContractNumber = document.ContractDocumentCode?.StartsWith("HD-", StringComparison.Ordinal) == true
+                    ? document.ContractDocumentCode : null;
                 document.UpdatedDate = now;
                 version.ContractVersionSubtotal = content.Totals.Subtotal; version.ContractVersionTotaldiscount = content.Totals.Discount;
                 version.ContractVersionTotalvat = content.Totals.Vat; version.ContractVersionTotalamount = content.Totals.Total;

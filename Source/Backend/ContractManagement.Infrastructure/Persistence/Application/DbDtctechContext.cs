@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using ContractManagement.Infrastructure.Persistence.Application.Models;
 using Microsoft.EntityFrameworkCore;
@@ -28,6 +28,11 @@ public partial class DbDtctechContext : DbContext
     }
 
     public DbDtctechContext(DbContextOptions<DbDtctechContext> options)
+        : this((DbContextOptions)options)
+    {
+    }
+
+    protected DbDtctechContext(DbContextOptions options)
         : base(options)
     {
     }
@@ -185,7 +190,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(x => x.ApprovalRequestId);
 
-            entity.ToTable("CONTRACT_APPROVAL_REQUEST", table =>
+            entity.ToTable("tbl_ContractApprovalRequest", table =>
             {
                 table.HasCheckConstraint(
                     "CK_tbl_ContractApprovalRequest_Status",
@@ -276,7 +281,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.WorkflowId).HasName("PK__tbl_Appr__5704A66A2F3CD2A5");
 
-            entity.ToTable("APPROVAL_WORKFLOW");
+            entity.ToTable("tbl_ApprovalWorkflow");
 
             entity.Property(e => e.IsActive).HasDefaultValue(true);
             entity.Property(e => e.ObjectType)
@@ -289,7 +294,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.CategoryId);
 
-            entity.ToTable("CATEGORIES");
+            entity.ToTable("tbl_Categories");
 
             entity.Property(e => e.CategoryId).ValueGeneratedOnAdd();
             entity.Property(e => e.CategoryName).HasMaxLength(500);
@@ -303,7 +308,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.ContractId);
 
-            entity.ToTable("CONTRACTS", table =>
+            entity.ToTable("tbl_Contract", table =>
             {
                 // Chỉ chấp nhận các trạng thái thuộc lifecycle.
                 table.HasCheckConstraint(
@@ -770,7 +775,7 @@ public partial class DbDtctechContext : DbContext
             entity.HasKey(e => e.CommentId)
                 .HasName("PK_tbl_ContractNegotiationComment");
 
-            entity.ToTable("CONTRACT_NEGOTIATION_COMMENT", table =>
+            entity.ToTable("tbl_ContractNegotiationComment", table =>
             {
                 table.HasTrigger(
                     "TR_tbl_ContractNegotiationComment_AppendOnly");
@@ -931,7 +936,7 @@ public partial class DbDtctechContext : DbContext
             entity.HasKey(e => e.VerificationPhoneId)
                 .HasName("PK_tbl_ContractCustomerVerificationPhone");
 
-            entity.ToTable("CONTRACT_PHONE_VERIFY", table =>
+            entity.ToTable("tbl_ContractCustomerVerificationPhone", table =>
             {
                 table.HasCheckConstraint("CK_tbl_ContractCustomerVerificationPhone_ContractId", "[ContractId] > 0");
                 table.HasCheckConstraint("CK_tbl_ContractCustomerVerificationPhone_Source", "[PhoneSource] IN ('CustomerMobile', 'CustomerPhone', 'Manual')");
@@ -956,7 +961,7 @@ public partial class DbDtctechContext : DbContext
             entity.HasKey(e => e.CustomerAccessLinkId)
                 .HasName("PK_tbl_ContractCustomerAccessLink");
 
-            entity.ToTable("CONTRACT_ACCESS_LINK", table =>
+            entity.ToTable("tbl_ContractCustomerAccessLink", table =>
             {
                 table.HasCheckConstraint("CK_tbl_ContractCustomerAccessLink_LogicalIds", "[TenantId] > 0 AND [ContractId] > 0 AND [VersionId] > 0 AND [VerificationPhoneId] > 0 AND [CreatedByEmployeeId] > 0");
                 table.HasCheckConstraint("CK_tbl_ContractCustomerAccessLink_TokenHash", "LEN(LTRIM(RTRIM([TokenHash]))) = 64");
@@ -1070,7 +1075,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.AppendixId).HasName("PK__tbl_Cont__44B149C44BC57074");
 
-            entity.ToTable("CONTRACT_APPENDICES");
+            entity.ToTable("tbl_ContractAppendix");
 
             entity.Property(e => e.AppendixCode)
                 .HasMaxLength(50)
@@ -1144,7 +1149,7 @@ public partial class DbDtctechContext : DbContext
             entity.HasKey(e => e.SignedEvidenceId)
                 .HasName("PK_tbl_ContractSignedEvidence");
 
-            entity.ToTable("CONTRACT_SIGNED_EVIDENCE", table =>
+            entity.ToTable("tbl_ContractSignedEvidence", table =>
             {
                 table.HasCheckConstraint(
                     "CK_tbl_ContractSignedEvidence_Status",
@@ -1252,7 +1257,7 @@ public partial class DbDtctechContext : DbContext
         modelBuilder.Entity<TblContractPaymentMilestone>(entity =>
         {
             entity.HasKey(e => e.PaymentMilestoneId);
-            entity.ToTable("CONTRACT_PAYMENT_MILESTONE", table =>
+            entity.ToTable("tbl_ContractPaymentMilestone", table =>
             {
                 table.HasCheckConstraint("CK_tbl_ContractPaymentMilestone_Percent", "[PaymentPercent] > 0 AND [PaymentPercent] <= 100");
                 table.HasCheckConstraint("CK_tbl_ContractPaymentMilestone_Amount", "[Amount] >= 0");
@@ -1290,7 +1295,7 @@ public partial class DbDtctechContext : DbContext
             entity.HasKey(e => e.TemplateId)
                 .HasName("PK_tbl_ContractTemplate");
 
-            entity.ToTable("CONTRACT_TEMPLATE", table =>
+            entity.ToTable("tbl_ContractTemplate", table =>
             {
                 table.HasCheckConstraint(
                     "CK_tbl_ContractTemplate_TemplateCode",
@@ -1799,7 +1804,7 @@ public partial class DbDtctechContext : DbContext
             entity.HasKey(e => e.TermId)
                 .HasName("PK_tbl_ContractTerm");
 
-            entity.ToTable("CONTRACT_TERM", table =>
+            entity.ToTable("tbl_ContractTerm", table =>
             {
                 // Contract sở hữu term phải là logical ID hợp lệ.
                 table.HasCheckConstraint(
@@ -2127,7 +2132,7 @@ public partial class DbDtctechContext : DbContext
             entity.HasKey(e => e.VersionId)
                 .HasName("PK_tbl_ContractVersion");
 
-            entity.ToTable("CONTRACT_VERSION", table =>
+            entity.ToTable("tbl_ContractVersion", table =>
             {
                 // Contract sở hữu version phải là logical ID hợp lệ.
                 table.HasCheckConstraint(
@@ -2242,7 +2247,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.CustomerId).HasName("PK__tbl_Cust__A4AE64D84BC5AE01");
 
-            entity.ToTable("CUSTOMER");
+            entity.ToTable("tbl_Customers");
 
             entity.Property(e => e.CustomerAccount)
                 .HasMaxLength(50)
@@ -2310,7 +2315,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.InteractionId).HasName("PK__tbl_Cust__922C0496FCECB578");
 
-            entity.ToTable("CUSTOMER_INTERACTION");
+            entity.ToTable("tbl_CustomerInteraction");
 
             entity.Property(e => e.InteractionDate)
                 .HasDefaultValueSql("(getdate())")
@@ -2356,7 +2361,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.DepartmentId).HasName("PK_Department_DepartmentID");
 
-            entity.ToTable("DEPARTMENT");
+            entity.ToTable("tbl_Department");
 
             entity.Property(e => e.DepartmentId).HasColumnName("DepartmentID");
             entity.Property(e => e.DepartmentCode)
@@ -2370,7 +2375,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.EmployeeId).HasName("PK__tbl_Empl__7AD04F11C415E4E3");
 
-            entity.ToTable("EMPLOYEE");
+            entity.ToTable("tbl_Employee");
 
             entity.Property(e => e.DateCreated).HasColumnType("datetime");
             entity.Property(e => e.DateModified).HasColumnType("datetime");
@@ -2451,7 +2456,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.FileId).HasName("PK__tbl_File__6F0F98BF777CA8CB");
 
-            entity.ToTable("FILE_STORAGE");
+            entity.ToTable("tbl_FileStorage");
 
             entity.Property(e => e.FileName).HasMaxLength(300);
             entity.Property(e => e.FilePath).HasMaxLength(1000);
@@ -2531,7 +2536,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.InvoiceId).HasName("PK__tbl_Invo__D796AAB5EDC7461D");
 
-            entity.ToTable("INVOICE");
+            entity.ToTable("tbl_Invoice");
 
             entity.Property(e => e.InvoiceDate).HasColumnType("datetime");
             entity.Property(e => e.InvoiceNo)
@@ -2546,7 +2551,7 @@ public partial class DbDtctechContext : DbContext
         modelBuilder.Entity<TblNotification>(entity =>
         {
             entity.HasKey(e => e.NotificationId);
-            entity.ToTable("NOTIFICATION", table =>
+            entity.ToTable("tbl_Notification", table =>
             {
                 table.HasCheckConstraint("CK_tbl_Notification_EventKey",
                     "LEN(LTRIM(RTRIM([EventKey]))) > 0");
@@ -2567,7 +2572,7 @@ public partial class DbDtctechContext : DbContext
         modelBuilder.Entity<TblNotificationRecipient>(entity =>
         {
             entity.HasKey(e => e.NotificationRecipientId);
-            entity.ToTable("NOTIFICATION_RECIPIENT");
+            entity.ToTable("tbl_NotificationRecipient");
             entity.HasOne(e => e.Notification).WithMany(e => e.Recipients)
                 .HasForeignKey(e => e.NotificationId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<TblEmployee>().WithMany().HasForeignKey(e => e.EmployeeId)
@@ -2634,7 +2639,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.PaymentId).HasName("PK__tbl_Paym__9B556A380D56A7E2");
 
-            entity.ToTable("PAYMENT");
+            entity.ToTable("tbl_Payment");
 
             entity.Property(e => e.PaymentDate).HasColumnType("datetime");
             entity.Property(e => e.PaymentMethod)
@@ -2649,7 +2654,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.ProductId);
 
-            entity.ToTable("PRODUCTS");
+            entity.ToTable("tbl_Products");
 
             entity.Property(e => e.MetaDescription).HasMaxLength(2000);
             entity.Property(e => e.MetaKeyword).HasMaxLength(2000);
@@ -2714,7 +2719,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.ServiceId).HasName("PK__tbl_Serv__C51BB00A20C1E124");
 
-            entity.ToTable("SERVICES");
+            entity.ToTable("tbl_Services");
 
             entity.Property(e => e.DateCreated)
                 .HasDefaultValueSql("(getdate())", "DF_tbl_Services_DateCreated")
@@ -2743,7 +2748,7 @@ public partial class DbDtctechContext : DbContext
         {
             entity.HasKey(e => e.ServiceTypeId);
 
-            entity.ToTable("SERVICE_TYPES");
+            entity.ToTable("tbl_ServiceTypes");
 
             entity.Property(e => e.ServiceTypeId).ValueGeneratedOnAdd();
             entity.Property(e => e.ServiceTypeName).HasMaxLength(200);

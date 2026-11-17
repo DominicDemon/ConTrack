@@ -368,10 +368,10 @@ export default function CustomerSupportTicketsPage() {
               columns={columns}
               data={tickets}
               isLoading={loading}
-              searchColumn="searchInfo"
+              searchKey="searchInfo"
               searchPlaceholder="Tìm theo mã yêu cầu, tiêu đề, dịch vụ, phòng ban..."
-              customFilters={CustomFilters}
-              onRowClick={(row) => handleView(row.original.ticketSupportId)}
+              filterSlot={CustomFilters}
+              onRowClick={(row) => handleView(row.ticketSupportId)}
             />
           </CardContent>
         </Card>

@@ -83,7 +83,21 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
     public async Task<WordPreview> Preview(WordTemplateInput input, long actor, CancellationToken ct)
     {
         var document = Prepare(input, actor);
-        var pdf = await word.Pdf(input.ManualContent ? document : InternalWordDocument.Fill(document, input.SampleValues), ct);
+        var sample = new Dictionary<string, string>
+        {
+            ["CONTRACT_NUMBER"] = "HD-20261117-000001",
+            ["VAT"] = "100.000",
+            ["TOTAL_AMOUNT"] = "1.100.000",
+            ["PAYMENT_METHOD"] = "Chuyển khoản",
+            ["PAYMENT_SCHEDULE"] = "Đợt 1: 1.100.000 VND — 5 ngày lịch sau ngày ký đủ"
+        };
+        var previewDocument = !input.ManualContent
+            ? InternalWordDocument.Fill(document, input.SampleValues)
+            : input.DocumentType == 1 && InternalWordDocument.Blocks(document).Any(block =>
+                sample.Keys.Any(key => block.Text.Contains("{{" + key + "}}", StringComparison.Ordinal)))
+                ? InternalWordDocument.Fill(document, sample, preserveUnknown: true)
+                : document;
+        var pdf = await word.Pdf(previewDocument, ct);
         var receipt = new Receipt(actor, Fingerprint(input), Hash(InternalWordDocument.Decode(input.Base64)), Hash(document), DateTime.UtcNow.AddHours(2));
         return new(Convert.ToBase64String(pdf), protector.Protect(JsonSerializer.Serialize(receipt)));
     }
@@ -91,6 +105,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
     public async Task<TemplateDefinition> Activate(WordActivation request, long actor, CancellationToken ct)
     {
         var input = request.Input;
+        if (input.DocumentType == 1) ContractChecklistService.ValidateRules(input.ChecklistRules);
         var receipt = ReadReceipt(request.PreviewToken, actor);
         if (receipt.Fingerprint != Fingerprint(input)) throw new ArgumentException("Nội dung đã thay đổi. Hãy xem trước lại trước khi kích hoạt.");
         var document = Prepare(input, actor);
@@ -117,6 +132,9 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                 db.ContractTemplates.Add(template);
                 await db.SaveChangesAsync(ct);
                 Directory.CreateDirectory(storage.Root);
+                if (input.DocumentType == 1)
+                    db.Set<ContractChecklist>().Add(new() { TemplateId = template.ContractTemplateId, Configured = true,
+                        Rules = JsonSerializer.Serialize(input.ChecklistRules) });
                 async Task<string> Store(byte[] bytes, string extension, string objectType, string mime, string filename)
                 {
                     var key = Guid.NewGuid().ToString("N") + extension;
@@ -133,20 +151,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                 await Store(InternalWordDocument.Decode(input.Base64), ext, "INTERNAL_TEMPLATE_SOURCE", ext == ".doc" ? "application/msword" : InternalWordDocument.Mime, Path.GetFileName(input.FileName));
                 var key = await Store(document, ".docx", "INTERNAL_TEMPLATE_WORD", InternalWordDocument.Mime, input.Name + ".docx");
                 var fields = DraftCompletionPolicy.PartyFields.Concat(input.Fields).ToList();
-                var terms = InternalWordDocument.Blocks(document).Where(b => !string.IsNullOrWhiteSpace(b.Text))
-                    .Select(b => new DraftTerm("WORD_" + b.Id, b.Location + " " + b.Id, InternalDraftPolicy.Text(b.Text, 20000), false)).ToList();
-                // Large Word files remain a single immutable body in the draft data model.
-                if (terms.Count > 100)
-                {
-                    var grouped = new List<DraftTerm>();
-                    foreach (var term in terms)
-                    {
-                        if (grouped.Count == 0 || grouped[^1].Content.Length + term.Content.Length + 1 > 20000)
-                            grouped.Add(new("WORD_BODY_" + grouped.Count, "Nội dung Word " + (grouped.Count + 1), term.Content, false));
-                        else grouped[^1] = grouped[^1] with { Content = grouped[^1].Content + "\n" + term.Content };
-                    }
-                    terms = grouped;
-                }
+                var terms = WordTerms(document);
                 var definition = new TemplateDefinition(template.ContractTemplateId, template.ContractTemplateName, code, false,
                     fields, terms, true, input.DocumentType, key, Hash(document), input.ManualContent);
                 await Store(JsonSerializer.SerializeToUtf8Bytes(definition, InternalRepository.Json), ".json", "INTERNAL_TEMPLATE", "application/json", input.Name + ".json");
@@ -154,7 +159,8 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                     ContractTemplateFieldKey = field.Key, ContractTemplateFieldLabel = field.Label, ContractTemplateFieldDataType = field.DataType,
                     IsRequired = field.Required, ExtraOptions = JsonSerializer.Serialize(new { field.Options, field.Min, field.Max }, InternalRepository.Json) });
                 db.AuditLogs.Add(new() { ActionType = "CREATE", EntityName = "CONTRACT_TEMPLATE", EntityId = template.ContractTemplateId.ToString(),
-                    ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow });
+                    ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow,
+                    NewData = JsonSerializer.Serialize(new { checklistRules = input.ChecklistRules }) });
                 await db.SaveChangesAsync(ct);
                 commitAttempted = true;
                 await tx.CommitAsync(ct);
@@ -181,6 +187,102 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         });
     }
 
+    private static List<DraftTerm> WordTerms(byte[] document)
+    {
+        var terms = InternalWordDocument.Blocks(document).Where(b => !string.IsNullOrWhiteSpace(b.Text))
+            .Select(b => new DraftTerm("WORD_" + b.Id, b.Location + " " + b.Id, InternalDraftPolicy.Text(b.Text, 20000), false)).ToList();
+        // Large Word files remain a single immutable body in the draft data model.
+        if (terms.Count > 100)
+        {
+            var grouped = new List<DraftTerm>();
+            foreach (var term in terms)
+            {
+                if (grouped.Count == 0 || grouped[^1].Content.Length + term.Content.Length + 1 > 20000)
+                    grouped.Add(new("WORD_BODY_" + grouped.Count, "Nội dung Word " + (grouped.Count + 1), term.Content, false));
+                else grouped[^1] = grouped[^1] with { Content = grouped[^1].Content + "\n" + term.Content };
+            }
+            terms = grouped;
+        }
+        return terms;
+    }
+
+    public async Task SaveDraftWord(long id, WordDraftSave request, InternalUser actor, CancellationToken ct)
+    {
+        if (!actor.CanCheck) throw new InternalAppException(403, "Chỉ Hành chính được chỉnh nội dung Word.");
+        var receipt = ReadReceipt(request.Document.PreviewToken, actor.Id);
+        if (receipt.Fingerprint != Fingerprint(request.Document.Input)) throw new ArgumentException("Hãy xem trước lại nội dung đã sửa.");
+        var bytes = Prepare(request.Document.Input, actor.Id);
+        if (receipt.DocumentHash != Hash(bytes)) throw new ArgumentException("Nội dung không khớp bản đã xem trước.");
+        var key = Guid.NewGuid().ToString("N") + ".docx";
+        var path = Path.Combine(storage.Root, key);
+        Directory.CreateDirectory(storage.Root);
+        await File.WriteAllBytesAsync(path, bytes, ct);
+        try
+        {
+            await ReviewData.InTransaction(db, async () =>
+            {
+                var doc = await db.ContractDocuments.SingleAsync(d => d.ContractDocumentId == id && d.TenantId == null, ct);
+                var version = await db.ContractVersions.SingleAsync(v => v.ContractVersionId == doc.ContractDocumentCurrentVersionId, ct);
+                ReviewData.Expect(doc.RowVersion, request.RowVersion);
+                ReviewData.Expect(version.ContractVersionRowversion, request.VersionRowVersion);
+                if (!ContractReviewPolicy.CanEdit(doc.ContractDocumentStatus, version.ContractVersionIslocked)) throw new InternalAppException(409, "Trả hồ sơ về chỉnh sửa trước khi sửa Word.");
+                var snapshot = await db.ContractDynamicValues.SingleAsync(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
+                var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
+                var template = content.TemplateSnapshot ?? throw new InternalAppException(409, "Thiếu bản chụp mẫu.");
+                var terms = WordTerms(bytes);
+                content.TemplateSnapshot = template with { WordStorageKey = key, WordSha256 = Hash(bytes), ManualWordContent = true, Terms = terms };
+                content.Terms = terms;
+                var storedTerms = await db.ContractTerms.Where(t => t.ContractDocumentId == id && t.ContractVersionId == version.ContractVersionId).ToListAsync(ct);
+                foreach (var term in terms)
+                {
+                    var stored = storedTerms.FirstOrDefault(t => t.ContractTermTermcode == term.Key);
+                    if (stored is null)
+                    {
+                        stored = new() { ContractDocumentId = id, ContractVersionId = version.ContractVersionId, ContractTermTermcode = term.Key, CreatedAt = DateTime.UtcNow };
+                        db.ContractTerms.Add(stored);
+                    }
+                    stored.ContractTermTermtitle = term.Title;
+                    stored.ContractTermTermcontent = term.Content;
+                    stored.ContractTermDisplayorder = terms.IndexOf(term);
+                    stored.ContractTermIsnegotiable = true;
+                }
+                foreach (var removed in storedTerms.Where(t => terms.All(x => x.Key != t.ContractTermTermcode)))
+                {
+                    removed.ContractTermTermcontent = "";
+                    removed.ContractTermTermtitle = "Nội dung đã xóa — chọn lại liên kết thanh toán";
+                }
+                DraftValidation.Recheck(content);
+                snapshot.FieldValue = JsonSerializer.Serialize(content, InternalRepository.Json);
+                var now = DateTime.UtcNow;
+                doc.UpdatedDate = now;
+                version.ContractVersionChangenote = "Sửa nội dung Word " + now.ToString("O");
+                db.FileStorages.Add(new() { FileStorageObjecttype = "CONTRACT_VERSION", FileStorageObjectid = version.ContractVersionId,
+                    FileStorageStoragekey = key, FileStorageSha256 = Hash(bytes), FileStorageContenttype = InternalWordDocument.Mime, FileStorageFilesize = bytes.Length,
+                    FileStorageFilename = request.Document.Input.Name + ".docx", FileStorageFilepath = key, FileStorageFiletype = "DOCX",
+                    FileStorageUploadedbyemployeeid = actor.Id, FileStorageUploadeddate = now });
+                ReviewData.Audit(db, "EDIT_WORD", "CONTRACT_DOCUMENTS", id, "EMPLOYEE", actor.Id, now);
+                await db.SaveChangesAsync(ct);
+                return true;
+            }, ct);
+        }
+        catch
+        {
+            db.ChangeTracker.Clear();
+            if (!await db.FileStorages.AnyAsync(f => f.FileStorageStoragekey == key, CancellationToken.None)) File.Delete(path);
+            throw;
+        }
+    }
+
+    public async Task<byte[]> CustomerWord(long reviewId, long customerId, bool pdf, CancellationToken ct)
+    {
+        var review = await db.ContractReviewRequests.AsNoTracking().SingleOrDefaultAsync(r => r.ContractReviewRequestId == reviewId && r.CustomerId == customerId, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng.");
+        var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleAsync(x => x.ContractDocumentId == review.ContractDocumentId && x.ContractVersionId == review.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
+        if (SnapshotHash.Compute(snapshot.FieldValue) != review.ContractReviewRequestDocumentHash) throw new InternalAppException(409, "Nội dung không khớp bản đã gửi.");
+        var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
+        return await Render(content, content.TemplateSnapshot!, pdf, ct);
+    }
+
     public async Task<byte[]> ReadWord(TemplateDefinition template, CancellationToken ct)
     {
         if (template.WordStorageKey is null || Path.GetFileName(template.WordStorageKey) != template.WordStorageKey)
@@ -199,15 +301,26 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         InternalDraftPolicy.Prepare(content, template, forPreview: true);
         var bytes = await ReadWord(template, ct);
         var culture = CultureInfo.GetCultureInfo("vi-VN");
-        var values = new Dictionary<string, string>(content.Fields)
+        var legacy = content.ContractNumber is null && content.PaymentMethod is null;
+        string Money(decimal amount) => amount.ToString(legacy ? "N2" : "#,0.##", culture);
+        string Due(DraftMilestone milestone) => milestone.Anchor == "DATE"
+            ? milestone.DueDate?.ToString("dd/MM/yyyy", culture) ?? "Chưa chọn ngày"
+            : $"{milestone.OffsetDays} ngày lịch sau {(milestone.Anchor == "SIGNED" ? "ngày ký đủ" : "ngày bàn giao")}";
+        var values = new Dictionary<string, string>(template.ManualWordContent ? [] : content.Fields)
         {
             ["CONTRACT_NAME"] = content.Name, ["EFFECTIVE_DATE"] = content.EffectiveDate?.ToString("dd/MM/yyyy") ?? "",
             ["EXPIRE_DATE"] = content.ExpireDate?.ToString("dd/MM/yyyy") ?? "",
-            ["SUBTOTAL"] = content.Totals.Subtotal.ToString("N2", culture), ["DISCOUNT"] = content.Totals.Discount.ToString("N2", culture),
-            ["VAT"] = content.Totals.Vat.ToString("N2", culture), ["TOTAL_AMOUNT"] = content.Totals.Total.ToString("N2", culture),
-            ["PAYMENT_SCHEDULE"] = string.Join("; ", content.Milestones.Select(m => m.Title + ": " + m.Amount.ToString("N2", culture)))
+            ["CONTRACT_NUMBER"] = content.ContractNumber ?? "",
+            ["PAYMENT_METHOD"] = InternalDraftPolicy.PaymentMethodLabel(content.PaymentMethod),
+            ["SUBTOTAL"] = Money(content.Totals.Subtotal), ["DISCOUNT"] = Money(content.Totals.Discount),
+            ["VAT"] = Money(content.Totals.Vat), ["TOTAL_AMOUNT"] = Money(content.Totals.Total),
+            ["PAYMENT_SCHEDULE"] = string.Join("; ", content.Milestones.Select(m =>
+                legacy ? $"{m.Title}: {Money(m.Amount)}"
+                    : $"{m.Title}: {Money(m.Amount)} VND — {Due(m)}{(string.IsNullOrEmpty(m.Condition) ? "" : "; " + m.Condition)}"))
         };
-        var filled = template.ManualWordContent ? bytes : InternalWordDocument.Fill(bytes, values);
+        var filled = template.ManualWordContent && (content.ContractNumber is null ||
+            !InternalWordDocument.Blocks(bytes).Any(block => values.Keys.Any(key => block.Text.Contains("{{" + key + "}}", StringComparison.Ordinal))))
+            ? bytes : InternalWordDocument.Fill(bytes, values, preserveUnknown: template.ManualWordContent);
         return pdf ? await word.Pdf(filled, ct) : filled;
     }
 }

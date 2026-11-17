@@ -35,12 +35,21 @@ public class InternalWordSampleTests
         await File.WriteAllTextAsync(Path.Combine(root,"ConTrack","Source",".local","word-acceptance","detected-details.json"), System.Text.Json.JsonSerializer.Serialize(details));
         var anchor = blocks.First(b => b.Text.StartsWith("Năng lực và nhu cầu"));
         var edited = InternalWordDocument.Edit(normalized, blocks, additions:
-            [new("format-check", anchor.Id, "paragraph", "", "NOIDUNGMOI điều khoản hợp đồng có hiệu lực")]);
+            [new("format-check", anchor.Id, "paragraph", "", "NOIDUNGMOI điều khoản hợp đồng có hiệu lực", Order: 1),
+             new("definition", anchor.Id, "definition", "Định nghĩa", "DINHNGHIATEST", Order: 2),
+             new("appendix", anchor.Id, "appendix", "Phụ lục", "PHULUCTEST", Order: 3)]);
+        var reloaded = InternalWordDocument.Blocks(edited).Select(b => b.Text).ToList();
+        var definition = reloaded.IndexOf("Định nghĩa");
+        Assert.True(definition >= 0);
+        Assert.Equal(new[] { "Định nghĩa", "DINHNGHIATEST", "Phụ lục", "PHULUCTEST" }, reloaded.Skip(definition).Take(4));
         var pdf = await word.Pdf(edited, default);
         var output = Path.Combine(root, "ConTrack", "Source", ".local", "word-acceptance", "paragraph-formatting.pdf");
         await File.WriteAllBytesAsync(output, pdf);
         using var document = UglyToad.PdfPig.PdfDocument.Open(pdf);
         var words = document.GetPages().SelectMany(p => p.GetWords()).ToList();
+        var definitionBody = words.FindIndex(w => w.Text == "DINHNGHIATEST");
+        Assert.True(definitionBody >= 0);
+        Assert.True(words.FindIndex(w => w.Text == "PHULUCTEST") > definitionBody);
         var original = words.First(w => w.Text == "Năng");
         var inserted = words.Single(w => w.Text == "NOIDUNGMOI");
         Assert.Equal(original.Letters[0].FontName, inserted.Letters[0].FontName);
@@ -90,7 +99,7 @@ public class InternalWordSampleTests
             values["REQUEST_AMOUNT"] = "7500000";
             if (type != 5) { values.Remove("APPENDIX_CODE"); values.Remove("REQUEST_AMOUNT"); }
             var input = new WordTemplateInput(source.FileName, source.Base64, extraction.DocumentBase64, "TEST_WORD_" + type,
-                type, blocks, fields, values, extraction.SourceToken);
+                type, blocks, fields, values, extraction.SourceToken, ChecklistRules: ["payment", "responsibility"]);
             if (type == 1)
             {
                 input = input with { Tables = [new("acceptance-table", blocks[0].Id, true,
@@ -168,6 +177,7 @@ public class InternalWordSampleTests
                     var stored = await db.FileStorages.Where(f => f.FileStorageObjectid == template.Id && f.FileStorageObjecttype.StartsWith("INTERNAL_TEMPLATE")).ToListAsync();
                     await db.FileStorages.Where(f => f.FileStorageObjectid == template.Id && f.FileStorageObjecttype.StartsWith("INTERNAL_TEMPLATE")).ExecuteDeleteAsync();
                     await db.ContractTemplateFields.Where(f => f.ContractTemplateId == template.Id).ExecuteDeleteAsync();
+                    await db.Set<ContractManagement.Domain.Entities.Master.ContractChecklist>().Where(f => f.TemplateId == template.Id).ExecuteDeleteAsync();
                     await db.ContractTemplates.Where(t => t.ContractTemplateId == template.Id).ExecuteDeleteAsync();
                     await db.AuditLogs.Where(a => a.EntityName == "CONTRACT_TEMPLATE" && a.EntityId == template.Id.ToString()).ExecuteDeleteAsync();
                     foreach (var item in stored) File.Delete(Path.Combine(storage.Root, item.FileStorageStoragekey));

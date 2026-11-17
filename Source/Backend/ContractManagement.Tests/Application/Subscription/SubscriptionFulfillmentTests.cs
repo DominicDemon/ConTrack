@@ -154,7 +154,12 @@ public sealed class SubscriptionFulfillmentTests
         Assert.Contains("trial-org", message.TextBody);
         Assert.Contains(password, message.TextBody);
         Assert.Contains("http://app.test/", message.HtmlBody);
-        Assert.DoesNotContain(await db.Customers.Select(c => c.CustomerPasswordHash).ToListAsync(), h => h != null);
+        var storedHash = await db.Customers.Where(c => c.CustomerId == subscription.CustomerId)
+            .Select(c => c.CustomerPasswordHash).SingleAsync();
+        Assert.NotNull(storedHash);
+        Assert.NotEqual(password, storedHash);
+        Assert.Equal(Microsoft.AspNetCore.Identity.PasswordVerificationResult.Success,
+            new Microsoft.AspNetCore.Identity.PasswordHasher<TblEmployee>().VerifyHashedPassword(new TblEmployee(), storedHash, password));
     }
 
     [Fact]

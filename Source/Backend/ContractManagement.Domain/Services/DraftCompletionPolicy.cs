@@ -13,7 +13,7 @@ public static class DraftCompletionPolicy
         new("CUSTOMER_ADDRESS", "Địa chỉ khách hàng", true), new("CUSTOMER_EMAIL", "Email"), new("CUSTOMER_TAX_CODE", "Mã số thuế"),
         new("PROVIDER_LEGAL_NAME", "Tên pháp lý công ty", true), new("PROVIDER_REPRESENTATIVE_NAME", "Đại diện công ty", true),
         new("PROVIDER_ADDRESS", "Địa chỉ công ty", true), new("PROVIDER_TAX_CODE", "Mã số thuế công ty", true)];
-    public static readonly string[] ComputedKeys = ["SUBTOTAL", "DISCOUNT", "VAT", "TOTAL_AMOUNT", "PAYMENT_SCHEDULE", "CONTRACT_NAME", "EFFECTIVE_DATE", "EXPIRE_DATE"];
+    public static readonly string[] ComputedKeys = ["SUBTOTAL", "DISCOUNT", "VAT", "TOTAL_AMOUNT", "PAYMENT_SCHEDULE", "CONTRACT_NAME", "EFFECTIVE_DATE", "EXPIRE_DATE", "CONTRACT_NUMBER", "PAYMENT_METHOD"];
     public static TemplateDefinition UpgradeTemplate(TemplateDefinition template) => template.IsImported
         ? template with { Fields = template.Fields.Concat(PartyFields.Where(f => template.Fields.All(x => x.Key != f.Key))).ToList() } : template;
     public static void ValidateTemplate(TemplateDefinition template)

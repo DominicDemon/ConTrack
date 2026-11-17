@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { internalApi, type DraftContent } from "@/services/internal-api";
 import { wordBlob } from "./template-upload";
 
-export default function WordDraftPreview({ content, draftId }: { content: DraftContent; draftId?: string }) {
+export default function WordDraftPreview({ content, draftId, dirty = false }: { content: DraftContent; draftId?: string; dirty?: boolean }) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [renderedContent, setRenderedContent] = useState("");
+  const needsSave = !!draftId && dirty;
   const signature = content.templateSnapshot?.manualWordContent
-    ? JSON.stringify([draftId,content.templateId,content.templateSnapshot.wordSha256]) : JSON.stringify(content);
+    ? JSON.stringify([draftId,content.templateId,content.templateSnapshot.wordSha256, content.contractNumber, content.paymentMethod, content.items, content.vatPercent, content.milestones]) : JSON.stringify(content);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   async function render(pdf: boolean) {
     setBusy(true); setError("");
@@ -33,11 +34,12 @@ export default function WordDraftPreview({ content, draftId }: { content: DraftC
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   return <div className="p-4 space-y-3">
-    <div className="flex gap-2"><Button type="button" disabled={busy} onClick={() => void render(true)}>Xem trước Word</Button>
-      <Button type="button" variant="outline" disabled={busy} onClick={() => void render(false)}>Tải DOCX</Button></div>
+    <div className="flex gap-2"><Button type="button" disabled={busy || needsSave} onClick={() => void render(true)}>Xem trước Word</Button>
+      <Button type="button" variant="outline" disabled={busy || needsSave} onClick={() => void render(false)}>Tải DOCX</Button></div>
+    {needsSave && <p>Lưu thay đổi để xem bản Word với số liệu mới.</p>}
     {busy && <p role="status">Đang dựng tài liệu…</p>}
     {error && <p role="alert" className="text-red-700">{error}</p>}
-    {url && renderedContent !== signature && <p>Nội dung đã thay đổi. Bấm xem trước để cập nhật.</p>}
-    {url && renderedContent === signature && <WordPdfViewer key={url} url={url}/>}
+    {!needsSave && url && renderedContent !== signature && <p>Nội dung đã thay đổi. Bấm xem trước để cập nhật.</p>}
+    {!needsSave && url && renderedContent === signature && <WordPdfViewer key={url} url={url}/>}
   </div>;
 }

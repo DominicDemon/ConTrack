@@ -23,6 +23,12 @@ public sealed class AcceptanceSignDateMigrationTests
         Assert.True(column.IsNullable);
         Assert.Null(column.DefaultValue); Assert.Null(column.DefaultValueSql);
         Assert.IsType<DropColumnOperation>(Assert.Single(migration.DownOperations));
-        Assert.False(db.Database.HasPendingModelChanges());
+        var snapshot = db.GetService<IModelRuntimeInitializer>().Initialize(assembly.ModelSnapshot!.Model, designTime: true);
+        var differences = db.GetService<IMigrationsModelDiffer>().GetDifferences(
+            snapshot.GetRelationalModel(), db.GetService<Microsoft.EntityFrameworkCore.Metadata.IDesignTimeModel>().Model.GetRelationalModel());
+        Assert.True(differences.Count == 0, string.Join(Environment.NewLine, differences.Select(operation =>
+            operation is TableOperation table ? $"{operation.GetType().Name}: {table.Name}"
+                : operation is ColumnOperation columnOperation ? $"{operation.GetType().Name}: {columnOperation.Table}.{columnOperation.Name}"
+                : operation.GetType().Name)));
     }
 }

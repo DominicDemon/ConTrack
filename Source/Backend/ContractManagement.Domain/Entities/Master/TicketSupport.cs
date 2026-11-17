@@ -9,6 +9,8 @@ public partial class TicketSupport
 
     public long? CustomerId { get; set; }
 
+    public long? DepartmentId { get; set; }
+
     public long? TenantId { get; set; }
 
     public long? ProductId { get; set; }

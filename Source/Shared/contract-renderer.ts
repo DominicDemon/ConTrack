@@ -17,8 +17,18 @@ export function renderContract(content: DraftContent) {
     return { ...m, amount, due };
   });
   const fields: Record<string, string> = { ...content.fields, CONTRACT_NAME: content.name, EFFECTIVE_DATE: content.effectiveDate ?? "", EXPIRE_DATE: content.expireDate ?? "",
+    CONTRACT_NUMBER: content.contractNumber ?? "", PAYMENT_METHOD: paymentMethodLabel(content.paymentMethod),
     SUBTOTAL: money(totals.subtotal), DISCOUNT: money(totals.discount), VAT: money(totals.vat), TOTAL_AMOUNT: money(totals.total),
     PAYMENT_SCHEDULE: milestones.map(m => `${m.title}: ${money(m.amount)} VND — ${m.due}${m.condition ? "; " + m.condition : ""}`).join("\n") };
   const resolve = (text: string) => text.replace(/\{\{([^{}]*)\}\}/g, (_, key: string) => fields[key]?.trim() || `[Chưa điền: ${key}]`);
   return { totals, milestones, terms: content.terms.map(t => ({ ...t, title: (content.formatVersion ?? 1) < 2 ? t.title : resolve(t.title), content: (content.formatVersion ?? 1) < 2 ? t.content : resolve(t.content) })) };
+}
+
+export function paymentMethodLabel(method: DraftContent["paymentMethod"]): string {
+  switch (method) {
+    case "BANK_TRANSFER": return "Chuyển khoản";
+    case "CASH": return "Tiền mặt";
+    case "CASH_OR_TRANSFER": return "Tiền mặt hoặc chuyển khoản";
+    default: return "";
+  }
 }

@@ -49,7 +49,9 @@ public sealed class BilingualSchemaTests
         var assembly = db.GetService<IMigrationsAssembly>();
         var info = assembly.Migrations.Single(x => x.Key.EndsWith(suffix));
         var migration = assembly.CreateMigration(info.Value, db.Database.ProviderName!);
-        Assert.True(migration.TargetModel.FindEntityType(entity.FullName!)!.FindProperty(field)!.IsNullable);
+        var table = db.Model.FindEntityType(entity)!.GetTableName();
+        var historicalEntity = Assert.Single(migration.TargetModel.GetEntityTypes(), e => e.GetTableName() == table);
+        Assert.True(historicalEntity.FindProperty(field)!.IsNullable);
     }
 
     [Fact]

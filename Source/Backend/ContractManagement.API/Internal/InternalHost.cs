@@ -4,6 +4,7 @@ using System.Threading.RateLimiting;
 using ContractManagement.API.Domains.Email;
 using ContractManagement.API.Domains.Support;
 using ContractManagement.Application.Features.Internal;
+using ContractManagement.Infrastructure.Persistence.Application;
 using ContractManagement.Infrastructure.Persistence.Master;
 using ContractManagement.Infrastructure.Sms;
 using Microsoft.AspNetCore.DataProtection;
@@ -37,11 +38,15 @@ public static class InternalHost
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
         builder.Services.AddScoped<InternalWordDocument>();
         builder.Services.AddScoped<InternalWordTemplates>();
+        builder.Services.AddScoped<InternalApprovalService>();
+        builder.Services.AddScoped<ContractChecklistService>();
+        builder.Services.AddScoped<ContractProgressService>();
         builder.Services.AddScoped<IEmployeeAdmin, EmployeeAdminRepository>();
         builder.Services.AddScoped<ICatalogAdmin, CatalogRepository>();
         // Ticket workflow from main reads TICKET_* through the application context, here pointed at MASTER (no tenant in Internal mode).
-        builder.Services.AddDbContext<ContractManagement.Infrastructure.Persistence.Application.DbDtctechContext>(o =>
+        builder.Services.AddDbContext<MasterSupportContext>(o =>
             o.UseSqlServer(builder.Configuration.GetConnectionString("MasterDatabase"), sql => sql.EnableRetryOnFailure()));
+        builder.Services.AddScoped<DbDtctechContext>(s => s.GetRequiredService<MasterSupportContext>());
         builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
         builder.Services.AddScoped<IContractReviewRepository, ContractReviewRepository>();
         builder.Services.AddScoped<ICustomerPortalRepository, CustomerPortalRepository>();
@@ -214,12 +219,41 @@ public static class InternalHost
             var c = invocation.HttpContext;
             var user = await User(c, c.RequestServices.GetRequiredService<IInternalRepository>(), c.RequestAborted);
             RequirePasswordChanged(user);
-            if (!user.CanWrite) throw new InternalAppException(403, "Bạn không có quyền sử dụng chức năng hợp đồng nháp.");
+            if (!user.CanWrite && !user.CanCheck && !user.CanApprove && !user.CanManageTemplates) throw new InternalAppException(403, "Bạn không có quyền sử dụng chức năng hợp đồng.");
+            var path = c.Request.Path.Value ?? "";
+            if (!HttpMethods.IsGet(c.Request.Method) && !user.CanWrite && !user.CanCheck && !user.CanManageTemplates
+                && !path.Contains("/approval/") && !path.EndsWith("/internal-comments") && !path.EndsWith("/word-preview"))
+                throw new InternalAppException(403, "Bạn chỉ có quyền xem và duyệt hồ sơ.");
+            if (path.StartsWith("/api/internal/contract-templates/") && (path.EndsWith("/extract") || path.EndsWith("/preview") || path.EndsWith("/activate") || path.EndsWith("/import")) && !user.CanManageTemplates)
+                throw new InternalAppException(403, "Chỉ Hành chính được quản lý mẫu hợp đồng.");
             c.Items[UserKey] = user;
             if (!HttpMethods.IsGet(c.Request.Method)) await c.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(c);
             return await next(invocation);
         });
+        secured.MapGet("/contract-drafts/{id:long}/approval", async (long id, HttpContext c, InternalApprovalService s, CancellationToken ct) => Results.Ok(await s.View(id, Current(c), ct)));
+        secured.MapPost("/contract-drafts/{id:long}/approval/{action}", async (long id, string action, ApprovalAction input, HttpContext c, InternalApprovalService s, CancellationToken ct) => { await s.Act(id, action, input, Current(c), ct); return Results.NoContent(); });
+        secured.MapPost("/contract-drafts/{id:long}/internal-comments", async (long id, InternalCommentInput input, HttpContext c, InternalApprovalService s, CancellationToken ct) => { await s.Comment(id, input, Current(c), ct); return Results.NoContent(); });
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
+        secured.MapGet("/contract-progress", async ([AsParameters] ProgressFilter filter, HttpContext c, ContractProgressService service, CancellationToken ct) => Results.Ok(await service.List(filter, Current(c), ct)));
+        secured.MapGet("/checklist-rules", () => Results.Ok(ContractChecklistService.Catalog));
+        secured.MapGet("/contract-templates/{id:long}/checklist", async (long id, HttpContext c, ContractChecklistService service, CancellationToken ct) => Results.Ok(await service.Template(id, Current(c), ct)));
+        secured.MapPut("/contract-templates/{id:long}/checklist", async (long id, ChecklistInput input, HttpContext c, ContractChecklistService service, CancellationToken ct) => { await service.SaveTemplate(id, input, Current(c), ct); return Results.NoContent(); });
+        secured.MapGet("/contract-drafts/{id:long}/checklist", async (long id, HttpContext c, ContractChecklistService service, CancellationToken ct) => Results.Ok(await service.Inspect(id, Current(c), ct)));
+        secured.MapPost("/contract-drafts/{id:long}/checklist", async (long id, ChecklistDecision input, HttpContext c, ContractChecklistService service, CancellationToken ct) => { await service.Decide(id, input, Current(c), ct); return Results.NoContent(); });
+        var wordDrafts = secured.MapGroup("/contract-drafts/{id:long}/word").AddEndpointFilter(async (invocation, next) => {
+            if (!Current(invocation.HttpContext).CanCheck) throw new InternalAppException(403, "Chỉ Hành chính được sửa nội dung Word.");
+            return await next(invocation);
+        });
+        wordDrafts.MapPost("/extract", async (long id, HttpContext c, InternalDraftService drafts, InternalWordTemplates service, CancellationToken ct) => {
+            var draft = await drafts.Get(id, Current(c), ct);
+            if (!draft.CanEdit) throw new InternalAppException(409, "Hồ sơ đang khóa.");
+            var bytes = await service.ReadWord(draft.Content.TemplateSnapshot!, ct);
+            return Results.Ok(await service.Extract(new TemplateFileInput("hop-dong.docx", Convert.ToBase64String(bytes)), Current(c).Id, ct));
+        });
+        wordDrafts.MapPost("/preview", async (WordTemplateInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) => Results.Ok(await service.Preview(input, Current(c).Id, ct)))
+            .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
+        wordDrafts.MapPost("/activate", async (long id, WordDraftSave input, HttpContext c, InternalWordTemplates service, CancellationToken ct) => { await service.SaveDraftWord(id, input, Current(c), ct); return Results.NoContent(); })
+            .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
         secured.MapPost("/contract-templates/word/extract", async (TemplateFileInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
             Results.Ok(await service.Extract(input, Current(c).Id, ct)));
         secured.MapPost("/contract-templates/word/preview", async (WordTemplateInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
@@ -233,7 +267,8 @@ public static class InternalHost
                 ? (await drafts.Get(input.DraftId.Value, Current(c), ct)).Content.TemplateSnapshot
                 : (await repository.Templates(ct)).SingleOrDefault(t => t.Id == input.Content.TemplateId);
             if (template is null) throw new ArgumentException("Không tìm thấy mẫu hợp đồng.");
-            var bytes = await service.Render(input.Content, template, input.Pdf, ct);
+            var previewContent = input.DraftId.HasValue ? (await drafts.Get(input.DraftId.Value, Current(c), ct)).Content : input.Content;
+            var bytes = await service.Render(previewContent, template, input.Pdf, ct);
             return Results.Ok(new { base64 = Convert.ToBase64String(bytes), contentType = input.Pdf ? "application/pdf" : InternalWordDocument.Mime });
         });
         secured.MapGet("/contract-templates/{id:long}/word-details", async (long id, IInternalRepository repository, InternalWordTemplates service, CancellationToken ct) => {

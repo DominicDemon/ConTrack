@@ -5,7 +5,10 @@ namespace ContractManagement.Application.Features.Internal;
 public sealed record InternalUser(long Id, string Name, string Username, string[] Permissions, bool MustChangePassword = false,
     string? Department = null, bool IsManager = false)
 {
-    public bool CanManageAll => Permissions.Contains("draft.manage.all");
+    public bool CanCheck => Permissions.Contains("contract.check");
+    public bool CanApprove => Permissions.Contains("contract.approve");
+    public bool CanManageTemplates => Permissions.Contains("template.manage");
+    public bool CanManageAll => Permissions.Contains("draft.manage.all") || CanCheck || CanApprove;
     public bool CanWrite => Permissions.Contains("draft.write");
     public bool CanManageEmployees => Permissions.Contains(EmployeeAdminRules.ManagePermission);
 }
@@ -110,7 +113,7 @@ public sealed class InternalDraftService(IInternalRepository repository)
 {
     public static void RequireAccess(InternalUser user, long owner)
     {
-        if (!user.CanWrite || (!user.CanManageAll && user.Id != owner))
+        if ((!user.CanWrite && !user.CanCheck && !user.CanApprove) || (!user.CanManageAll && user.Id != owner))
             throw new InternalAppException(403, "Bạn không có quyền thao tác bản nháp này.");
     }
 
@@ -118,11 +121,12 @@ public sealed class InternalDraftService(IInternalRepository repository)
     {
         var draft = await repository.Draft(id, ct) ?? throw new InternalAppException(404, "Không tìm thấy bản nháp.");
         RequireAccess(user, draft.EmployeeId);
-        return draft;
+        return draft with { CanEdit = draft.CanEdit && (user.CanWrite || user.CanCheck), SendBlockedReason = user.CanWrite ? draft.SendBlockedReason : "Chỉ kinh doanh được gửi khách." };
     }
 
     public async Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser user, CancellationToken ct)
     {
+        if (!user.CanWrite && !user.CanCheck) throw new InternalAppException(403, "Bạn không có quyền sửa hợp đồng.");
         RequireAccess(user, user.Id);
         var content = request.Content ?? throw new ArgumentException("Thiếu nội dung bản nháp.");
         if (content.Fields is null || content.Terms is null || content.Items is null)
@@ -134,17 +138,22 @@ public sealed class InternalDraftService(IInternalRepository repository)
             if (old.Content.TemplateId != content.TemplateId || old.Content.CustomerId != content.CustomerId)
                 throw new ArgumentException("Không đổi mẫu hoặc khách hàng sau khi tạo nháp; hãy tạo nháp mới.");
             template = old.Content.TemplateSnapshot ?? throw new InternalAppException(409, "Nháp thiếu bản chụp mẫu.");
+            if (!user.CanCheck && System.Text.Json.JsonSerializer.Serialize(old.Content.Terms) != System.Text.Json.JsonSerializer.Serialize(content.Terms))
+                throw new InternalAppException(403, "Gửi nhận xét để Hành chính chỉnh sửa điều khoản.");
         }
         else
         {
             template = (await repository.Templates(ct)).SingleOrDefault(t => t.Id == content.TemplateId)
                 ?? throw new ArgumentException("Mẫu không tồn tại hoặc đã ngừng sử dụng.");
             var customer = await repository.Customer(content.CustomerId, ct) ?? throw new ArgumentException("Khách hàng không tồn tại.");
+            if (!user.CanCheck) content.Terms = template.Terms.Select(t => t with { }).ToList();
             // Initial snapshot can be edited by the author; later profile changes never refresh it.
             foreach (var pair in customer.Fields)
                 if (!content.Fields.ContainsKey(pair.Key)) content.Fields[pair.Key] = pair.Value;
         }
         template = DraftCompletionPolicy.UpgradeTemplate(template);
+        if (user.CanCheck && template.WordStorageKey is null)
+            template = template with { Terms = content.Terms.Select(t => t with { Editable = true }).ToList() };
         DraftValidation.Prepare(content, template);
         if (content.CustomerBusinessId.HasValue && !(await repository.Businesses(content.CustomerId, ct)).Any(b => b.Id == content.CustomerBusinessId))
             throw new ArgumentException("Pháp nhân không thuộc khách hàng đã chọn.");

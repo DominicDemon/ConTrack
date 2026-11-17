@@ -1,0 +1,7 @@
+SET XACT_ABORT ON;
+
+IF OBJECT_ID(N'dbo.TICKET_SUPPORT', N'U') IS NULL
+    THROW 50000, N'Không tìm thấy bảng dbo.TICKET_SUPPORT trong MasterDB.', 1;
+
+IF COL_LENGTH(N'dbo.TICKET_SUPPORT', N'department_id') IS NULL
+    ALTER TABLE dbo.TICKET_SUPPORT ADD department_id BIGINT NULL;

@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
-public sealed class ContractReviewRepository(MasterDbContext db, IInternalRepository drafts, SmsOutboxWriter sms, ReviewLinkMailer mailer, IConfiguration config) : IContractReviewRepository
+public sealed class ContractReviewRepository(MasterDbContext db, IInternalRepository drafts, SmsOutboxWriter sms, ReviewLinkMailer mailer, IConfiguration config, InternalApprovalService approval) : IContractReviewRepository
 {
     public const string InternalCheckWorkflow = "CONTRACT_INTERNAL_CHECK";
     private string PortalUrl => config["CustomerPortal:BaseUrl"] ?? "http://localhost:3000/portal";
@@ -18,11 +18,13 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
     {
         var mail = await ReviewData.InTransaction(db, async () =>
     {
+        if (!actor.CanWrite) throw new InternalAppException(403, "Chỉ kinh doanh được gửi khách.");
         var expires = ReviewLink.Expiry(request.LinkExpiresAt, DateTime.UtcNow) ?? throw new ArgumentException("Chọn thời gian hết hạn link sau thời điểm hiện tại.");
         var doc = await OwnedDocument(documentId, actor, ct);
         ReviewData.Expect(doc.RowVersion, request.RowVersion);
         var version = await db.ContractVersions.SingleAsync(v => v.ContractVersionId == doc.ContractDocumentCurrentVersionId, ct);
         ReviewData.Expect(version.ContractVersionRowversion, request.VersionRowVersion);
+        await approval.RequireApproved(documentId, version.ContractVersionId, ct);
         var latest = await Latest(documentId, ct);
         var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleAsync(x => x.ContractDocumentId == documentId
             && x.ContractVersionId == version.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
@@ -34,7 +36,7 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
             if (content.CustomerBusinessId is { } business && !await db.CustomerBusinesses.AnyAsync(b => b.CustomerId == doc.CustomerId && b.CustomerBusinessId == business, ct)) throw new InternalAppException(422, "Pháp nhân không thuộc khách hàng.");
             if (content.TemplateSnapshot.IsImported && !request.ContentConfirmed) throw new InternalAppException(422, "Cần xác nhận đã kiểm tra nội dung mẫu tải lên.");
         }
-        if (ContractReviewPolicy.CanSend(doc.ContractDocumentStatus, latest?.ContractReviewRequestStatus, version.ContractVersionIslocked, content.MissingFields.Count) is { } error)
+        if (ContractReviewPolicy.CanSend(doc.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? ContractDocumentStatus.Draft : doc.ContractDocumentStatus, latest?.ContractReviewRequestStatus, doc.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? false : version.ContractVersionIslocked, content.MissingFields.Count) is { } error)
             throw new InternalAppException(409, error);
         var customer = await db.Customers.SingleOrDefaultAsync(c => c.CustomerId == doc.CustomerId && c.CustomerStatus == 1, ct)
             ?? throw new InternalAppException(409, "Khách hàng không còn hoạt động.");
@@ -69,12 +71,14 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
     /// <summary>Replaces the link of an open review: for a lost or failed email, or to give the customer a new deadline. The old link stops working.</summary>
     public async Task<ReviewSummary> ResendLink(long reviewId, ResendLinkRequest request, InternalUser actor, CancellationToken ct)
     {
+        if (!actor.CanWrite) throw new InternalAppException(403, "Chỉ kinh doanh được gửi lại link.");
         var mail = await ReviewData.InTransaction(db, async () =>
         {
             var now = DateTime.UtcNow;
             var expires = ReviewLink.Expiry(request.LinkExpiresAt, now) ?? throw new ArgumentException("Chọn thời gian hết hạn link sau thời điểm hiện tại.");
             var review = await db.ContractReviewRequests.SingleOrDefaultAsync(r => r.ContractReviewRequestId == reviewId, ct) ?? throw new InternalAppException(404, "Không tìm thấy lần gửi.");
             var doc = await OwnedDocument(review.ContractDocumentId, actor, ct);
+            await approval.RequireApproved(doc.ContractDocumentId, review.ContractVersionId, ct);
             ReviewData.Expect(review.Rowversion, request.RowVersion);
             if (ContractReviewPolicy.CanRespond(review.ContractReviewRequestStatus) is { } error) throw new InternalAppException(409, error);
             var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleAsync(x => x.ContractDocumentId == doc.ContractDocumentId
@@ -141,6 +145,7 @@ public sealed class ContractReviewRepository(MasterDbContext db, IInternalReposi
             db.ContractVersions.Add(next);
             await db.SaveChangesAsync(ct);
             var from = current.ContractVersionId;
+            await ContractChecklistService.Capture(db, current.ContractTemplateId, next.ContractVersionId, from, ct);
             foreach (var x in await db.ContractDocumentItems.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from).ToListAsync(ct))
             { x.ContractDocumentItemId = 0; x.ContractVersionId = next.ContractVersionId; db.ContractDocumentItems.Add(x); }
             var termMap = new Dictionary<long, ContractTerm>();
@@ -387,13 +392,7 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             review.RespondedIpAddress = ip is { Length: > 45 } ? ip[..45] : ip; review.RespondedUserAgent = userAgent is { Length: > 1000 } ? userAgent[..1000] : userAgent;
             doc.ContractDocumentStatus = next.Document; doc.UpdatedDate = now;
             var approved = next.Review == ContractReviewStatus.Approved;
-            if (approved)
-            {
-                var workflow = await db.ApprovalWorkflows.Where(w => w.ApprovalWorkflowCode == ContractReviewRepository.InternalCheckWorkflow && w.ApprovalWorkflowIsactive)
-                    .Select(w => (long?)w.ApprovalWorkflowId).FirstOrDefaultAsync(ct) ?? throw new InvalidOperationException("Missing CONTRACT_INTERNAL_CHECK workflow; seed it in the MASTER database script.");
-                db.ContractApprovalRequests.Add(new ContractApprovalRequest { ContractDocumentId = doc.ContractDocumentId, ContractVersionId = review.ContractVersionId,
-                    ApprovalWorkflowId = workflow, SubmittedByEmployeeId = doc.EmployeeId, SubmittedAt = now, ContractApprovalRequestStatus = 0, ContractReviewRequestId = reviewId });
-            }
+            if (approved) doc.ContractDocumentStatus = ContractDocumentStatus.PendingSignature;
             var recipients = new HashSet<long> { doc.EmployeeId };
             if (approved) recipients.UnionWith(await (from er in db.EmployeeRoles join r in db.SystemRoles on er.SystemRoleId equals r.SystemRoleId
                 join e in db.Employees on er.EmployeeId equals e.EmployeeId

@@ -1,6 +1,7 @@
 "use client";
 import { focusIssue } from "../../../Shared/draft-validation";
 import DraftPreview from "./draft-preview";
+import WordDraftPreview from "./word-draft-preview";
 
 import { useCallback, useEffect, useState } from "react";
 import { Check, CopyPlus, Mail, MessageSquare, Send, XCircle, Handshake } from "lucide-react";
@@ -10,12 +11,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { internalApi, dateTime, documentStatusLabel, reviewStatusLabel, InternalApiError, type DraftRecord, type ReviewSummary, type ReviewComment } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import s from "./workspace.module.css";
+import { useInternalUser } from "./internal-shell";
 
 type Confirm = { title: string; description: string; action: string; note?: { label: string; required?: boolean; max: number }; expiry?: boolean; run: (note: string, linkExpiresAt: string) => Promise<unknown> };
 const inSevenDays = () => { const d = new Date(Date.now() + 7 * 864e5); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 
 /** Customer review actions and history for a saved draft. All state transitions are re-checked by the API. */
 export default function ReviewPanel({ record, dirty, onChanged }: { record: DraftRecord; dirty: boolean; onChanged: () => void }) {
+  const user = useInternalUser();
   const [confirmed, setConfirmed] = useState(false);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
@@ -64,10 +67,10 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <button type="button" className={ui.primaryButton} disabled={busy || dirty || !!record.sendBlockedReason}
           aria-describedby="review-send-guidance" title={dirty ? "Lưu nháp trước khi gửi" : record.sendBlockedReason || undefined} onClick={send}><Send size={16}/>Gửi khách xem</button>
-        {canCreateVersion && <button className={ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới</button>}
-        {awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
+        {user.canWrite && canCreateVersion && <button className={ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới</button>}
+        {user.canWrite && awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
           <button className={ui.secondaryButton} disabled={busy} onClick={() => followup("CLOSE")}><XCircle size={16}/>Đóng draft</button></>}
-        {(latest?.status === "SENT" || latest?.status === "VIEWED") && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
+        {user.canWrite && (latest?.status === "SENT" || latest?.status === "VIEWED") && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
       </div>
     </div>
     <div id="review-send-guidance" className={s.muted} style={{ marginTop: 8 }} aria-live="polite">
@@ -109,7 +112,9 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
 
     <Dialog open={!!confirm} onOpenChange={v => { if (!busy && !v) setConfirm(null); }}><DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
       <DialogHeader><DialogTitle>{confirm?.title}</DialogTitle><DialogDescription>{confirm?.description}</DialogDescription></DialogHeader>
-      {confirm?.action === "Gửi khách xem" && <><DraftPreview content={record.content} code={record.code}/><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>Tôi đã kiểm tra bên giao dịch, số tiền, lịch thanh toán và các nội dung viết cố định trong mẫu.</label></>}{confirm?.expiry && <label className="grid gap-2 text-sm font-medium">Link hết hạn lúc *<input required type="datetime-local" className={ui.field} value={expiry} disabled={busy} onChange={e => setExpiry(e.target.value)}/></label>}{confirm?.note && <label className="grid gap-2 text-sm font-medium">{confirm.note.label}<Textarea maxLength={confirm.note.max} value={note} disabled={busy} onChange={e => setNote(e.target.value)}/></label>}
+      {confirm?.action === "Gửi khách xem" && <>{record.content.templateSnapshot?.wordStorageKey
+        ? <WordDraftPreview content={record.content} draftId={record.id}/>
+        : <DraftPreview content={record.content} code={record.code}/>}<label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>Tôi đã kiểm tra bên giao dịch, số tiền, lịch thanh toán và các nội dung viết cố định trong mẫu.</label></>}{confirm?.expiry && <label className="grid gap-2 text-sm font-medium">Link hết hạn lúc *<input required type="datetime-local" className={ui.field} value={expiry} disabled={busy} onChange={e => setExpiry(e.target.value)}/></label>}{confirm?.note && <label className="grid gap-2 text-sm font-medium">{confirm.note.label}<Textarea maxLength={confirm.note.max} value={note} disabled={busy} onChange={e => setNote(e.target.value)}/></label>}
       <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setConfirm(null)}>Hủy</Button>
         <Button type="button" disabled={busy || (!!confirm?.expiry && !expiry) || (confirm?.action === "Gửi khách xem" && !confirmed) || (!!confirm?.note?.required && !note.trim())} onClick={() => void run()}>{busy ? "Đang xử lý…" : confirm?.action}</Button></DialogFooter>
     </DialogContent></Dialog>

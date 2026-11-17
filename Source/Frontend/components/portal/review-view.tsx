@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import DraftPreview from "@/components/internal/draft-preview";
+import ReviewWord from "./review-word";
 import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
 import PortalHeader from "./portal-header";
@@ -58,7 +59,7 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
       <button className={ui.secondaryButton} disabled={busy} onClick={() => { setDecision("REQUEST_CHANGES"); setNote(""); }}><PenLine size={16}/>Yêu cầu sửa</button>
       <button className={ui.secondaryButton} disabled={busy} onClick={() => { setDecision("REJECT"); setNote(""); }}><XCircle size={16}/>Từ chối</button></div>}
     <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", alignItems: "start" }}>
-      <DraftPreview content={review.content}/>
+      {review.content.templateSnapshot?.wordStorageKey ? <ReviewWord key={review.id} id={review.id}/> : <DraftPreview content={review.content}/>}
       <section className={ui.card} aria-label="Góp ý theo điều khoản"><h2 style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 16 }}><MessageSquare size={18}/>Góp ý</h2>
         {[{ key: null as string | null, title: "Góp ý chung" }, ...terms.map((t, i) => ({ key: t.key as string | null, title: `Điều ${i + 1}. ${t.title}` }))].map(group => {
           const list = byTerm(group.key); if (!list.length) return null;

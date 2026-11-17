@@ -2068,6 +2068,7 @@ public partial class MasterDbContext : DbContext
             entity.ToTable("TICKET_SUPPORT");
 
             entity.Property(e => e.TicketSupportId).HasColumnName("ticket_support_id");
+            entity.Property(e => e.DepartmentId).HasColumnName("department_id");
             entity.Property(e => e.CreatedAt)
                 .HasColumnType("datetime")
                 .HasColumnName("created_at");
@@ -2210,6 +2211,28 @@ public partial class MasterDbContext : DbContext
             entity.Property(e => e.ReceivedAt).HasDefaultValueSql("(sysutcdatetime())", "DF_SmsCallback_ReceivedAt").HasColumnName("received_at");
         });
 
+        modelBuilder.Entity<ContractNumberCounter>(entity =>
+        {
+            entity.ToTable("CONTRACT_NUMBER_COUNTER");
+            entity.HasKey(e => e.ContractYear);
+            entity.Property(e => e.ContractYear).HasColumnName("contract_year").ValueGeneratedNever();
+            entity.Property(e => e.LastNumber).HasColumnName("last_number");
+        });
+        modelBuilder.Entity<ContractChecklist>(entity =>
+        {
+            entity.ToTable("CONTRACT_CHECKLIST");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.TemplateId).HasColumnName("template_id");
+            entity.Property(x => x.VersionId).HasColumnName("version_id");
+            entity.Property(x => x.Rules).HasColumnName("rules");
+            entity.Property(x => x.Configured).HasColumnName("configured");
+            entity.Property(x => x.ContentHash).HasColumnName("content_hash").HasMaxLength(64).IsUnicode(false);
+            entity.Property(x => x.Resolutions).HasColumnName("resolutions");
+            entity.Property(x => x.RowVersion).HasColumnName("row_version").IsRowVersion();
+            entity.HasIndex(x => x.TemplateId).IsUnique().HasFilter("[version_id] IS NULL");
+            entity.HasIndex(x => x.VersionId).IsUnique().HasFilter("[version_id] IS NOT NULL");
+        });
         OnModelCreatingPartial(modelBuilder);
     }
 

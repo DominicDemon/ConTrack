@@ -133,7 +133,7 @@ public class ContractReviewTests
             .AddSingleton(new InternalTemplateStorage(root))
             .AddSingleton<IConfiguration>(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["CustomerPortal:BaseUrl"] = "http://portal" }).Build())
             .AddScoped<IInternalRepository, InternalRepository>().AddScoped<InternalDraftService>()
-            .AddScoped<ContractReviewRepository>().AddScoped<CustomerPortalRepository>().AddScoped<SmsCallbackProcessor>()
+            .AddScoped<InternalWordDocument>().AddScoped<InternalWordTemplates>().AddScoped<InternalApprovalService>().AddScoped<ContractReviewRepository>().AddScoped<CustomerPortalRepository>().AddScoped<SmsCallbackProcessor>()
             .BuildServiceProvider();
         await using var scope = services.CreateAsyncScope();
         var sp = scope.ServiceProvider;
@@ -141,6 +141,18 @@ public class ContractReviewTests
         var repo = sp.GetRequiredService<IInternalRepository>();
         var drafts = sp.GetRequiredService<InternalDraftService>();
         var reviews = sp.GetRequiredService<ContractReviewRepository>();
+        var approvals = sp.GetRequiredService<InternalApprovalService>();
+        async Task<DraftRecord> Approve(DraftRecord draft, InternalUser sale, InternalUser office)
+        {
+            await approvals.Act(draft.Id, "submit", new(draft.RowVersion, draft.VersionRowVersion), sale, default);
+            foreach (var permission in new[] { "contract.check", "contract.approve" })
+            {
+                draft = (await repo.Draft(draft.Id, default))!;
+                var state = await approvals.View(draft.Id, sale, default);
+                await approvals.Act(draft.Id, "approve", new(draft.RowVersion, draft.VersionRowVersion, state.RowVersion), office with { Permissions = [permission] }, default);
+            }
+            return (await repo.Draft(draft.Id, default))!;
+        }
         var portal = sp.GetRequiredService<CustomerPortalRepository>();
         var writer = sp.GetRequiredService<SmsOutboxWriter>();
         var saleId = await db.Employees.Where(e => e.EmployeeUsername == "sale").Select(e => e.EmployeeId).SingleAsync();
@@ -164,7 +176,7 @@ public class ContractReviewTests
             }
             var draft = await drafts.Save(null, new(Content(customerA.Id), null, null), sale, default); docIds.Add(draft.Id);
             Assert.Empty(draft.Content.MissingFields);
-            Assert.Null(draft.SendBlockedReason);
+            Assert.NotNull(draft.SendBlockedReason);
             Assert.Equal(403, (await Assert.ThrowsAsync<InternalAppException>(() => reviews.SendReview(draft.Id, new(null, draft.RowVersion, draft.VersionRowVersion, LinkExpiresAt: expires), other, default))).Status);
             Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => reviews.SendReview(draft.Id, new(null, "AAAA", draft.VersionRowVersion, LinkExpiresAt: expires), sale, default))).Status);
             await Assert.ThrowsAsync<ArgumentException>(() => reviews.SendReview(draft.Id, new(null, draft.RowVersion, draft.VersionRowVersion), sale, default));
@@ -175,6 +187,7 @@ public class ContractReviewTests
             Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => reviews.SendReview(noEmail.Id, new(null, noEmail.RowVersion, noEmail.VersionRowVersion, LinkExpiresAt: expires), sale, default))).Status);
 
             // 1. Send: version locked, link emailed with the sale's expiry, no SMS. The token is stored hashed.
+            draft = await Approve(draft, sale, office);
             var first = await reviews.SendReview(draft.Id, new("Mời anh xem", draft.RowVersion, draft.VersionRowVersion, LinkExpiresAt: expires), sale, default);
             Assert.Equal(ContractReviewStatus.Sent, first.Status);
             Assert.True(first.LinkEmailSent);
@@ -280,6 +293,7 @@ public class ContractReviewTests
             await Assert.ThrowsAsync<InternalAppException>(() => reviews.CreateVersion(draft.Id, new(v2.RowVersion, null), sale, default));
             v2.Content.Items[0] = v2.Content.Items[0] with { DiscountPercent = 5 };
             var edited = await drafts.Save(draft.Id, new(v2.Content, v2.RowVersion, v2.VersionRowVersion), sale, default);
+            edited = await Approve(edited, sale, office);
             var second = await reviews.SendReview(draft.Id, new(null, edited.RowVersion, edited.VersionRowVersion, LinkExpiresAt: expires), sale, default);
             var history = await reviews.Reviews(draft.Id, office, default);
             Assert.Equal([ContractReviewStatus.Sent, ContractReviewStatus.Superseded], history.Select(r => r.Status));
@@ -293,15 +307,16 @@ public class ContractReviewTests
             Assert.Equal(1000000 * 0.95m * 1.1m, view2.Content.Totals.Total);
             var approved = await portal.Respond(customerA.Id, second.Id, new("APPROVE", null, view2.DocumentHash, view2.RowVersion), null, null, default);
             Assert.Equal(ContractReviewStatus.Approved, approved.Status);
-            var approval = await db.ContractApprovalRequests.SingleAsync(a => a.ContractDocumentId == draft.Id);
-            Assert.Equal(second.Id, approval.ContractReviewRequestId); Assert.Equal(saleId, approval.SubmittedByEmployeeId);
-            Assert.Equal(2, (await drafts.Get(draft.Id, sale, default)).Status);
-            Assert.Contains(await repo.Drafts(null, null, 2, default), d => d.Id == draft.Id);
+            var approval = await db.ContractApprovalRequests.SingleAsync(a => a.ContractDocumentId == draft.Id && a.ContractVersionId == second.VersionId);
+            Assert.Equal("APPROVED", approval.InternalStage); Assert.Equal(saleId, approval.SubmittedByEmployeeId);
+            Assert.Equal(3, (await drafts.Get(draft.Id, sale, default)).Status);
+            Assert.Contains(await repo.Drafts(null, null, 3, default), d => d.Id == draft.Id);
             var approvedNotice = await db.Notifications.SingleAsync(n => n.NotificationEventkey == $"review:{second.Id}:APPROVED");
             Assert.True(await db.NotificationRecipients.AnyAsync(r => r.NotificationId == approvedNotice.NotificationId && r.EmployeeId == officeId));
 
             // 7. Rejection branch: reject then close.
             var draft2 = await drafts.Save(null, new(Content(customerA.Id), null, null), sale, default); docIds.Add(draft2.Id);
+            draft2 = await Approve(draft2, sale, office);
             var r2 = await reviews.SendReview(draft2.Id, new(null, draft2.RowVersion, draft2.VersionRowVersion, LinkExpiresAt: expires), sale, default);
             var v = await portal.Review(customerA.Id, r2.Id, default);
             await portal.Respond(customerA.Id, r2.Id, new("REJECT", "Không phù hợp", v.DocumentHash, v.RowVersion), null, null, default);

@@ -36,6 +36,10 @@ export default function TemplateUpload({ onImported, disabled }: { onImported: (
   const [extraction, setExtraction] = useState<Extraction | null>(null);
   const [name, setName] = useState("");
   const [documentType, setDocumentType] = useState(1);
+  const [checklistRules, setChecklistRules] = useState<string[]>([]);
+  const [checklistConfirmed, setChecklistConfirmed] = useState(false);
+  const [checklistOptions, setChecklistOptions] = useState<{key:string;label:string}[]>([]);
+  useEffect(() => { if (open) internalApi<{key:string;label:string}[]>("/checklist-rules").then(setChecklistOptions).catch(e=>setError(e.message)); }, [open]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [tables, setTables] = useState<AddedTable[]>([]);
   const [additions, setAdditions] = useState<AddedContent[]>([]);
@@ -80,7 +84,7 @@ export default function TemplateUpload({ onImported, disabled }: { onImported: (
   }
   function payload() {
     return { ...source!, documentBase64: extraction!.documentBase64, sourceToken: extraction!.sourceToken,
-      name, documentType, blocks: blocks.map(({ images, ...block }) => { void images; return block; }), fields: [], tables, additions, sampleValues: {}, manualContent: true };
+      name, documentType, blocks: blocks.map(({ images, ...block }) => { void images; return block; }), fields: [], tables, additions, sampleValues: {}, manualContent: true, checklistRules: documentType === 1 && checklistConfirmed ? checklistRules : null };
   }
   async function render() {
     setBusy(true); invalidate();
@@ -91,6 +95,7 @@ export default function TemplateUpload({ onImported, disabled }: { onImported: (
   }
   async function activate() {
     if (!preview || !previewCurrent || !confirmed) return;
+    if (documentType === 1 && !checklistConfirmed) {setError("Xác nhận danh sách điều khoản cần rà soát trước khi kích hoạt."); return;}
     setBusy(true); setError("");
     try {
       const template = await internalApi<TemplateDefinition>("/contract-templates/word/activate", "POST", { input: payload(), previewToken: preview.token });
@@ -100,6 +105,16 @@ export default function TemplateUpload({ onImported, disabled }: { onImported: (
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   const activeBlock = blocks.find(b => b.id === active);
+  function insertContractValue(key: string) {
+    if (!activeBlock || !key) return;
+    const input = inputs.current[activeBlock.id];
+    const start = input?.selectionStart ?? activeBlock.text.length;
+    const end = input?.selectionEnd ?? start;
+    const text = activeBlock.text.slice(0, start) + "{{" + key + "}}" + activeBlock.text.slice(end);
+    setBlocks(current => current.map(block => block.id === activeBlock.id ? { ...block, text } : block));
+    invalidate();
+    input?.focus();
+  }
   const headings = blocks.filter(b => b.tableId == null && /^(Điều\s+\d|Phụ lục|HỢP ĐỒNG|BIÊN BẢN)/i.test(b.text.trim()));
   function addTable() {
     if (!activeBlock || !activeBlock.location.startsWith("Nội dung")) return;
@@ -109,9 +124,9 @@ export default function TemplateUpload({ onImported, disabled }: { onImported: (
   }
   function nextOrder() { return Math.max(0,...tables.map(t => t.order ?? 0),...additions.map(a => a.order)) + 1; }
   function anchorId() { return activeBlock?.tableId == null ? activeBlock?.id : blocks.filter(b => b.tableId === activeBlock.tableId).at(-1)?.id; }
-  function addContent(kind: "clause" | "paragraph") {
+  function addContent(kind: Exclude<AddedContent["kind"], "image">) {
     const afterBlockId = anchorId(); if (!afterBlockId) return;
-    setAdditions(old => [...old,{id:crypto.randomUUID(),afterBlockId,kind,title:"",text:"",widthCm:12,align:"center",order:nextOrder()}]); invalidate();
+    setAdditions(old => [...old,{id:crypto.randomUUID(),afterBlockId,kind,title:kind === "definition" ? "Định nghĩa" : kind === "appendix" ? "Phụ lục" : "",text:"",widthCm:12,align:"center",order:nextOrder()}]); invalidate();
   }
   async function addImage(file?: File) {
     const afterBlockId = anchorId(); if (!file || !afterBlockId) return;
@@ -141,9 +156,25 @@ export default function TemplateUpload({ onImported, disabled }: { onImported: (
       }}><option value="">Đi tới mục…</option>{headings.map(b => <option value={b.id} key={b.id}>{b.text.slice(0, 100)}</option>)}</select>
       {extraction && <>
         <span className={styles.selection}>Bấm vào nội dung để sửa trực tiếp. Chọn một đoạn để chèn nội dung bên dưới.</span>
+        {documentType === 1 && <label>Điền từ hồ sơ <select disabled={busy || !activeBlock} value="" onChange={e => insertContractValue(e.target.value)}>
+          <option value="">Chọn chữ trong Word rồi chọn giá trị</option>
+          <option value="CONTRACT_NUMBER">Số hợp đồng</option>
+          <option value="VAT">Tiền VAT</option>
+          <option value="TOTAL_AMOUNT">Tổng sau VAT</option>
+          <option value="PAYMENT_METHOD">Phương thức thanh toán</option>
+          <option value="PAYMENT_SCHEDULE">Lịch thanh toán</option>
+        </select></label>}
         <div className="flex w-full flex-wrap gap-2">
-          <Button type="button" variant="outline" disabled={!canInsert} onClick={() => addContent("paragraph")}>Chèn đoạn</Button>
-          <Button type="button" variant="outline" disabled={!canInsert} onClick={() => addContent("clause")}>Chèn điều khoản</Button>
+          <select aria-label="Thêm mục sau vị trí chọn" className={styles.select} disabled={!canInsert} value="" onChange={e => {
+            const kind = e.target.value;
+            if (kind === "paragraph" || kind === "clause" || kind === "definition" || kind === "appendix") addContent(kind);
+          }}>
+            <option value="">Thêm mục sau vị trí chọn</option>
+            <option value="paragraph">Đoạn văn</option>
+            <option value="clause">Điều khoản</option>
+            <option value="definition">Định nghĩa</option>
+            <option value="appendix">Phụ lục</option>
+          </select>
           <Button type="button" variant="outline" disabled={!canInsert} onClick={() => imageInput.current?.click()}>Chèn ảnh</Button>
           <input ref={imageInput} type="file" aria-label="Ảnh chèn thêm" accept="image/png,image/jpeg" hidden disabled={!canInsert} onChange={e => void addImage(e.target.files?.[0])}/>
         </div>
@@ -191,6 +222,10 @@ export default function TemplateUpload({ onImported, disabled }: { onImported: (
             {documentTypes.map((label,index) => <option value={index+1} key={label}>{label}</option>)}
           </select></label>
         </fieldset>
+        {documentType === 1 && <details><summary>Điều khoản cần rà soát · {checklistConfirmed ? "Đã chọn" : "Cần xác nhận"}</summary>
+          <fieldset disabled={busy} style={{display:"flex",flexWrap:"wrap",gap:12}}>{checklistOptions.map(rule=><label key={rule.key}><input type="checkbox" checked={checklistRules.includes(rule.key)} onChange={e=>{setChecklistRules(old=>e.target.checked?[...old,rule.key]:old.filter(key=>key!==rule.key));setChecklistConfirmed(false);invalidate();}}/> {rule.label}</label>)}</fieldset>
+          <label><input type="checkbox" disabled={busy || checklistOptions.length===0} checked={checklistConfirmed} onChange={e=>{setChecklistConfirmed(e.target.checked);invalidate();}}/> Xác nhận lựa chọn (có thể bỏ chọn tất cả nếu không áp dụng)</label>
+        </details>}
         <div className={styles.tabs}><Button type="button" variant={tab==="edit"?"default":"outline"} onClick={() => setTab("edit")}>Chỉnh mẫu</Button><Button type="button" variant={tab==="preview"?"default":"outline"} onClick={() => setTab("preview")}>Xem trước</Button></div>
         <div className={styles.workspace}>{mobile ? <><div className={styles.mobilePane} hidden={tab!=="edit"}>{editor}</div><div className={styles.mobilePane} hidden={tab!=="preview"}>{previewPane}</div></> :
           <PanelGroup direction="horizontal"><Panel defaultSize={50} minSize={30}>{editor}</Panel><PanelResizeHandle className={styles.handle} aria-label="Điều chỉnh chiều rộng hai khung">⋮</PanelResizeHandle><Panel defaultSize={50} minSize={30}>{previewPane}</Panel></PanelGroup>}

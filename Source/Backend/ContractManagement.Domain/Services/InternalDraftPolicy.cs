@@ -16,6 +16,10 @@ public sealed class DraftContent
     public string PartyType { get; set; } = "";
     public long? CustomerBusinessId { get; set; }
     public string PaymentMode { get; set; } = "PERCENT";
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? ContractNumber { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? PaymentMethod { get; set; }
     public List<DraftMilestone> Milestones { get; set; } = [];
     public long TemplateId { get; set; }
     public long CustomerId { get; set; }
@@ -47,6 +51,12 @@ public static class InternalDraftPolicy
     public static DraftContent Prepare(DraftContent input, TemplateDefinition template, bool forPreview = false)
     {
         input.Name = Text(input.Name, 1000);
+        input.PaymentMethod = input.PaymentMethod switch
+        {
+            null or "" => null,
+            "BANK_TRANSFER" or "CASH" or "CASH_OR_TRANSFER" => input.PaymentMethod,
+            _ => throw new ArgumentException("Phương thức thanh toán không hợp lệ.")
+        };
         if (input.TemplateId != template.Id || (!forPreview && (input.Name.Length == 0 || input.CustomerId <= 0)))
             throw new ArgumentException("Cần chọn mẫu, khách hàng và nhập tên hợp đồng.");
         if (input.Items is null || input.Terms is null || input.Fields is null || input.Items.Count > 100 || input.Terms.Count > 100)
@@ -97,4 +107,12 @@ public static class InternalDraftPolicy
         DraftCompletionPolicy.Prepare(input, template);
         return input;
     }
+
+    public static string PaymentMethodLabel(string? method) => method switch
+    {
+        "BANK_TRANSFER" => "Chuyển khoản",
+        "CASH" => "Tiền mặt",
+        "CASH_OR_TRANSFER" => "Tiền mặt hoặc chuyển khoản",
+        _ => ""
+    };
 }

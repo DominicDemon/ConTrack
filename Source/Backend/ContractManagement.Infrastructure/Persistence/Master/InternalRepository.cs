@@ -35,20 +35,28 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 && (department.DepartmentCode == "KD" || department.DepartmentName.Contains("Kinh Doanh"))
             select assignment.EmployeeId).AnyAsync(ct);
         var departmentRow = await (from ed in db.EmployeeDepartments join d in db.Departments on ed.DepartmentId equals d.DepartmentId
-            where ed.EmployeeId == id select new { d.DepartmentName, d.DepartmentManagerEmployeeId }).FirstOrDefaultAsync(ct);
-        var isManager = departmentRow?.DepartmentManagerEmployeeId == id
-            || employee.EmployeeUsername.StartsWith("head.")
-            || permissions.Contains("ticket.manage.all");
+            where ed.EmployeeId == id select new { d.DepartmentId, d.DepartmentName, d.DepartmentManagerEmployeeId }).FirstOrDefaultAsync(ct);
+        var isManager = departmentRow?.DepartmentManagerEmployeeId == id;
         var isSysAdmin = employee.EmployeeCode == "ADM-SYSADMIN" || employee.EmployeeUsername == "sysadmin";
+
+        // Chỉ nhân viên/trưởng phòng thuộc 3 phòng ban hỗ trợ (2: Kỹ thuật, 4: Kế toán, 5: Hành chính) mới có màn hỗ trợ khách hàng
+        var isSupportDepartment = departmentRow != null && (departmentRow.DepartmentId == 2 || departmentRow.DepartmentId == 4 || departmentRow.DepartmentId == 5);
 
         if (isSalesEmployee)
             permissions = permissions.Append("draft.write").Distinct().ToArray();
         if (isSysAdmin)
-            permissions = permissions.Concat(["draft.write", "draft.manage.all", "customer.manage", "product.read", "product.manage", "ticket.handle", "ticket.manage.all"]).Distinct().ToArray();
-        if (isManager)
-            permissions = permissions.Concat(["ticket.manage.all", "ticket.handle"]).Distinct().ToArray();
-        else if (departmentRow != null)
-            permissions = permissions.Append("ticket.handle").Distinct().ToArray();
+            permissions = permissions.Concat(["draft.write", "draft.manage.all", "customer.manage", "product.read", "product.manage"]).Distinct().ToArray();
+        if (isSupportDepartment)
+        {
+            if (isManager)
+                permissions = permissions.Concat(["ticket.manage.all", "ticket.handle"]).Distinct().ToArray();
+            else
+                permissions = permissions.Append("ticket.handle").Distinct().ToArray();
+        }
+        else
+        {
+            permissions = permissions.Where(p => p != "ticket.handle" && p != "ticket.manage.all").Distinct().ToArray();
+        }
 
         return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions, employee.EmployeeMustChangePassword,
             departmentRow?.DepartmentName, isManager || isSysAdmin);

@@ -88,11 +88,11 @@ extra_options = default content). A template with no stored files is read straig
 CONTRACT_CUSTOMER_OTP_CHALLENGE, the OTP a customer confirms when signing a contract electronically.
 `012-comment-sections.sql` adds `CONTRACT_NEGOTIATION_COMMENT.contract_negotiation_comment_section`: a customer comment / change
 request is about one term (`..._termid`, as before) or one other section (PARTIES, DATES, ITEMS, PAYMENT); neither is a general comment.
-`012-scan-hardening.sql` clears the full OCR text kept in OCR_JOB.ocr_text (only search keywords are kept) and allows
+`013-scan-hardening.sql` clears the full OCR text kept in OCR_JOB.ocr_text (only search keywords are kept) and allows
 keyword type 5 (Email) in CONTRACT_SCAN_KEYWORD. Run it after 006-009.
 Two optional helpers, not part of the schema: `demo-scan-contracts.sql` adds 4 demo customers and contracts (1001-1004)
 to try the paper-signing scan flow, on a test database only (it stops if those ids hold other data);
-`report-scan-duplicates.sql` lists scans stored more than once before 012 refused duplicates (read only).
+`report-scan-duplicates.sql` lists scans stored more than once before 013 refused duplicates (read only).
 The schema is database first: the application never applies these scripts. Run them manually and
 idempotently (SSMS, or `sqlcmd -I` so QUOTED_IDENTIFIER is on for the filtered indexes).
 Employees, roles, permissions, customers and the `CONTRACT_INTERNAL_CHECK` approval workflow

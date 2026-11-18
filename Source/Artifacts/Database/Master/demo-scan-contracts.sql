@@ -3,7 +3,7 @@
 --   1001, 1002, 1003: dang Cho ky (PendingSignature) -> tai duoc ban ky giay.
 --   1004: da ky online bang OTP -> khong nhan ban ky giay.
 -- Chay lai nhieu lan duoc: moi lan dat lai trang thai 4 hop dong ve nhu ban dau (de demo lai).
--- Chay sau 001-012. Neu da chay 010-demo-template.sql thi dung mau INTERNAL_DEMO_V1, neu chua thi tao mau MAU-HD-DEMO.
+-- Chay sau 001-013. Neu da chay 010-demo-template.sql thi dung mau INTERNAL_DEMO_V1, neu chua thi tao mau MAU-HD-DEMO.
 
 SET NOCOUNT ON; SET XACT_ABORT ON;
 

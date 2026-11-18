@@ -1,5 +1,5 @@
 -- BAO CAO BAN SCAN TRUNG (CHI DOC, KHONG SUA GI).
--- Tu ban 012 he thong tu choi tai lai file da co; script nay tim cac ban trung DA LUU TRUOC DO.
+-- Tu ban 013 he thong tu choi tai lai file da co; script nay tim cac ban trung DA LUU TRUOC DO.
 -- Moi nhom la mot noi dung file (cung SHA-256) duoc luu nhieu lan, kem noi no duoc dung:
 --   SCAN CU = hop dong giay scan (luong B), BAN KY = ban ky giay cua hop dong (luong A).
 -- Quan tri xem tung nhom roi quyet dinh giu ban nao; nen giu ban dau tien. Khong xoa file truc tiep tren o dia.

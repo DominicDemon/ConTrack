@@ -1,4 +1,4 @@
--- 012: SIET CHAT LUONG SCAN. Chay sau 006-009; chay lai nhieu lan khong sao.
+-- 013: SIET CHAT LUONG SCAN. Chay sau 006-009; chay lai nhieu lan khong sao.
 -- 1) Khong luu toan van OCR: file scan da ma hoa, nhung OCR_JOB.ocr_text giu nguyen van hop dong dang chu thuong,
 --    ai doc duoc database la doc duoc hop dong ma khong can key. Tim kiem chi dung CONTRACT_SCAN_KEYWORD nen xoa an toan.
 -- 2) Them loai tu khoa 5 = Email (dia chi email in tren hop dong, chu thuong).

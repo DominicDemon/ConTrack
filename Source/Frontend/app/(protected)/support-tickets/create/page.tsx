@@ -15,7 +15,6 @@ import {
   Mail,
   PhoneCall,
   Send,
-  ShoppingBag,
   Trash2,
   Wrench,
   X,
@@ -60,25 +59,18 @@ const DEPARTMENTS = [
     icon: Wrench,
   },
   {
-    id: 5,
-    code: "Phòng Hành Chính - Pháp Chế",
-    title: "Dịch vụ khách hàng / Pháp chế",
-    desc: "Chính sách dịch vụ, tài khoản, hồ sơ pháp lý hợp đồng",
-    icon: HelpCircle,
-  },
-  {
-    id: 3,
-    code: "Phòng Kinh Doanh",
-    title: "Phòng Kinh Doanh (Bán Hàng)",
-    desc: "Tư vấn dịch vụ, báo giá, đăng ký và gia hạn gói cước",
-    icon: ShoppingBag,
-  },
-  {
     id: 4,
     code: "Phòng Kế Toán - Tài Chính",
     title: "Phòng Kế Toán - Tài Chính",
     desc: "Đối soát thanh toán, công nợ, xuất hóa đơn VAT điện tử",
     icon: CreditCard,
+  },
+  {
+    id: 5,
+    code: "Phòng Hành Chính - Pháp Chế",
+    title: "Phòng Hành Chính - Pháp Chế",
+    desc: "Chính sách dịch vụ, tài khoản, hồ sơ pháp lý hợp đồng",
+    icon: HelpCircle,
   },
 ];
 

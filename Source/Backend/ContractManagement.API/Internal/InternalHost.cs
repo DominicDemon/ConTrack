@@ -217,9 +217,18 @@ public static class InternalHost
         var org = Screen("/org", "Bạn không có quyền quản lý phòng ban.", CatalogRules.DepartmentManage);
         org.MapGet("/departments", async (ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Departments(ct)));
         org.MapPut("/departments/{id:long}", async (long id, DepartmentInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.UpdateDepartment(id, input, Current(c), ct)));
-        // Hỗ trợ khách hàng: same calls as main's AdminSupportTicketsController, with the employee from the internal session.
-        // The service scopes by department: the manager sees and assigns the department's tickets, staff see tickets assigned to them.
-        var tickets = Screen("/tickets", "Bạn không có quyền xử lý yêu cầu hỗ trợ.", "ticket.handle", "ticket.manage.all");
+        // Hỗ trợ khách hàng: Chỉ nhân sự thuộc 3 phòng ban (Kỹ thuật, Kế toán, Hành chính) có quyền ticket.handle/ticket.manage.all mới được truy cập
+        var tickets = api.MapGroup("/tickets").AddEndpointFilter(async (invocation, next) =>
+        {
+            var c = invocation.HttpContext;
+            var user = await User(c, c.RequestServices.GetRequiredService<IInternalRepository>(), c.RequestAborted);
+            RequirePasswordChanged(user);
+            if (!user.Permissions.Contains("ticket.handle") && !user.Permissions.Contains("ticket.manage.all"))
+                throw new InternalAppException(403, "Bạn không có quyền xử lý yêu cầu hỗ trợ.");
+            c.Items[UserKey] = user;
+            if (!HttpMethods.IsGet(c.Request.Method)) await c.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(c);
+            return await next(invocation);
+        });
         tickets.MapGet("", async (string? status, string? priority, string? department, string? keyword, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
             Results.Ok(await s.GetAllForAdminAsync(TicketActor(c).Id, status, priority, department, keyword, ct)));
         tickets.MapGet("/{id:int}", async (int id, HttpContext c, ISupportTicketService s, CancellationToken ct) =>

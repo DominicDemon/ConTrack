@@ -137,6 +137,15 @@ export default function InternalShell({ children }: { children: ReactNode }) {
                 {screensFor(user.permissions).map((item) => {
                   const Icon = item.icon;
                   if (item.href === "/workspace/support-tickets") {
+                    const isSupportDept = Boolean(
+                      user.department &&
+                      (user.department.includes("Kỹ Thuật") ||
+                       user.department.includes("Kế Toán") ||
+                       user.department.includes("Hành Chính") ||
+                       user.department.includes("Pháp Chế"))
+                    );
+                    if (!isSupportDept) return null;
+
                     const visibleSections = supportSubItems.filter(
                       (sub) => !sub.managerOnly || user.isManager,
                     );

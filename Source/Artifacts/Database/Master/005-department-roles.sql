@@ -99,8 +99,7 @@ INSERT INTO @grants VALUES
     ('INTERNAL_LEGAL', 'template.read'), ('INTERNAL_LEGAL', 'legal.manage'), ('INTERNAL_LEGAL', 'contract.read'),
     ('INTERNAL_LEGAL_MANAGER', 'template.read'), ('INTERNAL_LEGAL_MANAGER', 'legal.manage'), ('INTERNAL_LEGAL_MANAGER', 'contract.read'),
     ('INTERNAL_LEGAL_MANAGER', 'template.manage'),
-    -- Hỗ trợ: ticket của main được gửi tới 4 phòng (Kỹ thuật, Kinh doanh, Kế toán, Pháp chế); trưởng phòng phân công trong phòng mình.
-    ('INTERNAL_SALE', 'ticket.handle'), ('INTERNAL_SALE_MANAGER', 'ticket.handle'), ('INTERNAL_SALE_MANAGER', 'ticket.manage.all'),
+    -- Hỗ trợ: ticket chỉ gửi tới 3 phòng (Kỹ thuật, Kế toán, Hành chính - Pháp chế); trưởng phòng phân công trong phòng mình.
     ('INTERNAL_FINANCE', 'ticket.handle'), ('INTERNAL_FINANCE_MANAGER', 'ticket.handle'), ('INTERNAL_FINANCE_MANAGER', 'ticket.manage.all'),
     ('INTERNAL_LEGAL', 'ticket.handle'), ('INTERNAL_LEGAL_MANAGER', 'ticket.handle'), ('INTERNAL_LEGAL_MANAGER', 'ticket.manage.all'),
     -- Scan & bản ký giấy (007-scan-permissions.sql): Phòng Hành Chính - Pháp Chế thao tác, BGD/Quản lý HCNS cấp key mở tệp.

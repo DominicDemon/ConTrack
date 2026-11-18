@@ -112,6 +112,7 @@ public sealed class InternalWordDocument(IConfiguration configuration)
     private static List<(WordBlock Block, Paragraph Paragraph)> Paragraphs(WordprocessingDocument doc, bool includeImages = false)
     {
         var result = new List<(WordBlock, Paragraph)>();
+        var units = new Dictionary<OpenXmlElement,string>();
         var tables = Roots(doc).SelectMany(r => r.Root.Descendants<Table>()).ToList();
         foreach (var (location, root) in Roots(doc))
         foreach (var paragraph in root.Descendants<Paragraph>())
@@ -121,13 +122,16 @@ public sealed class InternalWordDocument(IConfiguration configuration)
             var row = cell?.Ancestors<TableRow>().FirstOrDefault();
             var table = row?.Ancestors<Table>().FirstOrDefault();
             var merge = cell?.TableCellProperties?.VerticalMerge;
+            var unit = paragraph.Ancestors().Prepend(paragraph).FirstOrDefault(e => e.Parent is Body);
+            if (unit != null) units.TryAdd(unit, result.Count.ToString());
             result.Add((new(result.Count.ToString(), cell is null ? location : location + " · Ô bảng", text,
                 table is null ? null : tables.IndexOf(table),
                 table is null ? null : table.Elements<TableRow>().ToList().IndexOf(row!),
                 row is null ? null : row.Elements<TableCell>().ToList().IndexOf(cell!),
                 cell?.TableCellProperties?.GridSpan?.Val?.Value ?? 1,
                 merge is null ? null : merge.Val?.Value == MergedCellValues.Restart ? "restart" : "continue",
-                Heading: cell is null && location == "Nội dung" && IsHeading(paragraph, text)), paragraph));
+                Heading: cell is null && location == "Nội dung" && IsHeading(paragraph, text), BodyUnit: unit == null ? null : units[unit],
+                ClauseTitle: paragraph.Elements<BookmarkStart>().Any(b => b.Name?.Value?.StartsWith("ConTrackClause_", StringComparison.Ordinal) == true)), paragraph));
             if (includeImages)
             {
                 var images = new List<WordImagePreview>();
@@ -158,7 +162,7 @@ public sealed class InternalWordDocument(IConfiguration configuration)
     }
 
     public static byte[] Edit(byte[] bytes, IReadOnlyList<WordBlock> blocks, IReadOnlyList<WordTable>? tables = null,
-        IReadOnlyList<WordContent>? additions = null)
+        IReadOnlyList<WordContent>? additions = null, IReadOnlyList<WordBodyEntry>? bodyOrder = null)
     {
         using var stream = new MemoryStream();
         stream.Write(bytes);
@@ -174,6 +178,45 @@ public sealed class InternalWordDocument(IConfiguration configuration)
                 if (blocks[i].Id != paragraphs[i].Block.Id || blocks[i].Text.Length > 20000)
                     throw new ArgumentException("Đoạn văn không hợp lệ.");
                 Replace(paragraphs[i].Paragraph, paragraphs[i].Block.Text, blocks[i].Text);
+            }
+            if (bodyOrder != null)
+            {
+                var body = doc.MainDocumentPart!.Document!.Body!;
+                var units = paragraphs.Where(p => p.Block.Id == p.Block.BodyUnit).ToDictionary(p => p.Block.Id,
+                    p => p.Paragraph.Ancestors().Prepend(p.Paragraph).First(e => e.Parent == body));
+                if (bodyOrder.Count > 2200 || bodyOrder.Any(e => e is null) || bodyOrder.Select(x => x.Id).Distinct().Count() != bodyOrder.Count)
+                    throw new ArgumentException("Thứ tự nội dung Word không hợp lệ.");
+                var entries = new List<OpenXmlElement>();
+                var format = paragraphs.FirstOrDefault(p => p.Block.BodyUnit != null && p.Block.TableId == null).Paragraph ?? new Paragraph();
+                var bookmarkId = body.Descendants<BookmarkStart>().Select(b => int.TryParse(b.Id, out var id) ? id : 0).DefaultIfEmpty().Max();
+                if (bodyOrder.Sum(e => (long)(e.Text?.Length ?? 0)) + blocks.Sum(b => (long)b.Text.Length) > 100000) throw new ArgumentException("Nội dung quá dài.");
+                foreach (var entry in bodyOrder)
+                {
+                    if (units.TryGetValue(entry.Id, out var node)) { entries.Add(node); if (node is Paragraph p) format = p; }
+                    else
+                    {
+                        if (!Guid.TryParse(entry.Id, out _) || entry.Text == null || entry.Text.Length > 20000)
+                            throw new ArgumentException("Đoạn Word mới không hợp lệ.");
+                        var created = InheritParagraph(format, entry.Text, entry.Heading);
+                        entries.Add(created);
+                        paragraphs.Add((new WordBlock(entry.Id, "Nội dung", entry.Text, BodyUnit:entry.Id), created));
+                    }
+                    if (entry.Heading && entries[^1] is Paragraph heading && !heading.Elements<BookmarkStart>().Any(b => b.Name?.Value?.StartsWith("ConTrackClause_", StringComparison.Ordinal) == true))
+                    {
+                        var mark = (++bookmarkId).ToString();
+                        heading.Append(new BookmarkStart { Id = mark, Name = "ConTrackClause_" + mark }, new BookmarkEnd { Id = mark });
+                    }
+                }
+                // Keep unsupported body elements (e.g. bookmarks) and terminal section properties in their original slots.
+                var slots = body.ChildElements.Where(units.ContainsValue).ToList().Select(n => {
+                    var marker = new Paragraph(); n.InsertBeforeSelf(marker); n.Remove(); return marker;
+                }).ToList();
+                for (var i = 0; i < entries.Count; i++)
+                {
+                    if (slots.Count != 0) slots[Math.Min(i, slots.Count-1)].InsertBeforeSelf(entries[i]);
+                    else body.InsertBefore(entries[i], body.Elements<SectionProperties>().LastOrDefault());
+                }
+                foreach (var slot in slots) slot.Remove();
             }
             tables ??= [];
             if (tables.Count > 20 || tables.Any(t => t is null || string.IsNullOrWhiteSpace(t.Id))

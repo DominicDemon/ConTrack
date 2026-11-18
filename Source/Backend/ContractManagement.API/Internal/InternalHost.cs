@@ -287,17 +287,47 @@ public static class InternalHost
         secured.MapPut("/contract-templates/{id:long}/checklist", async (long id, ChecklistInput input, HttpContext c, ContractChecklistService service, CancellationToken ct) => { await service.SaveTemplate(id, input, Current(c), ct); return Results.NoContent(); });
         secured.MapGet("/contract-drafts/{id:long}/checklist", async (long id, HttpContext c, ContractChecklistService service, CancellationToken ct) => Results.Ok(await service.Inspect(id, Current(c), ct)));
         secured.MapPost("/contract-drafts/{id:long}/checklist", async (long id, ChecklistDecision input, HttpContext c, ContractChecklistService service, CancellationToken ct) => { await service.Decide(id, input, Current(c), ct); return Results.NoContent(); });
+        secured.MapGet("/contract-drafts/{id:long}/word/content", async (long id, HttpContext c, InternalDraftService drafts, InternalWordTemplates service, CancellationToken ct) => {
+            var draft = await drafts.Get(id, Current(c), ct);
+            var bytes = await service.ReadWord(draft.Content.TemplateSnapshot!, ct);
+            return Results.Ok(new { name = draft.Content.Name, blocks = InternalWordDocument.Blocks(bytes, true), sourceToken = "", documentBase64 = "" });
+        });
         var wordDrafts = secured.MapGroup("/contract-drafts/{id:long}/word").AddEndpointFilter(async (invocation, next) => {
-            if (!Current(invocation.HttpContext).CanCheck) throw new InternalAppException(403, "Chỉ Hành chính được sửa nội dung Word.");
+            var context = invocation.HttpContext;
+            var actor = Current(context);
+            var id = invocation.GetArgument<long>(0);
+            var drafts = context.RequestServices.GetRequiredService<InternalDraftService>();
+            var draft = await drafts.Get(id, actor, context.RequestAborted);
+            if (!actor.CanEditDraftTerms(draft.EmployeeId)) throw new InternalAppException(403, "Bạn không có quyền sửa Word của nháp này.");
+            if (!draft.CanEdit) throw new InternalAppException(409, "Hồ sơ đang khóa.");
+            context.Items["draftWordSource"] = draft.Content.TemplateSnapshot;
             return await next(invocation);
         });
+        var newDraftWord = secured.MapGroup("/contract-drafts/from-template/{id:long}/word").AddEndpointFilter(async (invocation, next) => {
+            var context = invocation.HttpContext;
+            if (!Current(context).CanWrite) throw new InternalAppException(403, "Bạn không có quyền tạo nháp.");
+            var templates = await context.RequestServices.GetRequiredService<IInternalRepository>().Templates(context.RequestAborted);
+            context.Items["draftWordSource"] = templates.SingleOrDefault(t => t.Id == invocation.GetArgument<long>(0) && t.WordStorageKey != null)
+                ?? throw new InternalAppException(404, "Không tìm thấy mẫu Word đang hoạt động.");
+            return await next(invocation);
+        });
+        newDraftWord.MapPost("/extract", async (long id, HttpContext c, InternalWordTemplates service, CancellationToken ct) => {
+            var bytes = await service.ReadWord((ContractManagement.Domain.Internal.TemplateDefinition)c.Items["draftWordSource"]!, ct);
+            return Results.Ok(await service.Extract(new TemplateFileInput("hop-dong.docx", Convert.ToBase64String(bytes)), Current(c).Id, ct));
+        });
+        newDraftWord.MapPost("/editor-preview", async (long id, WordEditorPreview input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
+            Results.Ok(await service.EditorPreview(input, (ContractManagement.Domain.Internal.TemplateDefinition)c.Items["draftWordSource"]!, null, Current(c).Id, ct)))
+            .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
         wordDrafts.MapPost("/extract", async (long id, HttpContext c, InternalDraftService drafts, InternalWordTemplates service, CancellationToken ct) => {
             var draft = await drafts.Get(id, Current(c), ct);
             if (!draft.CanEdit) throw new InternalAppException(409, "Hồ sơ đang khóa.");
             var bytes = await service.ReadWord(draft.Content.TemplateSnapshot!, ct);
             return Results.Ok(await service.Extract(new TemplateFileInput("hop-dong.docx", Convert.ToBase64String(bytes)), Current(c).Id, ct));
         });
-        wordDrafts.MapPost("/preview", async (WordTemplateInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) => Results.Ok(await service.Preview(input, Current(c).Id, ct)))
+        wordDrafts.MapPost("/editor-preview", async (long id, WordEditorPreview input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
+            Results.Ok(await service.EditorPreview(input, (ContractManagement.Domain.Internal.TemplateDefinition)c.Items["draftWordSource"]!, id, Current(c).Id, ct)))
+            .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
+        wordDrafts.MapPost("/preview", async (long id, WordTemplateInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) => Results.Ok(await service.Preview(input, Current(c).Id, ct)))
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
         wordDrafts.MapPost("/activate", async (long id, WordDraftSave input, HttpContext c, InternalWordTemplates service, CancellationToken ct) => { await service.SaveDraftWord(id, input, Current(c), ct); return Results.NoContent(); })
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));

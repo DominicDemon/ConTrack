@@ -1,5 +1,7 @@
 "use client";
 import WordDocumentLayout, { type DocumentBlock } from "./word-document-layout";
+import { createPortal } from "react-dom";
+import WordClauseForm, { wordCards, type Card } from "./word-clause-form";
 import WordPdfViewer from "./word-pdf-viewer";
 import WordTableEditor, { createTable, type AddedTable } from "./word-table-editor";
 import WordContentEditor, { type AddedContent } from "./word-content-editor";
@@ -9,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import styles from "./template-workspace.module.css";
-import { internalApi, type TemplateDefinition } from "@/services/internal-api";
+import { internalApi, type DraftContent, type TemplateDefinition } from "@/services/internal-api";
 
 type Block = DocumentBlock;
 type Extraction = { name: string; documentBase64: string; blocks: Block[]; sourceToken: string };
@@ -17,8 +19,8 @@ export function wordBlob(base64: string, type: string) {
   return new Blob([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], { type });
 }
 const documentTypes = ["Hợp đồng", "Phụ lục", "Biên bản bàn giao", "Biên lai", "Đề nghị thanh toán"];
-export default function TemplateUpload({ onImported, disabled, draft, onSaved, locate }: { locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string;rowVersion:string;versionRowVersion:string}; onSaved?: () => void }) {
-  const endpoint = draft ? `/contract-drafts/${draft.id}/word` : "/contract-templates/word";
+export default function TemplateUpload({ onImported, disabled, draft, locate, inline }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string} }) {
+  const endpoint = draft ? `/contract-drafts/${draft.id}/word` : inline ? `/contract-drafts/from-template/${inline.templateId}/word` : "/contract-templates/word";
   const [mobile, setMobile] = useState(false);
   const [tab, setTab] = useState("edit");
   const [previewCurrent, setPreviewCurrent] = useState(false);
@@ -40,7 +42,8 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
   const [checklistRules, setChecklistRules] = useState<string[]>([]);
   const [checklistConfirmed, setChecklistConfirmed] = useState(false);
   const [checklistOptions, setChecklistOptions] = useState<{key:string;label:string}[]>([]);
-  useEffect(() => { if (open && !draft) internalApi<{key:string;label:string}[]>("/checklist-rules").then(setChecklistOptions).catch(e=>setError(e.message)); }, [open, !!draft]);
+  useEffect(() => { if (open && !draft && !inline) internalApi<{key:string;label:string}[]>("/checklist-rules").then(setChecklistOptions).catch(e=>setError(e.message)); }, [open, !!draft]);
+  const [cards,setCards] = useState<Card[]>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [tables, setTables] = useState<AddedTable[]>([]);
   const [additions, setAdditions] = useState<AddedContent[]>([]);
@@ -54,10 +57,21 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
   const inputs = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const previewUrl = preview?.url;
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
-  function invalidate() { setPreviewCurrent(false); setConfirmed(false); setError(""); }
+  const revision = useRef(0);
+  const lastContent = useRef(inline?.content);
+  useEffect(() => {
+    if (lastContent.current !== inline?.content) {
+      lastContent.current = inline?.content;
+      revision.current++;
+      setPreviewCurrent(false);
+    }
+  }, [inline?.content]);
+  useEffect(() => () => { revision.current++; }, []);
+  function invalidate(edit = true) { if (inline && edit) { revision.current++; inline.receipt.current = null; inline.changed(); } setPreviewCurrent(false); setConfirmed(false); setError(""); }
   async function extract(file?: File) {
     if (!file) return;
     invalidate(); setPreview(null); setSource(null); setExtraction(null); setMessage(""); setTables([]); setAdditions([]);
+    setChecklistRules([]); setChecklistConfirmed(false);
     if (!/\.(doc|docx)$/i.test(file.name) || file.size === 0 || file.size > 10 * 1024 * 1024) {
       setError("Chọn Word .doc hoặc .docx có nội dung, tối đa 10 MB."); return;
     }
@@ -73,18 +87,33 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
       const result = await internalApi<Extraction>("/contract-templates/word/extract", "POST", original);
       setSource(original); setExtraction(result); setName(result.name); setBlocks(result.blocks);
       setActive("");
-      setDocumentType(/ĐNTT/i.test(file.name) ? 5 : /BienBan|Biên bản/i.test(file.name) ? 3 : /PLHD|PLHĐ/i.test(file.name) ? 2 : 1);
+      const type = /ĐNTT/i.test(file.name) ? 5 : /BienBan|Biên bản/i.test(file.name) ? 3 : /PLHD|PLHĐ/i.test(file.name) ? 2 : 1;
+      setDocumentType(type);
+      await render({
+        ...original, documentBase64: result.documentBase64, sourceToken: result.sourceToken,
+        name: result.name, documentType: type,
+        blocks: result.blocks.map(({ images, ...block }) => { void images; return block; }),
+        fields: [], tables: [], additions: [], sampleValues: {}, manualContent: true, checklistRules: null,
+      }, false);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   function payload() {
+    const original = new Set(extraction!.blocks.map(b=>b.id));
+    const retained = new Set(cards.flatMap(c=>c.ids));
+    const byId = new Map(blocks.map(b=>[b.id,b]));
+    const bodyOrder = inline ? [...new Set(cards.flatMap(c=>c.ids.map(id=>byId.get(id)!.bodyUnit!)))].map(id=>({id,text:original.has(id)?undefined:byId.get(id)!.text,heading:cards.some(c=>c.title===id&&!c.fixed)})) : undefined;
     return { ...source!, documentBase64: extraction!.documentBase64, sourceToken: extraction!.sourceToken,
-      name, documentType, blocks: blocks.map(({ images, ...block }) => { void images; return block; }), fields: [], tables, additions, sampleValues: {}, manualContent: true, checklistRules: !draft && documentType === 1 && checklistConfirmed ? checklistRules : null };
+      name, documentType, bodyOrder, blocks: blocks.filter(b=>original.has(b.id)).map(({ images, ...block }) => { void images; return block; }), fields: [], tables:tables.filter(t=>!inline||retained.has(t.afterBlockId)), additions:additions.filter(a=>!inline||retained.has(a.afterBlockId)), sampleValues: {}, manualContent: true, checklistRules: !draft && documentType === 1 && checklistConfirmed ? checklistRules : null };
   }
-  async function render() {
-    setBusy(true); invalidate();
+  async function render(input: ReturnType<typeof payload> | Omit<ReturnType<typeof payload>,"bodyOrder"> = payload(), showPreview = true) {
+    const version = revision.current; setBusy(true); invalidate(false);
     try {
-      const result = await internalApi<{ pdfBase64: string; previewToken: string }>(`${endpoint}/preview`, "POST", payload());
-      setPreview({ url: URL.createObjectURL(wordBlob(result.pdfBase64, "application/pdf")), token: result.previewToken }); setPreviewCurrent(true); setTab("preview");
+      const result = await internalApi<{ pdfBase64: string; previewToken: string }>(`${endpoint}/${inline ? "editor-preview" : "preview"}`, "POST", inline ? { document:input, content:{...inline.content,customerId:inline.content.customerId || "0",templateSnapshot:null} } : input);
+      if (revision.current !== version) return;
+      setPreview({ url: URL.createObjectURL(wordBlob(result.pdfBase64, "application/pdf")), token: result.previewToken });
+      setPreviewCurrent(true);
+      if (inline && inline.receipt.current !== undefined) inline.receipt.current = result.previewToken;
+      if (showPreview) setTab("preview");
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   async function activate() {
@@ -92,10 +121,6 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
     if (!draft && documentType === 1 && !checklistConfirmed) {setError("Xác nhận danh sách điều khoản cần rà soát trước khi kích hoạt."); return;}
     setBusy(true); setError("");
     try {
-      if (draft) {
-        await internalApi(`${endpoint}/activate`, "POST", { document: { input: payload(), previewToken: preview.token }, rowVersion: draft.rowVersion, versionRowVersion: draft.versionRowVersion });
-        setOpen(false); onSaved?.(); return;
-      }
       const template = await internalApi<TemplateDefinition>("/contract-templates/word/activate", "POST", { input: payload(), previewToken: preview.token });
       if (documentType === 1) onImported(template);
       setMessage("Đã kích hoạt mẫu " + name + ".");
@@ -104,17 +129,19 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
   }
   async function openEditor() {
     setOpen(true); setMessage("");
-    if (!draft) return;
-    setBusy(true); invalidate(); setPreview(null); setTables([]); setAdditions([]);
+    if (!draft && !inline) return;
+    setBusy(true); invalidate(false); setPreview(null); setTables([]); setAdditions([]);
     try {
-      const result = await internalApi<Extraction>(`${endpoint}/extract`, "POST", {});
+      const result = inline?.readOnly ? await internalApi<Extraction>(`${endpoint}/content`) : await internalApi<Extraction>(`${endpoint}/extract`, "POST", {});
+      setCards(wordCards(result.blocks));
       setSource({fileName:"hop-dong.docx",base64:result.documentBase64});
       setExtraction(result); setName(result.name); setBlocks(result.blocks); setDocumentType(1); setActive("");
+      if (inline && !inline.readOnly) await render({fileName:"hop-dong.docx", base64:result.documentBase64, documentBase64:result.documentBase64, sourceToken:result.sourceToken, name:result.name, documentType:1, blocks:result.blocks.map(({images,...b}) => b), fields:[], tables:[], additions:[], sampleValues:{}, manualContent:true, checklistRules:null}, false);
     } catch(e) { setError((e as Error).message); } finally {setBusy(false);}
   }
-  useEffect(() => { if (locate && draft && !disabled) void openEditor(); }, [locate?.request]);
+  useEffect(() => { if (inline) void openEditor(); }, [endpoint]);
   const located = useRef<number | null>(null);
-  useEffect(() => { if (!open || !locate?.location || busy || located.current === locate.request) return; const input = inputs.current[locate.location]; if(input){input.scrollIntoView({block:"center"}); input.focus(); located.current=locate.request;} }, [open, busy, blocks, locate]);
+  useEffect(() => { if (!open || !locate?.location || busy || located.current === locate.request) return; const input = inputs.current[locate.location] ?? document.querySelector<HTMLElement>(`[data-word-ids~="${CSS.escape(locate.location)}"]`); if(input){input.scrollIntoView({block:"center"}); input.focus(); located.current=locate.request;} }, [open, busy, blocks, locate]);
   const activeBlock = blocks.find(b => b.id === active);
   function insertContractValue(key: string) {
     if (!activeBlock || !key) return;
@@ -213,14 +240,25 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
   </section>;
   const previewPane = <section className={styles.pane} aria-label="Khung xem trước">
     <div className={styles.toolbar}><strong>Bản in từ Word</strong>
-      <p className={styles.selection} role="status">{(extraction && !previewCurrent && !error) ? "Đang cập nhật bản in theo nội dung bên trái…" : previewCurrent ? "Đã cập nhật theo nội dung bên trái." : "Bố cục, ảnh và đường viền được lấy từ file Word."}</p>
+      {extraction && <Button type="button" variant="outline" disabled={busy} onClick={() => void render()}>Cập nhật bản xem trước</Button>}
+      <p className={styles.selection} role="status">{busy ? "Đang xử lý tài liệu…" : previewCurrent ? "Bản in đã cập nhật." : extraction ? "Cập nhật bản xem trước để kiểm tra các thay đổi." : "Bố cục, ảnh và đường viền được lấy từ file Word."}</p>
     </div>
     <div className={styles.scroll}>
-      {preview ? <><a href={preview.url} target="_blank" rel="noreferrer">Mở PDF</a><WordPdfViewer key={preview.url} url={preview.url}/></> : <p className={styles.empty}>{busy ? "Đang chuyển Word sang bản xem trước…" : extraction ? "Chưa dựng được bản xem trước. Sửa nội dung để thử lại." : "Chọn file Word để xem bản in tại đây."}</p>}
+      {preview ? <><a href={preview.url} target="_blank" rel="noreferrer">Mở PDF</a><WordPdfViewer key={preview.url} url={preview.url}/></> : <p className={styles.empty}>{busy ? "Đang chuyển Word sang bản xem trước…" : extraction ? "Chưa có bản in. Bấm Cập nhật bản xem trước để thử lại." : "Chọn file Word để xem bản in tại đây."}</p>}
     </div>
   </section>;
+  if (inline) return <>
+    {error && <p role="alert">{error}</p>}
+    {!extraction && !busy && <Button type="button" onClick={() => void openEditor()}>Tải lại nội dung Word</Button>}
+    {busy && !extraction && <p role="status">Đang đọc nội dung Word…</p>}
+    {extraction && <WordClauseForm cards={cards} blocks={blocks} select={setActive} active={active} readOnly={inline.readOnly} busy={busy}
+      update={(next,values)=>{setCards(next);setBlocks(values);invalidate();}} anchors={new Set([...tables,...additions].map(a=>a.afterBlockId))}
+      after={insertedAfter} table={addTable} image={()=>imageInput.current?.click()}/>}
+    <input type="file" aria-label="Ảnh chèn thêm" ref={imageInput} hidden accept="image/png,image/jpeg" onChange={e=>void addImage(e.target.files?.[0])}/>
+    {inline.previewHost && createPortal(previewPane, inline.previewHost)}
+  </>;
   return <>
-    <Button type="button" variant="outline" disabled={disabled} onClick={() => void openEditor()}>{draft ? "Sửa nội dung Word của hợp đồng" : "Tải mẫu Word"}</Button>
+    <Button type="button" variant="outline" disabled={disabled} onClick={() => void openEditor()}>Tải mẫu Word</Button>
     {message && <p role="status">{message}</p>}
     <Dialog open={open} onOpenChange={value => {if (!busy) setOpen(value);}}>
       <DialogContent className={styles.dialog} style={{width:"98vw",maxWidth:"98vw",height:"96dvh",display:"flex",overflow:"hidden"}} onInteractOutside={e => e.preventDefault()}>
@@ -245,7 +283,7 @@ export default function TemplateUpload({ onImported, disabled, draft, onSaved, l
         <div className={styles.footer}>
           {preview && <label><input type="checkbox" checked={confirmed} disabled={busy || !previewCurrent} onChange={e => setConfirmed(e.target.checked)}/> Tôi đã kiểm tra nội dung và bố cục PDF đối chiếu.</label>}
           <Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Đóng</Button>
-          <Button type="button" disabled={busy || !preview || !previewCurrent || !confirmed} onClick={() => void activate()}>{draft ? "Lưu nội dung hợp đồng" : "Kích hoạt mẫu"}</Button>
+          <Button type="button" disabled={busy || !preview || !previewCurrent || !confirmed} onClick={() => void activate()}>Kích hoạt mẫu</Button>
         </div>
       </DialogContent>
     </Dialog>

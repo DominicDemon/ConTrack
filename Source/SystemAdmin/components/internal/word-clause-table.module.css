@@ -1,0 +1,17 @@
+.parties,.grid,.row,.field { min-width:0; }
+.parties,.field {display:grid;gap:.4rem}
+.parties {gap:.85rem}
+.row {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));gap:.75rem}
+.field>span {font-weight:600;font-size:.875rem}
+.input,.cell,.text {font:inherit;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;color:inherit}
+.input,.cell {width:100%;display:block;text-align:left;margin:0;padding:.4rem;background:transparent;border:0}
+.input {field-sizing:content;min-height:2rem;resize:none;overflow:hidden;outline:2px solid var(--primary)}
+.field .input {border:1px solid var(--border);border-radius:.45rem;padding:.55rem .75rem;outline:none}
+.field .input:focus {outline:2px solid var(--primary)}
+.cell:hover,.cell:focus-visible {background:var(--secondary)}
+.grid {overflow-x:auto;max-width:100%;border-radius:.4rem;font-size:.875rem}
+.grid table {min-width:calc(var(--columns) * 7.2rem);width:100%;border-collapse:collapse}
+.grid td {border:1px solid var(--border);padding:0;vertical-align:top}
+.grid tr:first-child {background:var(--secondary);font-weight:600}
+.after:empty {display:none}
+.parties img,.grid img {max-width:100%;height:auto}

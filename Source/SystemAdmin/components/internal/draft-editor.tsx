@@ -1,4 +1,5 @@
 "use client";
+import { isGroupedWordSection, wordDisplaySections } from "../../../Shared/word-display-sections";
 import { draftIssues, focusIssue } from "../../../Shared/draft-validation";
 import { PartyEditor, PaymentEditor } from "./draft-details";
 
@@ -31,6 +32,8 @@ export default function DraftEditor({ id }: { id?: string }) {
   const [customerSearch, setCustomerSearch] = useState(""); const [lookupError, setLookupError] = useState(""); const [loadAttempt, setLoadAttempt] = useState(0);
   const [locate, setLocate] = useState<{location:string|null;request:number}|null>(null);
   const [wordInfo, setWordInfo] = useState("");
+  const receipt = useRef<string|null|undefined>(undefined);
+  const [previewHost,setPreviewHost] = useState<HTMLDivElement|null>(null);
   const wordReadVersion = useRef(0);
   const retryLoad = (next: (v: number) => number) => { setLoading(true); setError(""); setLoadAttempt(next); };
   useEffect(() => { const mq = window.matchMedia("(max-width: 850px)"); const update = () => setMobile(mq.matches); update(); mq.addEventListener("change", update); return () => mq.removeEventListener("change", update); }, []);
@@ -38,7 +41,7 @@ export default function DraftEditor({ id }: { id?: string }) {
     void Promise.all([internalApi<TemplateDefinition[]>("/contract-templates"), internalApi<CustomerOption[]>("/customers"), internalApi<ProductOption[]>("/products"), id ? internalApi<DraftRecord>(`/contract-drafts/${id}`) : Promise.resolve(null)]).then(([ts, cs, ps, draft]) => {
       if (!active) return; ts = ts.map(completePartyFields); setTemplates(ts); setCustomers(cs); setProducts(ps); setRecord(draft);
       setContent(draft?.content ?? { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
-      setDirty(false); dirtyRef.current = false;
+      receipt.current = undefined; setDirty(false); dirtyRef.current = false;
     }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; };
   }, [id, loadAttempt]);
   useEffect(() => { if (id) return; let active = true; const timer = setTimeout(() => {
@@ -56,7 +59,7 @@ export default function DraftEditor({ id }: { id?: string }) {
     window.addEventListener("beforeunload", unload); document.addEventListener("click", click, true);
     return () => { window.removeEventListener("beforeunload", unload); document.removeEventListener("click", click, true); navigation?.removeEventListener("navigate", traverse); };
   }, []);
-  const change = useCallback((update: (old: DraftContent) => DraftContent) => { setContent(update); setDirty(true); dirtyRef.current = true; setSuccess(""); }, []);
+  const change = useCallback((update: (old: DraftContent) => DraftContent) => { if (receipt.current !== undefined) receipt.current = null; setContent(update); setDirty(true); dirtyRef.current = true; setSuccess(""); }, []);
   const setField = (key: string, value: string) => change(c => ({ ...c, fields: { ...c.fields, [key]: value } }));
   const bilingual = content.languageMode === "VI_EN";
   const setTerm = (key: string, patch: Partial<DraftContent["terms"][number]>) => change(c => ({ ...c, terms: c.terms.map(t => t.key === key ? { ...t, ...patch } : t) }));
@@ -72,6 +75,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   const missing = issues.map(i => i.message);
   function selectCustomer(customer: CustomerOption) { change(c => ({ ...c, customerId: customer.id, partyType: "", customerBusinessId: null, fields: c.templateSnapshot?.manualWordContent ? { ...customer.fields, ...c.fields } : { ...c.fields, ...customer.fields } })); }
   async function selectWordTemplate(t: TemplateDefinition) {
+    receipt.current = undefined;
     const version = ++wordReadVersion.current;
     change(c => ({...c, ...(t.wordStorageKey ? {name:"",fields:{},items:[],effectiveDate:null,expireDate:null,customerId:"",partyType:"",customerBusinessId:null} : {fields:Object.fromEntries(Object.entries(c.fields).filter(([key]) => t.fields.some(f => f.key === key)))}), templateId:String(t.id), templateSnapshot:t, terms:structuredClone(t.terms)}));
     setWordInfo("");
@@ -90,8 +94,9 @@ export default function DraftEditor({ id }: { id?: string }) {
   }
   async function createCustomer() { if (!customerForm) return; setCustomerBusy(true); setError(""); try { const c = await internalApi<CustomerOption>("/customers", "POST", customerForm); setCustomers(old => [c, ...old]); selectCustomer(c); setCustomerForm(null); } catch (e) { setError((e as Error).message); } finally { setCustomerBusy(false); } }
   async function save() { if (!form.current?.reportValidity()) return; setBusy(true); setError(""); setSuccess(""); setConflict(false);
-    try { const saved = await internalApi<DraftRecord>(id ? `/contract-drafts/${id}` : "/contract-drafts", id ? "PUT" : "POST", { content, rowVersion: record?.rowVersion, versionRowVersion: record?.versionRowVersion });
-      setRecord(saved); setContent(saved.content); setDirty(false); dirtyRef.current = false; setSuccess("Đã lưu bản nháp thành công."); if (!id) router.replace(`/workspace/contracts/drafts/${saved.id}`);
+    try { if (receipt.current === null) throw new Error("Cập nhật bản xem trước Word trước khi lưu nháp.");
+      const saved = await internalApi<DraftRecord>(id ? `/contract-drafts/${id}` : "/contract-drafts", id ? "PUT" : "POST", { content, wordPreviewToken:receipt.current, rowVersion: record?.rowVersion, versionRowVersion: record?.versionRowVersion });
+      receipt.current = undefined; setRecord(saved); setContent(saved.content); setDirty(false); dirtyRef.current = false; setSuccess("Đã lưu bản nháp thành công."); if (!id) router.replace(`/workspace/contracts/drafts/${saved.id}`);
     } catch (e) { setError((e as Error).message); if(e instanceof InternalApiError && e.issues.length) focusIssue(e.issues[0].path); setConflict(e instanceof InternalApiError && e.status === 409); } finally { setBusy(false); }
   }
   async function reload() { if (dirty && !window.confirm("Tải lại sẽ bỏ nội dung chưa lưu của bạn. Tiếp tục?")) return; retryLoad(v => v + 1); setConflict(false); }
@@ -100,12 +105,15 @@ export default function DraftEditor({ id }: { id?: string }) {
   const readOnly = !user.canWrite && !user.canCheck || !!record && !record.canEdit;
   if (loading) return <div className={s.empty}>Đang chuẩn bị không gian soạn thảo…</div>;
   if (!template || (id && !record)) return <div className={s.empty}><p role="alert">{error || "Chưa có mẫu hợp đồng hoạt động. Liên hệ quản trị để khởi tạo mẫu."}</p><button className={ui.secondaryButton} onClick={() => retryLoad(v => v + 1)}>Thử lại</button><Link href="/workspace/contracts/drafts">Về danh sách nháp</Link></div>;
+  const canEditTerms = user.canCheck || (user.canWrite && (!record || String(record.employeeId) === String(user.id)));
+  const showWordSections = !!template.wordStorageKey || content.terms.some(isGroupedWordSection);
+  const inlineWord = !!template.wordStorageKey && canEditTerms && !readOnly;
   const editor = <div className={s.formPane}><form ref={form} onSubmit={e => { e.preventDefault(); void save(); }}><fieldset disabled={busy || readOnly} style={{ border: 0, padding: 0, minWidth: 0 }}>
     <section id="contract-info" tabIndex={-1} className={s.section}><h2><FileText/>Thông tin hợp đồng</h2><div className={s.fields}>
       <Field label="Mẫu hợp đồng *"><select required className={ui.field} value={content.templateId} disabled={!!id} onChange={e => { const t = templates.find(t => String(t.id) === e.target.value)!; if (dirty && !window.confirm("Đổi mẫu sẽ thay nội dung theo mẫu mới. Tiếp tục?")) return; void selectWordTemplate(t); }}>{templates.map(t => <option value={t.id} key={t.id}>{t.name}</option>)}{!templates.some(t => t.id === template.id) && <option value={template.id}>{template.name}</option>}</select></Field>
-      {!id && user.canManageTemplates && <TemplateUpload disabled={busy} onImported={t => { setTemplates(old => [t, ...old]); void selectWordTemplate(t); }}/>}
+      {!id && user.canManageTemplates && <TemplateUpload disabled={busy} onImported={t => { setTemplates(old => [t, ...old]); if (!dirty || window.confirm("Dùng mẫu vừa tải và bỏ thay đổi đang soạn?")) void selectWordTemplate(t); }}/>}
       {wordInfo && <p role="status" className={s.muted}>{wordInfo}</p>}
-      <p className={s.muted}>{template.manualWordContent ? "Thông tin nhận diện từ Word được điền sẵn vào hồ sơ. Bản in giữ nội dung Word đã lưu; hãy đối chiếu trước khi gửi khách." : template.isImported ? "Mẫu tải lên chưa được phê duyệt. Sửa nội dung file tại phần Nội dung hợp đồng; thông tin khách hàng không tự thay vào văn bản." : "Mẫu minh họa, chưa được công ty phê duyệt. Nội dung trống cần được người soạn bổ sung."}</p>
+      <p className={s.muted}>{template.manualWordContent ? "Đối chiếu thông tin đã điền từ Word. Bạn có thể sửa văn bản, bảng và ảnh trong phần Nội dung hợp đồng." : template.isImported ? "Mẫu tải lên chưa được phê duyệt. Sửa nội dung file tại phần Nội dung hợp đồng; thông tin khách hàng không tự thay vào văn bản." : "Mẫu minh họa, chưa được công ty phê duyệt. Nội dung trống cần được người soạn bổ sung."}</p>
       <Field label="Ngôn ngữ hợp đồng"><select className={ui.field} value={bilingual ? "VI_EN" : "VI"} disabled={!!template.wordStorageKey} title={template.wordStorageKey ? "Mẫu Word giữ nguyên nội dung của file" : undefined}
         onChange={e => { const mode = e.target.value === "VI_EN" ? "VI_EN" : null; change(c => ({ ...c, languageMode: mode })); }}>
         <option value="VI">Tiếng Việt</option><option value="VI_EN">Song ngữ Anh – Việt (tiếng Anh trước, tiếng Việt in nghiêng)</option></select></Field>
@@ -139,11 +147,22 @@ export default function DraftEditor({ id }: { id?: string }) {
         <Field label="VAT chung của hợp đồng (%)"><input type="number" min="0" max="100" step="0.01" className={ui.field} value={content.vatPercent} onChange={e => change(c => ({ ...c, vatPercent: e.target.valueAsNumber || 0 }))}/></Field>
       </div><div className={s.totals}><div><span>Tạm tính</span><span>{money(totals.subtotal)} ₫</span></div><div><span>Giảm giá</span><span>{money(totals.discount)} ₫</span></div><div><span>VAT</span><span>{money(totals.vat)} ₫</span></div><div><span>Tổng giá trị</span><span>{money(totals.total)} ₫</span></div></div>
     </section>
-    <fieldset disabled={!user.canCheck || !!template.wordStorageKey} style={{border:0,padding:0}}><section id="contract-terms" tabIndex={-1} className={s.section}><h2><ListChecks/>{template.isImported ? "Nội dung hợp đồng" : "Điều khoản hợp đồng"}</h2>{!template.isImported && <Field label="Căn cứ hợp đồng"><textarea className={`${ui.field} ${s.termContent}`} maxLength={4000} value={content.fields.CONTRACT_LEGAL_BASES ?? ""} onChange={e => setField("CONTRACT_LEGAL_BASES", e.target.value)}/></Field>}
-      <div style={{ marginTop: 18 }}>{content.terms.map((term, index) => <div className={s.lineItem} id={`contract-term-${term.key}`} tabIndex={-1} key={term.key}><header><strong style={{ fontSize: 12 }}>Điều {index + 1}{!term.editable ? " · Cố định theo mẫu" : ""}</strong><div><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === 0} aria-label={`Đưa điều ${index + 1} lên`} onClick={() => moveTerm(index, -1)}><ArrowUp size={15}/></button><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === content.terms.length - 1} aria-label={`Đưa điều ${index + 1} xuống`} onClick={() => moveTerm(index, 1)}><ArrowDown size={15}/></button><button type="button" className={s.iconButton} disabled={!user.canCheck} aria-label={`Xóa điều ${index + 1}`} onClick={() => change(c => ({ ...c, terms: c.terms.filter(t => t.key !== term.key) }))}><Trash2 size={15}/></button></div></header>
-        <Field label="Tiêu đề điều khoản"><input required disabled={!user.canCheck} maxLength={500} className={ui.field} value={term.title} onChange={e => change(c => ({ ...c, terms: c.terms.map(t => t.key === term.key ? { ...t, title: e.target.value } : t) }))}/></Field>
-        <Field label="Nội dung"><textarea disabled={!user.canCheck} maxLength={20000} className={`${ui.field} ${s.termContent}`} placeholder="Nhập nội dung điều khoản…" value={term.content} onChange={e => change(c => ({ ...c, terms: c.terms.map(t => t.key === term.key ? { ...t, content: e.target.value } : t) }))}/></Field>
-      </div>)}</div>{!content.templateSnapshot?.wordStorageKey && <select aria-label="Thêm mục" className={ui.field} value="" onChange={e => {
+    <section id="contract-terms" tabIndex={-1} className={s.section}><h2><ListChecks/>{showWordSections ? "Nội dung hợp đồng" : "Điều khoản hợp đồng"}</h2>
+      {template.wordStorageKey && <TemplateUpload key={String(template.id) + ":" + template.wordStorageKey} draft={record ?? undefined} locate={locate} onImported={() => {}}
+        inline={{readOnly:!inlineWord,content,templateId:String(template.id),previewHost,receipt,changed:() => {setDirty(true); dirtyRef.current=true;setSuccess("");}}}/>}
+      <fieldset hidden={!!template.wordStorageKey} disabled={!canEditTerms || showWordSections} style={{border:0,padding:0}}>
+      {!template.isImported && <Field label="Căn cứ hợp đồng"><textarea className={`${ui.field} ${s.termContent}`} maxLength={4000} value={content.fields.CONTRACT_LEGAL_BASES ?? ""} onChange={e => setField("CONTRACT_LEGAL_BASES", e.target.value)}/></Field>}
+      <div style={{ marginTop: 18 }}>{showWordSections
+        ? wordDisplaySections(content.terms).map(section => (
+          <div className={s.lineItem} id={`contract-term-${section.key}`} tabIndex={-1} key={section.key}>
+            <h3>{section.title}</h3>
+            {section.content && <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{section.content}</p>}
+          </div>
+        ))
+        : content.terms.map((term, index) => <div className={s.lineItem} id={`contract-term-${term.key}`} tabIndex={-1} key={term.key}><header><strong style={{ fontSize: 12 }}>Điều {index + 1}{!term.editable ? " · Cố định theo mẫu" : ""}</strong><div><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === 0} aria-label={`Đưa điều ${index + 1} lên`} onClick={() => moveTerm(index, -1)}><ArrowUp size={15}/></button><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === content.terms.length - 1} aria-label={`Đưa điều ${index + 1} xuống`} onClick={() => moveTerm(index, 1)}><ArrowDown size={15}/></button><button type="button" className={s.iconButton} disabled={!canEditTerms} aria-label={`Xóa điều ${index + 1}`} onClick={() => change(c => ({ ...c, terms: c.terms.filter(t => t.key !== term.key) }))}><Trash2 size={15}/></button></div></header>
+        <Field label="Tiêu đề điều khoản"><input required disabled={!canEditTerms} maxLength={500} className={ui.field} value={term.title} onChange={e => change(c => ({ ...c, terms: c.terms.map(t => t.key === term.key ? { ...t, title: e.target.value } : t) }))}/></Field>
+        <Field label="Nội dung"><textarea disabled={!canEditTerms} maxLength={20000} className={`${ui.field} ${s.termContent}`} placeholder="Nhập nội dung điều khoản…" value={term.content} onChange={e => change(c => ({ ...c, terms: c.terms.map(t => t.key === term.key ? { ...t, content: e.target.value } : t) }))}/></Field>
+      </div>)}</div>{!showWordSections && <select aria-label="Thêm mục" className={ui.field} value="" onChange={e => {
         const title = e.target.value;
         if (title) change(c => ({ ...c, terms: [...c.terms, { key: crypto.randomUUID(), title, content: "", editable: true }] }));
       }}>
@@ -152,13 +171,19 @@ export default function DraftEditor({ id }: { id?: string }) {
         <option>Định nghĩa</option>
         <option>Phụ lục</option>
       </select>}
-    </section></fieldset><PaymentEditor content={content} change={change}/><section className={s.section}><h2>Thông tin bổ sung theo mẫu</h2>{template.fields.filter(f => !f.key.startsWith("CUSTOMER_") && !f.key.startsWith("PROVIDER_") && f.key !== "CONTRACT_LEGAL_BASES").map(f => <Field key={f.key} label={f.label + (f.required ? " *" : "")} >{f.dataType === "SELECT" ? <select className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}><option value="">Chọn giá trị</option>{f.options?.map(o => <option key={o}>{o}</option>)}</select> : <input className={ui.field} type={f.dataType === "DATE" ? "date" : f.dataType === "NUMBER" ? "number" : "text"} step="any" min={f.min ?? undefined} max={f.max ?? undefined} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}/>}</Field>)}</section><section className={ui.notice}><strong>Nháp có thể lưu khi chưa hoàn thiện</strong>{issues.length > 0 && <ul>{issues.map((issue,i) => <li key={i}><button type="button" className={ui.secondaryButton} onClick={() => focusIssue(issue.path)}>{issue.message}</button></li>)}</ul>}<p className={s.muted} style={{ marginTop: 6 }}>{missing.length ? `Cần bổ sung: ${missing.join(", ")}.` : "Đã đủ các trường thông tin của mẫu. Hợp đồng vẫn là bản nháp, chưa được duyệt hoặc ký."}</p></section>
+    </fieldset></section><PaymentEditor content={content} change={change}/><section className={s.section}><h2>Thông tin bổ sung theo mẫu</h2>{template.fields.filter(f => !f.key.startsWith("CUSTOMER_") && !f.key.startsWith("PROVIDER_") && f.key !== "CONTRACT_LEGAL_BASES").map(f => <Field key={f.key} label={f.label + (f.required ? " *" : "")} >{f.dataType === "SELECT" ? <select className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}><option value="">Chọn giá trị</option>{f.options?.map(o => <option key={o}>{o}</option>)}</select> : <input className={ui.field} type={f.dataType === "DATE" ? "date" : f.dataType === "NUMBER" ? "number" : "text"} step="any" min={f.min ?? undefined} max={f.max ?? undefined} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}/>}</Field>)}</section><section className={ui.notice}><strong>Nháp có thể lưu khi chưa hoàn thiện</strong>{issues.length > 0 && <ul>{issues.map((issue,i) => <li key={i}><button type="button" className={ui.secondaryButton} onClick={() => focusIssue(issue.path)}>{issue.message}</button></li>)}</ul>}<p className={s.muted} style={{ marginTop: 6 }}>{missing.length ? `Cần bổ sung: ${missing.join(", ")}.` : "Đã đủ các trường thông tin của mẫu. Hợp đồng vẫn là bản nháp, chưa được duyệt hoặc ký."}</p></section>
   </fieldset></form></div>;
   return <><div className={s.editorHeader}><Link href="/workspace/contracts/drafts" className={s.iconButton} aria-label="Về danh sách"><ArrowLeft size={20}/></Link><div><h1>{readOnly ? "Xem hợp đồng" : id ? "Chỉnh sửa hợp đồng nháp" : "Tạo hợp đồng nháp"}</h1><p className={s.muted}>{record ? `${record.employeeName} · Cập nhật ${dateTime(record.updatedAt)}` : "Bắt đầu từ mẫu, hoàn thiện theo nhu cầu"}</p></div><div className={s.actions}><span className={`${s.badge} ${dirty ? s.warning : ""}`}>{dirty ? "Chưa lưu thay đổi" : record ? "Đã lưu" : "Nháp mới"}</span>{!readOnly && <button disabled={busy || customerBusy} className={ui.primaryButton} onClick={save}><Save size={17}/>{busy ? "Đang lưu…" : "Lưu nháp"}</button>}</div></div>
     {(error || success) && <div className={s.messages}>{error && <div role="alert" className={ui.error}>{error}{conflict && <button className={ui.secondaryButton} style={{ marginLeft: 12 }} onClick={reload}>Tải lại bản mới</button>}</div>}{success && <div role="status" className={ui.notice}>{success}</div>}</div>}
     {!record && <div className={s.messages}><section className={ui.card} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }} aria-label="Gửi khách xem"><button type="button" className={ui.primaryButton} disabled aria-describedby="new-draft-send-guidance"><Send size={16}/>Gửi khách xem</button><p id="new-draft-send-guidance" className={s.muted}>Lưu nháp trước, sau đó hoàn thiện các mục còn thiếu để gửi khách xem.</p></section></div>}
-    {record && <div className={s.messages}><ChecklistPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)} onLocate={location => { setTab("edit"); if (template.wordStorageKey && user.canCheck && !readOnly && !dirty) setLocate({location,request:Date.now()}); else requestAnimationFrame(() => { const target = document.getElementById(`contract-term-${location}`) ?? document.getElementById("contract-terms"); target?.scrollIntoView({behavior:"smooth"}); target?.focus({preventScroll:true}); }); }}/><ApprovalPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/>{user.canCheck && template.wordStorageKey && <TemplateUpload locate={locate} draft={record} disabled={dirty || readOnly} onImported={() => {}} onSaved={() => retryLoad(v => v + 1)}/>}<ReviewPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/></div>}
+    {record && <div className={s.messages}><ChecklistPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)} onLocate={location => { setTab("edit"); if (template.wordStorageKey && canEditTerms && !readOnly && !dirty) setLocate({location,request:Date.now()}); else requestAnimationFrame(() => { const target = document.getElementById(`contract-term-${location}`) ?? document.getElementById("contract-terms"); target?.scrollIntoView({behavior:"smooth"}); target?.focus({preventScroll:true}); }); }}/><ApprovalPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/><ReviewPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/></div>}
     <div className={s.mobileTabs}><button type="button" className={tab === "edit" ? ui.primaryButton : ui.secondaryButton} onClick={() => setTab("edit")}>Soạn thảo</button><button type="button" className={tab === "preview" ? ui.primaryButton : ui.secondaryButton} onClick={() => setTab("preview")}>Xem trước</button></div>
-    <div className={s.editorBody}>{mobile ? <><div hidden={tab !== "edit"}>{editor}</div><div hidden={tab !== "preview"}>{content.templateSnapshot?.wordStorageKey ? <WordDraftPreview content={content} draftId={record?.id} dirty={dirty}/> : <DraftPreview content={content} code={record?.code}/>}</div></> : <PanelGroup direction="horizontal"><Panel defaultSize={48} minSize={30}>{editor}</Panel><PanelResizeHandle aria-label="Điều chỉnh chiều rộng vùng soạn thảo" style={{ width: 10, display: "grid", placeItems: "center", background: "var(--secondary)", color: "var(--primary)" }}><GripVertical size={14}/></PanelResizeHandle><Panel defaultSize={52} minSize={30}>{content.templateSnapshot?.wordStorageKey ? <WordDraftPreview content={content} draftId={record?.id} dirty={dirty}/> : <DraftPreview content={content} code={record?.code}/>}</Panel></PanelGroup>}</div>
+    <div className={s.editorBody} style={mobile ? {height:"calc(100dvh - 140px)",minHeight:480}:undefined}><PanelGroup direction="horizontal">
+      <Panel defaultSize={48} minSize={30} style={mobile ? {display:tab==="edit"?"block":"none",flexGrow:1}:undefined}>{editor}</Panel>
+      {!mobile && <PanelResizeHandle aria-label="Điều chỉnh chiều rộng vùng soạn thảo" style={{width:10,display:"grid",placeItems:"center"}}><GripVertical size={14}/></PanelResizeHandle>}
+      <Panel defaultSize={52} minSize={30} style={mobile ? {display:tab==="preview"?"block":"none",flexGrow:1}:undefined}>
+        {inlineWord && <div ref={setPreviewHost} style={{height:"calc(100% - 80px)",overflow:"auto"}}/>}
+        {content.templateSnapshot?.wordStorageKey ? <WordDraftPreview downloadOnly={inlineWord} content={content} draftId={record?.id} dirty={dirty}/> : <DraftPreview content={content} code={record?.code}/>}
+      </Panel></PanelGroup></div>
   </>;
 }

@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
-public sealed class InternalRepository(MasterDbContext db, InternalTemplateStorage storage) : IInternalRepository
+public sealed class InternalRepository(MasterDbContext db, InternalTemplateStorage storage, InternalWordTemplates? word = null) : IInternalRepository
 {
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     internal const string SnapshotKey = "__draft.v1";
@@ -387,8 +387,23 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     }
     public async Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct)
     {
+        string? wordKey = null;
+        byte[]? edited = null;
         try
         {
+            if (request.WordPreviewToken is { } token)
+            {
+                var source = request.Content.TemplateSnapshot ?? throw new ArgumentException("Thiếu mẫu Word.");
+                edited = word!.ReviewedDocument(token, actor.Id, source, id, request.Content);
+                wordKey = Guid.NewGuid().ToString("N") + ".docx";
+                var terms = InternalWordTemplates.Sections(InternalWordDocument.Blocks(edited));
+                if (terms.Count > 100) throw new ArgumentException("Nội dung vượt quá giới hạn 100 điều khoản.");
+                request.Content.Terms = terms;
+                request.Content.TemplateSnapshot = source with { WordStorageKey = wordKey, WordSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(edited)), Terms = terms };
+                DraftValidation.Recheck(request.Content);
+                Directory.CreateDirectory(storage.Root);
+                await File.WriteAllBytesAsync(Path.Combine(storage.Root, wordKey), edited, ct);
+            }
             return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
             {
                 db.ChangeTracker.Clear();
@@ -472,6 +487,10 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     document.ContractDocumentCurrentVersionId = version.ContractVersionId;
                     await ContractChecklistService.Capture(db, content.TemplateId, version.ContractVersionId, null, ct);
                 }
+                if (wordKey != null) db.FileStorages.Add(new() { FileStorageObjecttype = "CONTRACT_VERSION", FileStorageObjectid = version.ContractVersionId,
+                    FileStorageStoragekey = wordKey, FileStorageSha256 = content.TemplateSnapshot!.WordSha256!, FileStorageContenttype = InternalWordDocument.Mime,
+                    FileStorageFilesize = edited!.Length, FileStorageFilename = "hop-dong.docx", FileStorageFilepath = wordKey, FileStorageFiletype = "DOCX",
+                    FileStorageUploadedbyemployeeid = actor.Id, FileStorageUploadeddate = now });
                 document.ContractDocumentName = content.Name;
                 content.ContractNumber = document.ContractDocumentCode?.StartsWith("HD-", StringComparison.Ordinal) == true
                     ? document.ContractDocumentCode : null;
@@ -521,6 +540,11 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             });
         }
         catch (DbUpdateConcurrencyException) { throw new InternalAppException(409, "Nháp vừa được cập nhật. Tải lại bản mới trước khi lưu."); }
+        finally
+        {
+            if (wordKey != null && !await db.FileStorages.AsNoTracking().AnyAsync(f => f.FileStorageStoragekey == wordKey, CancellationToken.None))
+                File.Delete(Path.Combine(storage.Root, wordKey));
+        }
     }
 
     private static bool SameDraftSnapshot(string current, string incoming)

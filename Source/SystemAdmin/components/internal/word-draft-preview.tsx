@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { internalApi, type DraftContent } from "@/services/internal-api";
 import { wordBlob } from "./template-upload";
 
-export default function WordDraftPreview({ content, draftId, dirty = false }: { content: DraftContent; draftId?: string; dirty?: boolean }) {
+export default function WordDraftPreview({ content, draftId, dirty = false, downloadOnly = false }: { downloadOnly?:boolean; content: DraftContent; draftId?: string; dirty?: boolean }) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,8 +34,8 @@ export default function WordDraftPreview({ content, draftId, dirty = false }: { 
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   return <div className="p-4 space-y-3">
-    <div className="flex gap-2"><Button type="button" disabled={busy || needsSave} onClick={() => void render(true)}>Xem trước Word</Button>
-      <Button type="button" variant="outline" disabled={busy || needsSave} onClick={() => void render(false)}>Tải DOCX</Button></div>
+    <div className="flex gap-2">{!downloadOnly && <Button type="button" disabled={busy || needsSave} onClick={() => void render(true)}>Xem trước Word</Button>}
+      <Button type="button" variant="outline" disabled={busy || needsSave || (downloadOnly && dirty)} onClick={() => void render(false)}>Tải DOCX</Button></div>
     {needsSave && <p>Lưu thay đổi để xem bản Word với số liệu mới.</p>}
     {busy && <p role="status">Đang dựng tài liệu…</p>}
     {error && <p role="alert" className="text-red-700">{error}</p>}

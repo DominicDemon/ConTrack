@@ -62,7 +62,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             throw new ArgumentException("Trường mở rộng trùng trường lõi hoặc dữ liệu không hợp lệ.");
         var fields = DraftCompletionPolicy.PartyFields.Concat(input.Fields).ToList();
         InternalWordDocument.Validate(document);
-        var edited = InternalWordDocument.Edit(document, input.Blocks, input.Tables, input.Additions);
+        var edited = InternalWordDocument.Edit(document, input.Blocks, input.Tables, input.Additions, input.BodyOrder);
         var terms = InternalWordDocument.Blocks(edited).Select(b => new DraftTerm(b.Id, b.Location, b.Text)).ToList();
         // Validate field definitions using the existing policy, then scan every paragraph including headers/tables.
         DraftCompletionPolicy.ValidateTemplate(new(0, input.Name, "", false, fields, [new("BODY", "Nội dung", "")]));
@@ -102,7 +102,8 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                 : document;
         var pdf = await word.Pdf(previewDocument, ct);
         var receipt = new Receipt(actor, Fingerprint(input), Hash(InternalWordDocument.Decode(input.Base64)), Hash(document), DateTime.UtcNow.AddHours(2));
-        return new(Convert.ToBase64String(pdf), protector.Protect(JsonSerializer.Serialize(receipt)));
+        var token = protector.Protect(JsonSerializer.Serialize(receipt));
+        return new(Convert.ToBase64String(pdf), token);
     }
 
     public async Task<TemplateDefinition> Activate(WordActivation request, long actor, CancellationToken ct)
@@ -241,9 +242,36 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         return terms;
     }
 
+    public async Task<WordPreview> EditorPreview(WordEditorPreview input, TemplateDefinition source, long? draftId, long actor, CancellationToken ct)
+    {
+        var extracted = ReadReceipt(input.Document.SourceToken, actor);
+        if (!string.Equals(extracted.SourceHash, source.WordSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InternalAppException(409, "Nguồn Word đã thay đổi.");
+        var bytes = Prepare(input.Document, actor);
+        input.Content.Terms = source.Terms.ToList();
+        var pdf = await RenderBytes(input.Content, source with { WordSha256 = Hash(bytes) }, bytes, true, ct);
+        var token = protector.Protect(JsonSerializer.Serialize(new Receipt(actor, DraftSignature(input.Content, source, draftId), extracted.SourceHash, Hash(bytes), DateTime.UtcNow.AddMinutes(30))));
+        cache.Set("draft-word:" + token, bytes, TimeSpan.FromMinutes(30));
+        return new(Convert.ToBase64String(pdf), token);
+    }
+
+    private static string DraftSignature(DraftContent content, TemplateDefinition template, long? draftId) =>
+        Hash(JsonSerializer.SerializeToUtf8Bytes(new { draftId, template.Id, Values = PrintValues(content, template).OrderBy(p => p.Key, StringComparer.Ordinal) }));
+
+    internal byte[] ReviewedDocument(string token, long actor, TemplateDefinition template, long? draftId, DraftContent content)
+    {
+        var receipt = ReadReceipt(token, actor);
+        if (receipt.Fingerprint != DraftSignature(content, template, draftId)) throw new ArgumentException("Thông tin hợp đồng đã thay đổi. Cập nhật lại bản xem trước.");
+        if (template.WordStorageKey == null || !string.Equals(template.WordSha256, receipt.SourceHash, StringComparison.OrdinalIgnoreCase))
+            throw new InternalAppException(409, "Nguồn Word đã thay đổi.");
+        if (!cache.TryGetValue("draft-word:" + token, out byte[]? bytes) || bytes == null || Hash(bytes) != receipt.DocumentHash)
+            throw new ArgumentException("Cập nhật lại bản xem trước trước khi lưu.");
+        return bytes;
+    }
+
     public async Task SaveDraftWord(long id, WordDraftSave request, InternalUser actor, CancellationToken ct)
     {
-        if (!actor.CanCheck) throw new InternalAppException(403, "Chỉ Hành chính được chỉnh nội dung Word.");
+        if (!actor.CanCheck && !actor.CanWrite) throw new InternalAppException(403, "Bạn không có quyền sửa Word.");
         var receipt = ReadReceipt(request.Document.PreviewToken, actor.Id);
         if (receipt.Fingerprint != Fingerprint(request.Document.Input)) throw new ArgumentException("Hãy xem trước lại nội dung đã sửa.");
         var bytes = Prepare(request.Document.Input, actor.Id);
@@ -256,7 +284,9 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         {
             await ReviewData.InTransaction(db, async () =>
             {
-                var doc = await db.ContractDocuments.SingleAsync(d => d.ContractDocumentId == id && d.TenantId == null, ct);
+                var doc = await db.ContractDocuments.SingleOrDefaultAsync(d => d.ContractDocumentId == id && d.TenantId == null, ct)
+                    ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng.");
+                if (!actor.CanEditDraftTerms(doc.EmployeeId)) throw new InternalAppException(403, "Bạn không có quyền sửa Word của nháp này.");
                 var version = await db.ContractVersions.SingleAsync(v => v.ContractVersionId == doc.ContractDocumentCurrentVersionId, ct);
                 ReviewData.Expect(doc.RowVersion, request.RowVersion);
                 ReviewData.Expect(version.ContractVersionRowversion, request.VersionRowVersion);
@@ -264,6 +294,8 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                 var snapshot = await db.ContractDynamicValues.SingleAsync(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
                 var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
                 var template = content.TemplateSnapshot ?? throw new InternalAppException(409, "Thiếu bản chụp mẫu.");
+                if (template.WordStorageKey is null || !string.Equals(template.WordSha256, receipt.SourceHash, StringComparison.OrdinalIgnoreCase))
+                    throw new InternalAppException(409, "Bản Word đã thay đổi. Mở lại trình sửa để lấy bản mới.");
                 var terms = Sections(InternalWordDocument.Blocks(bytes));
                 content.TemplateSnapshot = template with { WordStorageKey = key, WordSha256 = Hash(bytes), ManualWordContent = true, Terms = terms };
                 content.Terms = terms;
@@ -333,27 +365,13 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
     }
     public async Task<byte[]> Render(DraftContent content, TemplateDefinition template, bool pdf, CancellationToken ct)
     {
+        return await RenderBytes(content, template, await ReadWord(template, ct), pdf, ct);
+    }
+
+    private async Task<byte[]> RenderBytes(DraftContent content, TemplateDefinition template, byte[] bytes, bool pdf, CancellationToken ct)
+    {
         InternalDraftPolicy.Prepare(content, template, forPreview: true);
-        var bytes = await ReadWord(template, ct);
-        var culture = CultureInfo.GetCultureInfo("vi-VN");
-        var legacy = content.ContractNumber is null && content.PaymentMethod is null;
-        string Money(decimal amount) => amount.ToString(legacy ? "N2" : "#,0.##", culture);
-        string Due(DraftMilestone milestone) => milestone.Anchor == "DATE"
-            ? milestone.DueDate?.ToString("dd/MM/yyyy", culture) ?? "Chưa chọn ngày"
-            : $"{milestone.OffsetDays} ngày lịch sau {(milestone.Anchor == "SIGNED" ? "ngày ký đủ" : "ngày bàn giao")}";
-        var values = new Dictionary<string, string>(template.ManualWordContent ? [] : content.Fields)
-        {
-            ["CONTRACT_NAME"] = content.Name, ["EFFECTIVE_DATE"] = content.EffectiveDate?.ToString("dd/MM/yyyy") ?? "",
-            ["EXPIRE_DATE"] = content.ExpireDate?.ToString("dd/MM/yyyy") ?? "",
-            ["CONTRACT_NUMBER"] = content.ContractNumber ?? "",
-            ["PAYMENT_METHOD"] = InternalDraftPolicy.PaymentMethodLabel(content.PaymentMethod),
-            ["SUBTOTAL"] = Money(content.Totals.Subtotal), ["DISCOUNT"] = Money(content.Totals.Discount),
-            ["VAT"] = Money(content.Totals.Vat), ["TOTAL_AMOUNT"] = Money(content.Totals.Total),
-            ["CONTRACT_TOTAL_AMOUNT"] = Money(content.Totals.Total), ["CONTRACT_CURRENCY"] = "VND",
-            ["PAYMENT_SCHEDULE"] = string.Join("; ", content.Milestones.Select(m =>
-                legacy ? $"{m.Title}: {Money(m.Amount)}"
-                    : $"{m.Title}: {Money(m.Amount)} VND — {Due(m)}{(string.IsNullOrEmpty(m.Condition) ? "" : "; " + m.Condition)}"))
-        };
+        var values = PrintValues(content, template);
         // Manual Word content keeps its own text; only placeholders that have a draft value are filled.
         var filled = InternalWordDocument.Fill(bytes, values, preserveUnknown: template.ManualWordContent);
         if (!pdf) return filled;
@@ -370,6 +388,28 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         var result = await word.Pdf(filled, ct);
         cache.Set(lastKey, (signature, result), new MemoryCacheEntryOptions { SlidingExpiration = TimeSpan.FromMinutes(10) });
         return result;
+    }
+    private static Dictionary<string,string> PrintValues(DraftContent content, TemplateDefinition template)
+    {
+        var culture = CultureInfo.GetCultureInfo("vi-VN");
+        var legacy = content.ContractNumber is null && content.PaymentMethod is null;
+        string Money(decimal amount) => amount.ToString(legacy ? "N2" : "#,0.##", culture);
+        string Due(DraftMilestone milestone) => milestone.Anchor == "DATE"
+            ? milestone.DueDate?.ToString("dd/MM/yyyy", culture) ?? "Chưa chọn ngày"
+            : $"{milestone.OffsetDays} ngày lịch sau {(milestone.Anchor == "SIGNED" ? "ngày ký đủ" : "ngày bàn giao")}";
+        return new Dictionary<string, string>(template.ManualWordContent ? [] : content.Fields)
+        {
+            ["CONTRACT_NAME"] = content.Name, ["EFFECTIVE_DATE"] = content.EffectiveDate?.ToString("dd/MM/yyyy") ?? "",
+            ["EXPIRE_DATE"] = content.ExpireDate?.ToString("dd/MM/yyyy") ?? "",
+            ["CONTRACT_NUMBER"] = content.ContractNumber ?? "",
+            ["PAYMENT_METHOD"] = InternalDraftPolicy.PaymentMethodLabel(content.PaymentMethod),
+            ["SUBTOTAL"] = Money(content.Totals.Subtotal), ["DISCOUNT"] = Money(content.Totals.Discount),
+            ["VAT"] = Money(content.Totals.Vat), ["TOTAL_AMOUNT"] = Money(content.Totals.Total),
+            ["CONTRACT_TOTAL_AMOUNT"] = Money(content.Totals.Total), ["CONTRACT_CURRENCY"] = "VND",
+            ["PAYMENT_SCHEDULE"] = string.Join("; ", content.Milestones.Select(m =>
+                legacy ? $"{m.Title}: {Money(m.Amount)}"
+                    : $"{m.Title}: {Money(m.Amount)} VND — {Due(m)}{(string.IsNullOrEmpty(m.Condition) ? "" : "; " + m.Condition)}"))
+        };
     }
     private static readonly Regex Placeholder = new(@"\{\{([A-Z][A-Z0-9_]*)\}\}", RegexOptions.Compiled);
 }

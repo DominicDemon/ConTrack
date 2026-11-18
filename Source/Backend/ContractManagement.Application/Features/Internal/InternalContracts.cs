@@ -10,6 +10,7 @@ public sealed record InternalUser(long Id, string Name, string Username, string[
     public bool CanManageTemplates => Permissions.Contains("template.manage");
     public bool CanManageAll => Permissions.Contains("draft.manage.all") || CanCheck || CanApprove;
     public bool CanWrite => Permissions.Contains("draft.write");
+    public bool CanEditDraftTerms(long ownerId) => CanCheck || CanWrite && Id == ownerId;
     public bool CanManageEmployees => Permissions.Contains(EmployeeAdminRules.ManagePermission);
 }
 public sealed record EmployeeAdminRow(long Id, string Code, string Username, string Name, string? Email, string? Phone, string Status,
@@ -97,7 +98,7 @@ public sealed record DraftRecord(long Id, string Code, long EmployeeId, string E
     int Status, long VersionNo, bool Locked, bool CanEdit, string CustomerName, string CustomerPhoneMasked, string? LatestReviewStatus, string? SendBlockedReason,
     List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null);
 public sealed record CarriedDraftComment(long Id, string? TermKey, string Content, long? SourceCommentId, long? SourceVersionId, bool Resolved);
-public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion);
+public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion, string? WordPreviewToken = null);
 public sealed record SigningDemoDraftResult(DraftRecord Draft, string CustomerPortalPhone, string CustomerPortalPassword);
 public sealed class InternalAppException(int status, string message, string? code = null) : Exception(message)
 {
@@ -156,21 +157,22 @@ public sealed class InternalDraftService(IInternalRepository repository)
             if (old.Content.TemplateId != content.TemplateId || old.Content.CustomerId != content.CustomerId)
                 throw new ArgumentException("Không đổi mẫu hoặc khách hàng sau khi tạo nháp; hãy tạo nháp mới.");
             template = old.Content.TemplateSnapshot ?? throw new InternalAppException(409, "Nháp thiếu bản chụp mẫu.");
-            if (!user.CanCheck && System.Text.Json.JsonSerializer.Serialize(old.Content.Terms) != System.Text.Json.JsonSerializer.Serialize(content.Terms))
-                throw new InternalAppException(403, "Gửi nhận xét để Hành chính chỉnh sửa điều khoản.");
+            if (request.WordPreviewToken != null && !user.CanEditDraftTerms(old.EmployeeId)) throw new InternalAppException(403, "Bạn không có quyền sửa Word.");
+            if ((!user.CanEditDraftTerms(old.EmployeeId) || template.WordStorageKey is not null) && System.Text.Json.JsonSerializer.Serialize(old.Content.Terms) != System.Text.Json.JsonSerializer.Serialize(content.Terms))
+                throw new InternalAppException(403, "Bạn không thể sửa điều khoản qua thao tác này. Với mẫu Word, hãy mở trình sửa Word của nháp.");
         }
         else
         {
             template = (await repository.Templates(ct)).SingleOrDefault(t => t.Id == content.TemplateId)
                 ?? throw new ArgumentException("Mẫu không tồn tại hoặc đã ngừng sử dụng.");
             var customer = await repository.Customer(content.CustomerId, ct) ?? throw new ArgumentException("Khách hàng không tồn tại.");
-            if (!user.CanCheck) content.Terms = template.Terms.Select(t => t with { }).ToList();
+            if (template.WordStorageKey is not null) content.Terms = template.Terms.Select(t => t with { }).ToList();
             // Initial snapshot can be edited by the author; later profile changes never refresh it.
             foreach (var pair in customer.Fields)
                 if (!content.Fields.ContainsKey(pair.Key)) content.Fields[pair.Key] = pair.Value;
         }
         template = DraftCompletionPolicy.UpgradeTemplate(template);
-        if (user.CanCheck && template.WordStorageKey is null)
+        if (template.WordStorageKey is null)
             template = template with { Terms = content.Terms.Select(t => t with { Editable = true }).ToList() };
         DraftValidation.Prepare(content, template);
         if (content.CustomerBusinessId.HasValue && !(await repository.Businesses(content.CustomerId, ct)).Any(b => b.Id == content.CustomerBusinessId))

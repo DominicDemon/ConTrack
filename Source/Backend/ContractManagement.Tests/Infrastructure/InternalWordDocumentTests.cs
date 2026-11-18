@@ -26,6 +26,26 @@ public class InternalWordDocumentTests
     }
 
     [Fact]
+    public void ReordersOriginalTableAndParagraphsAndInsertsAfterTheMovedClause()
+    {
+        var source = Document();
+        var blocks = InternalWordDocument.Blocks(source);
+        var paragraph = blocks.Single(b => b.Text.StartsWith("Hello "));
+        var cell = blocks.Single(b => b.Text == "Old amount");
+        var title = Guid.NewGuid().ToString();
+        var bytes = InternalWordDocument.Edit(source, blocks,
+            additions: [new("img", title, "image", "", "", TinyPng)],
+            bodyOrder: [new(cell.BodyUnit!), new(title, "Điều mới", true), new(paragraph.BodyUnit!)]);
+        var actual = InternalWordDocument.Blocks(bytes, true);
+        var body = actual.Where(b => b.BodyUnit != null).ToList();
+        Assert.Equal("Old amount", body[0].Text);
+        Assert.True(body[1].ClauseTitle);
+        Assert.Equal(TinyPng, body[2].Images!.Single().Base64);
+        Assert.Equal(paragraph.Text, body[3].Text);
+        Assert.Contains(actual, b => b.Location == "Đầu trang");
+    }
+
+    [Fact]
     public void ReplacesSplitPlaceholderInBodyAndHeaderAndKeepsTable()
     {
         var bytes = Document();

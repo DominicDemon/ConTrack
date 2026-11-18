@@ -1,4 +1,5 @@
 "use client";
+import { isGroupedWordSection, wordDisplaySections } from "../../../Shared/word-display-sections";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -81,6 +82,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   function moveTerm(index: number, offset: number) { change(c => { const terms = [...c.terms]; [terms[index], terms[index + offset]] = [terms[index + offset], terms[index]]; return { ...c, terms }; }); }
   if (loading) return <div className={s.empty}>Đang chuẩn bị không gian soạn thảo…</div>;
   if (!template || (id && !record)) return <div className={s.empty}><p role="alert">{error || "Chưa có mẫu hợp đồng hoạt động. Liên hệ quản trị để khởi tạo mẫu."}</p><button className={ui.secondaryButton} onClick={() => retryLoad(v => v + 1)}>Thử lại</button><Link href="/workspace/contracts/drafts">Về danh sách nháp</Link></div>;
+  const showWordSections = !!template.wordStorageKey || content.terms.some(isGroupedWordSection);
   const editor = <div className={s.formPane}><form ref={form} onSubmit={e => { e.preventDefault(); void save(); }}><fieldset disabled={busy} style={{ border: 0, padding: 0, minWidth: 0 }}>
     <section className={s.section}><h2><FileText/>Thông tin hợp đồng</h2><div className={s.fields}>
       <Field label="Mẫu hợp đồng *"><select required className={ui.field} value={content.templateId} disabled={!!id} onChange={e => { const t = templates.find(t => String(t.id) === e.target.value)!; if (dirty && !window.confirm("Đổi mẫu sẽ thay nội dung theo mẫu mới. Tiếp tục?")) return; void selectWordTemplate(t); }}>{templates.map(t => <option value={t.id} key={t.id}>{t.name}</option>)}{!templates.some(t => t.id === template.id) && <option value={template.id}>{template.name}</option>}</select></Field>
@@ -117,10 +119,17 @@ export default function DraftEditor({ id }: { id?: string }) {
       </div><div className={s.totals}><div><span>Tạm tính</span><span>{money(totals.subtotal)} ₫</span></div><div><span>Giảm giá</span><span>{money(totals.discount)} ₫</span></div><div><span>VAT</span><span>{money(totals.vat)} ₫</span></div><div><span>Tổng giá trị</span><span>{money(totals.total)} ₫</span></div></div>
     </section>
     <section className={s.section}><h2><ListChecks/>{template.isImported ? "Nội dung hợp đồng" : "Điều khoản hợp đồng"}</h2>{!template.isImported && <Field label="Căn cứ hợp đồng"><textarea className={`${ui.field} ${s.termContent}`} maxLength={4000} value={content.fields.CONTRACT_LEGAL_BASES ?? ""} onChange={e => setField("CONTRACT_LEGAL_BASES", e.target.value)}/></Field>}
-      <div style={{ marginTop: 18 }}>{content.terms.map((term, index) => <div className={s.lineItem} key={term.key}><header><strong style={{ fontSize: 12 }}>Điều {index + 1}{!term.editable ? " · Cố định theo mẫu" : ""}</strong><div><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === 0} aria-label={`Đưa điều ${index + 1} lên`} onClick={() => moveTerm(index, -1)}><ArrowUp size={15}/></button><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === content.terms.length - 1} aria-label={`Đưa điều ${index + 1} xuống`} onClick={() => moveTerm(index, 1)}><ArrowDown size={15}/></button><button type="button" className={s.iconButton} disabled={!term.editable} aria-label={`Xóa điều ${index + 1}`} onClick={() => change(c => ({ ...c, terms: c.terms.filter(t => t.key !== term.key) }))}><Trash2 size={15}/></button></div></header>
+      <div style={{ marginTop: 18 }}>{showWordSections
+        ? wordDisplaySections(content.terms).map(section => (
+          <div className={s.lineItem} id={`contract-term-${section.key}`} tabIndex={-1} key={section.key}>
+            <h3>{section.title}</h3>
+            {section.content && <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{section.content}</p>}
+          </div>
+        ))
+        : content.terms.map((term, index) => <div className={s.lineItem} key={term.key}><header><strong style={{ fontSize: 12 }}>Điều {index + 1}{!term.editable ? " · Cố định theo mẫu" : ""}</strong><div><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === 0} aria-label={`Đưa điều ${index + 1} lên`} onClick={() => moveTerm(index, -1)}><ArrowUp size={15}/></button><button type="button" className={s.iconButton} disabled={!!content.templateSnapshot?.wordStorageKey || index === content.terms.length - 1} aria-label={`Đưa điều ${index + 1} xuống`} onClick={() => moveTerm(index, 1)}><ArrowDown size={15}/></button><button type="button" className={s.iconButton} disabled={!term.editable} aria-label={`Xóa điều ${index + 1}`} onClick={() => change(c => ({ ...c, terms: c.terms.filter(t => t.key !== term.key) }))}><Trash2 size={15}/></button></div></header>
         <Field label="Tiêu đề điều khoản"><input required disabled={!term.editable} maxLength={500} className={ui.field} value={term.title} onChange={e => change(c => ({ ...c, terms: c.terms.map(t => t.key === term.key ? { ...t, title: e.target.value } : t) }))}/></Field>
         <Field label="Nội dung"><textarea disabled={!term.editable} maxLength={20000} className={`${ui.field} ${s.termContent}`} placeholder="Nhập nội dung điều khoản…" value={term.content} onChange={e => change(c => ({ ...c, terms: c.terms.map(t => t.key === term.key ? { ...t, content: e.target.value } : t) }))}/></Field>
-      </div>)}</div>{!content.templateSnapshot?.wordStorageKey && <select aria-label="Thêm mục" className={ui.field} value="" onChange={e => {
+      </div>)}</div>{!showWordSections && <select aria-label="Thêm mục" className={ui.field} value="" onChange={e => {
         const title = e.target.value;
         if (title) change(c => ({ ...c, terms: [...c.terms, { key: crypto.randomUUID(), title, content: "", editable: true }] }));
       }}>

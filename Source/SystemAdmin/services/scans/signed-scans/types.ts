@@ -176,6 +176,21 @@ export type ScanSearchType = ScanKeywordType | "All";
 export interface ScanSearchQuery {
   q: string;
   type: ScanSearchType;
+  /** yyyy-MM-dd, inclusive: upload date of scans, signing date of evidence. */
+  from?: string;
+  to?: string;
+}
+
+/** One finished sending of a scan by email (from the audit log). */
+export interface ScanEmailHistoryItem {
+  sentAt: string;
+  sender: string;
+  kind: "evidence" | "scan";
+  targetId: string;
+  fileName: string;
+  sent: string[];
+  failed: string[];
+  withNote: boolean;
 }
 
 export interface ScanSearchMatch {
@@ -254,5 +269,6 @@ export interface SignedEvidenceApi {
   removeKeyword(evidenceId: string, keywordId: string): Promise<void>;
   emailFile(evidenceId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailJob>;
   emailProgress(jobId: string): Promise<ScanEmailJob>;
+  emailHistory(): Promise<ScanEmailHistoryItem[]>;
   search(query: ScanSearchQuery): Promise<ScanSearchResponse>;
 }

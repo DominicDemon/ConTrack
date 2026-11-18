@@ -79,7 +79,8 @@ public sealed class FileProtectionService(
     public bool Enabled => options.Value.Enabled;
 
     /// <summary>The server keeps the recovery private key, so old files come back without an administrator giving it.</summary>
-    public bool ServerKeepsRecoveryKey => !string.IsNullOrWhiteSpace(options.Value.RecoveryPrivateKeyPath);
+    public bool ServerKeepsRecoveryKey => !string.IsNullOrWhiteSpace(options.Value.RecoveryPrivateKeyPath)
+        || recovery is PemRecoveryPublicKey { UsesDevelopmentKey: true };
 
     // ---------------------------------------------------------------------------------------------
     // Keys of employees

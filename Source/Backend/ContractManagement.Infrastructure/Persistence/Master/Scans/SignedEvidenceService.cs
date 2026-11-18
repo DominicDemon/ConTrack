@@ -368,9 +368,9 @@ public sealed class SignedEvidenceService(
             .Where(candidate => candidate.FileStorageFileid == row.FileId)
             .OrderByDescending(candidate => candidate.OcrJobId)
             .FirstOrDefaultAsync(cancellationToken);
-        if (job?.OcrJobProcessingStatus != OcrJobStatuses.Failed)
+        if (job is null || job.OcrJobProcessingStatus is OcrJobStatuses.Queued or OcrJobStatuses.Processing)
         {
-            throw new InternalAppException(409, "Chỉ đọc lại được bản ký bị lỗi đọc nội dung.");
+            throw new InternalAppException(409, "Hệ thống đang đọc bản ký này. Hãy chờ đọc xong.");
         }
 
         if (await staging.ReadAsync(row.FileId, cancellationToken) is null)
@@ -592,10 +592,9 @@ public sealed class SignedEvidenceService(
         var sha256 = ScanDuplicates.Hash(content);
         await ScanDuplicates.EnsureNewAsync(db, fileName, sha256, cancellationToken);
         // A new key every time: the bytes of a stored evidence are never overwritten.
-        var storageKey = $"signed-evidence/{contract.DocumentId}/{versionId}/{Guid.NewGuid():N}{extension}";
-
         // The stored copy is encrypted; OCR reads a plain copy that is deleted once it is read.
         var (storedBytes, fileKey) = protection.Protect(content);
+        var storageKey = $"signed-evidence/{contract.DocumentId}/{versionId}/{Guid.NewGuid():N}{extension}{(fileKey is null ? "" : ".enc")}";
         await files.SaveAsync(storageKey, storedBytes, cancellationToken);
         long? stagedFileId = null;
         try

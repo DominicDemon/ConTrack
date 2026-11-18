@@ -23,8 +23,16 @@ public sealed class ScanSearchService(
     // Vietnamese_CI_AI keeps Ư, Ơ, Â, Đ apart from U, O, A, D; this one folds them all.
     private const string LooseCollation = "Latin1_General_100_CI_AI";
 
-    public async Task<ScanSearchResponseDto> SearchAsync(string? q, string? type, CancellationToken cancellationToken)
+    /// <summary><paramref name="from"/> and <paramref name="to"/> (yyyy-MM-dd, inclusive, Vietnam time) narrow scans by upload date and evidence by signing date.</summary>
+    public async Task<ScanSearchResponseDto> SearchAsync(string? q, string? type, string? from, string? to, CancellationToken cancellationToken)
     {
+        var first = Day(from, "Từ ngày");
+        var last = Day(to, "Đến ngày");
+        if (first > last)
+        {
+            throw new ArgumentException("Từ ngày phải trước hoặc bằng Đến ngày.");
+        }
+
         var typed = q?.Trim() ?? "";
         if (typed.Length < 3)
         {
@@ -82,10 +90,25 @@ public sealed class ScanSearchService(
                 .ToListAsync(cancellationToken));
         }
 
+        // The date range is applied before the page of results is cut.
+        var ranged = first is not null || last is not null;
+        var limit = ranged ? int.MaxValue : MaxResults;
+        bool Within(DateOnly day) => (first is null || day >= first) && (last is null || day <= last);
         var items = currentEmployee.HasPermission(SigningPermissions.View)
-            ? await evidence.SearchResultsAsync(found, MaxResults, cancellationToken)
+            ? await evidence.SearchResultsAsync(found, limit, cancellationToken)
             : [];
-        var scans = await scanned.SearchResultsAsync(found, MaxResults, cancellationToken);
+        var scans = await scanned.SearchResultsAsync(found, limit, cancellationToken);
+        if (ranged)
+        {
+            items = items.Where(item => Within(DateOnly.ParseExact(item.SignDate, "yyyy-MM-dd"))).Take(MaxResults).ToList();
+            scans = scans.Where(scan => Within(DateOnly.FromDateTime(scan.UploadedAt.ToUniversalTime().AddHours(7)))).Take(MaxResults).ToList();
+        }
+
         return new ScanSearchResponseDto(typed, items, scans);
     }
+
+    private static DateOnly? Day(string? typed, string label) =>
+        string.IsNullOrWhiteSpace(typed) ? null
+        : DateOnly.TryParseExact(typed.Trim(), "yyyy-MM-dd", out var day) ? day
+        : throw new ArgumentException($"{label} không hợp lệ (định dạng yyyy-MM-dd).");
 }

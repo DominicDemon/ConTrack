@@ -13,6 +13,7 @@ import type {
   UploadSignedEvidenceInput,
   ScanEmailInput,
   ScanEmailJob,
+  ScanEmailHistoryItem,
 } from "./types";
 
 const fileNameFromDisposition = (header: unknown): string | null => {
@@ -106,6 +107,11 @@ export const httpSignedEvidenceApi: SignedEvidenceApi = {
     return data;
   },
 
+  async emailHistory(): Promise<ScanEmailHistoryItem[]> {
+    const { data } = await scanApi.get<ScanEmailHistoryItem[]>("/scan-emails");
+    return data;
+  },
+
   /** How far a sending started by this user has got; emails go out in the background. */
   async emailProgress(jobId: string): Promise<ScanEmailJob> {
     const { data } = await scanApi.get<ScanEmailJob>(`/scan-emails/${jobId}`);
@@ -114,7 +120,7 @@ export const httpSignedEvidenceApi: SignedEvidenceApi = {
 
   async search(query: ScanSearchQuery) {
     const { data } = await scanApi.get<ScanSearchResponse>("/signed-evidence/search", {
-      params: { q: query.q, type: query.type },
+      params: { q: query.q, type: query.type, from: query.from || undefined, to: query.to || undefined },
     });
     return data;
   },

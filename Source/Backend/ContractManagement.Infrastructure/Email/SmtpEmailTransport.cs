@@ -22,7 +22,9 @@ public sealed class SmtpEmailTransport(IOptions<SmtpEmailOptions> options) : IEm
             Credentials = new NetworkCredential(smtp.Username, smtp.AppPassword), DeliveryMethod = SmtpDeliveryMethod.Network
         };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(smtp.TimeoutSeconds));
+        // An attachment is uploaded inside the same call: allow one more second per 32 KB (5 MB: about 2.5 minutes more).
+        var attachmentBytes = message.Attachments?.Sum(file => (long)file.Content.Length) ?? 0;
+        timeout.CancelAfter(TimeSpan.FromSeconds(smtp.TimeoutSeconds + attachmentBytes / (32 * 1024)));
         try { await client.SendMailAsync(mail, timeout.Token); }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         { throw new TimeoutException("SMTP delivery timed out."); }

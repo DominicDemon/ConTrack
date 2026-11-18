@@ -26,6 +26,13 @@ public sealed class ScanOcrOptions
     /// </summary>
     public int PageSegMode { get; set; } = 4;
 
+    /// <summary>
+    /// Tesseract thresholding_method: null keeps Tesseract's own (Otsu); 2 = Sauvola, adaptive, for photos with
+    /// shadows or uneven light. Measured on the sample photos it changed nothing (Tesseract read every value already),
+    /// so it stays off unless a batch of poor photos needs it.
+    /// </summary>
+    public int? ThresholdingMethod { get; set; }
+
     /// <summary>Pages read when taking search keywords from a scan.</summary>
     public int KeywordMaxPages { get; set; } = 30;
 

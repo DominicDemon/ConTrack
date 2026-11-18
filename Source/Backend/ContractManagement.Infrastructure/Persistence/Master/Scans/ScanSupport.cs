@@ -65,8 +65,45 @@ public sealed class PemRecoveryPublicKey : IRecoveryPublicKey
 
     public PemRecoveryPublicKey(IOptions<FileEncryptionOptions> options, IHostEnvironment environment)
     {
-        _key = new Lazy<(byte[], string)>(() => Load(options.Value.RecoveryPublicKeyPath, environment.ContentRootPath));
-        _privateKeyPem = new Lazy<string?>(() => LoadPrivate(options.Value.RecoveryPrivateKeyPath, environment.ContentRootPath));
+        // On a developer machine with nothing configured, a key pair is made once next to the scans, so the
+        // feature works after a plain checkout. Never outside Development: there the key is the company's to make and keep.
+        var publicPath = options.Value.RecoveryPublicKeyPath;
+        var privatePath = options.Value.RecoveryPrivateKeyPath;
+        if (string.IsNullOrWhiteSpace(publicPath) && environment.IsDevelopment())
+        {
+            var folder = Path.GetFullPath(Path.Combine("..", "private-storage", "dev-keys"), environment.ContentRootPath);
+            publicPath = Path.Combine(folder, "recovery-public.pem");
+            privatePath = Path.Combine(folder, "recovery-private.pem");
+            UsesDevelopmentKey = true;
+        }
+
+        _key = new Lazy<(byte[], string)>(() =>
+        {
+            if (UsesDevelopmentKey) EnsureDevelopmentPair(publicPath, privatePath);
+            return Load(publicPath, environment.ContentRootPath);
+        });
+        _privateKeyPem = new Lazy<string?>(() => LoadPrivate(privatePath, environment.ContentRootPath));
+    }
+
+    /// <summary>The pair was generated for this developer machine (no FileEncryption:RecoveryPublicKeyPath, Development).</summary>
+    public bool UsesDevelopmentKey { get; }
+
+    private static readonly object DevelopmentPairLock = new();
+
+    private static void EnsureDevelopmentPair(string publicPath, string privatePath)
+    {
+        lock (DevelopmentPairLock)
+        {
+            if (File.Exists(publicPath) && File.Exists(privatePath))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(publicPath)!);
+            using var rsa = RSA.Create(3072);
+            File.WriteAllText(privatePath, rsa.ExportPkcs8PrivateKeyPem());
+            File.WriteAllText(publicPath, rsa.ExportSubjectPublicKeyInfoPem());
+        }
     }
 
     public byte[] PublicKey => _key.Value.PublicKey;

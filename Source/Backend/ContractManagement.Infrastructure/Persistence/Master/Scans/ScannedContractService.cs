@@ -78,9 +78,10 @@ public sealed class ScannedContractService(
             var (extension, contentType) = ScanFileKinds.Detect(content) is { } kind
                 ? Kinds[kind]
                 : (Path.GetExtension(fileName) is { Length: > 1 and <= 10 } own ? own.ToLowerInvariant() : ".bin", "application/octet-stream");
-            var key = $"scanned-contracts/{now:yyyyMM}/{Guid.NewGuid():N}{extension}";
             // The stored copy is encrypted; OCR reads a plain copy that is deleted once it is read.
             var (storedBytes, fileKey) = protection.Protect(content);
+            // ".pdf.enc": the file on disk is not a PDF any viewer opens, and its name says so.
+            var key = $"scanned-contracts/{now:yyyyMM}/{Guid.NewGuid():N}{extension}{(fileKey is null ? "" : ".enc")}";
             await files.SaveAsync(key, storedBytes, cancellationToken);
             stored.Add((fileName, content, key, extension, contentType, fileKey));
         }
@@ -426,9 +427,9 @@ public sealed class ScannedContractService(
     public async Task<long> RetryAsync(long jobId, string? fileKey, CancellationToken cancellationToken)
     {
         var (job, file) = await GetJobRowAsync(jobId, cancellationToken);
-        if (job.OcrJobProcessingStatus != OcrJobStatuses.Failed)
+        if (job.OcrJobProcessingStatus is OcrJobStatuses.Queued or OcrJobStatuses.Processing)
         {
-            throw new InternalAppException(409, "Chỉ đọc lại được bản scan bị lỗi đọc nội dung.");
+            throw new InternalAppException(409, "Hệ thống đang đọc bản scan này. Hãy chờ đọc xong.");
         }
 
         if (await staging.ReadAsync(file.FileStorageFileid, cancellationToken) is null)
@@ -437,7 +438,8 @@ public sealed class ScannedContractService(
         }
 
         await db.OcrJobs
-            .Where(candidate => candidate.OcrJobId == jobId && candidate.OcrJobProcessingStatus == OcrJobStatuses.Failed)
+            .Where(candidate => candidate.OcrJobId == jobId
+                && candidate.OcrJobProcessingStatus != OcrJobStatuses.Queued && candidate.OcrJobProcessingStatus != OcrJobStatuses.Processing)
             .ExecuteUpdateAsync(setters => setters
                     .SetProperty(candidate => candidate.OcrJobProcessingStatus, OcrJobStatuses.Queued)
                     .SetProperty(candidate => candidate.ErrorMessage, (string?)null)

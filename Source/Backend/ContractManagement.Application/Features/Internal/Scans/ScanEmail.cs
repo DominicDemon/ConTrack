@@ -17,6 +17,11 @@ public sealed record ScanEmailJobDto(string JobId, bool Done, IReadOnlyList<Scan
 /// <summary><see cref="Status"/> is one of <see cref="ScanEmailStates"/>; <see cref="Reason"/> is set when it failed.</summary>
 public sealed record ScanEmailRecipientDto(string Email, string Status, string? Reason);
 
+/// <summary>One finished sending, from AUDIT_LOG.</summary>
+public sealed record ScanEmailHistoryDto(
+    DateTime SentAt, string Sender, string Kind, long TargetId, string FileName,
+    IReadOnlyList<string> Sent, IReadOnlyList<string> Failed, bool WithNote);
+
 public static class ScanEmailStates
 {
     public const string Waiting = "Waiting";

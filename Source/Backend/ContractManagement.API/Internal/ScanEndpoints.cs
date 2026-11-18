@@ -107,8 +107,8 @@ public static class ScanEndpoints
             .Need(SigningPermissions.View, SigningPermissions.Upload)
             .AcceptsUpload(MaxSingleUploadBytes);
 
-        routes.MapGet("/signed-evidence/search", async (string? q, string? type, ScanSearchService service, CancellationToken ct) =>
-            Results.Ok(await service.SearchAsync(q, type, ct))).NeedAny(SigningPermissions.View, ScannedContractPermissions.View);
+        routes.MapGet("/signed-evidence/search", async (string? q, string? type, string? from, string? to, ScanSearchService service, CancellationToken ct) =>
+            Results.Ok(await service.SearchAsync(q, type, from, to, ct))).NeedAny(SigningPermissions.View, ScannedContractPermissions.View);
 
         routes.MapGet("/signed-evidence/{evidenceId:long}/file", async (long evidenceId, HttpContext context, SignedEvidenceService service, CancellationToken ct) =>
         {
@@ -120,6 +120,9 @@ public static class ScanEndpoints
         routes.MapPost("/signed-evidence/{evidenceId:long}/email", async (long evidenceId, EmailRequest request, HttpContext context, ScanEmailService service, CancellationToken ct) =>
             Results.Accepted(value: await service.SendEvidenceAsync(evidenceId, request.Recipients, request.Note, FileKey(context), ct)))
             .Need(SigningPermissions.View);
+
+        routes.MapGet("/scan-emails", async (ScanEmailService service, CancellationToken ct) => Results.Ok(await service.HistoryAsync(ct)))
+            .NeedAny(SigningPermissions.View, ScannedContractPermissions.View);
 
         // Progress of a sending the caller started (emails go out in the background).
         routes.MapGet("/scan-emails/{jobId}", (string jobId, ScanEmailService service) =>
@@ -265,6 +268,7 @@ public static class ScanEndpoints
 
             return Results.Ok(await protection.RecoverFilesAsync(employeeId, pem, ct));
         }).AcceptsUpload(64 * 1024).Need(EncryptionKeyPermissions.Manage);
+
 
         routes.MapGet("/encryption-keys/me", async (FileProtectionService protection, ICurrentEmployee employee, CancellationToken ct) =>
             Results.Ok(new

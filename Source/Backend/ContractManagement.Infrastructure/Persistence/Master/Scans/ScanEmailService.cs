@@ -1,6 +1,7 @@
 using ContractManagement.API.Domains.Email;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Application.Features.Internal.Scans;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -62,6 +63,43 @@ public sealed class ScanEmailService(
 
     /// <summary>The progress of a sending this employee started; null when unknown or someone else's.</summary>
     public ScanEmailJobDto? Progress(string jobId) => queue.Find(jobId, currentEmployee.EmployeeId);
+
+    /// <summary>
+    /// The latest sendings, newest first: one's own, or everyone's for those who manage keys or check scans
+    /// (they answer for what leaves the archive).
+    /// </summary>
+    public async Task<IReadOnlyList<ScanEmailHistoryDto>> HistoryAsync(CancellationToken cancellationToken)
+    {
+        var all = currentEmployee.HasPermission(EncryptionKeyPermissions.Manage)
+            || currentEmployee.HasPermission(ScannedContractPermissions.Confirm)
+            || currentEmployee.HasPermission(SigningPermissions.Review);
+        var me = currentEmployee.EmployeeId;
+        var rows = await db.AuditLogs.AsNoTracking()
+            .Where(log => log.ActionType == ScanEmailQueue.EmailedAction && (all || log.ActorId == me))
+            .OrderByDescending(log => log.AuditLogId)
+            .Take(100)
+            .Select(log => new { log.CreatedAt, log.ActorId, log.EntityName, log.EntityId, log.NewData })
+            .ToListAsync(cancellationToken);
+        var actors = rows.Select(row => row.ActorId).OfType<long>().Distinct().ToList();
+        var names = await db.Employees.AsNoTracking()
+            .Where(employee => actors.Contains(employee.EmployeeId))
+            .ToDictionaryAsync(employee => employee.EmployeeId, employee => employee.EmployeeDisplayName, cancellationToken);
+        return rows.Select(row =>
+            {
+                var data = JsonSerializer.Deserialize<SentRow>(row.NewData ?? "{}", Web) ?? new SentRow(null, null, null, false);
+                return new ScanEmailHistoryDto(
+                    DateTime.SpecifyKind(row.CreatedAt, DateTimeKind.Utc),
+                    row.ActorId is { } actor ? names.GetValueOrDefault(actor, "Nhân viên") : "Nhân viên",
+                    row.EntityName == EvidenceEntity ? "evidence" : "scan",
+                    long.TryParse(row.EntityId, out var target) ? target : 0,
+                    data.File ?? "", data.Sent ?? [], data.Failed ?? [], data.WithNote);
+            })
+            .ToList();
+    }
+
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
+
+    private sealed record SentRow(string? File, List<string>? Sent, List<string>? Failed, bool WithNote);
 
     /// <summary>Everything about the request is checked before the file is opened.</summary>
     private (IReadOnlyList<string> Addresses, string? Note) Check(IReadOnlyList<string?>? recipients, string? note)

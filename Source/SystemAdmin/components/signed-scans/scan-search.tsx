@@ -28,6 +28,7 @@ const FILTERS: { value: ScanSearchType; label: string }[] = [
   { value: "TaxCode", label: "Mã số thuế" },
   { value: "PhoneNumber", label: "Số điện thoại" },
   { value: "CustomerName", label: "Tên khách hàng" },
+  { value: "Email", label: "Email" },
 ];
 
 /** The server needs this many characters to search. */
@@ -63,6 +64,7 @@ const scanTarget = (scan: ScannedSearchResult): ScanTarget => ({
   title: scan.contractCode ?? scan.fileName,
   href: `/workspace/scanned-contracts/jobs/${scan.jobId}`,
   matches: scan.matches,
+  emails: scan.emails ?? [],
   details: [
     { label: "Tệp", value: scan.fileName },
     { label: "Số hợp đồng", value: scan.contractCode ?? "" },
@@ -79,6 +81,7 @@ const evidenceTarget = (item: ScanSearchResult): ScanTarget => ({
   title: item.documentCode ?? item.documentName,
   href: contractHref(item.documentId),
   matches: item.matches,
+  emails: item.emails ?? [],
   details: [
     { label: "Số hợp đồng", value: item.documentCode ?? "" },
     { label: "Tên hợp đồng", value: item.documentName },
@@ -120,6 +123,8 @@ function ResultActions({
 export function ScanSearch() {
   const [query, setQuery] = useState("");
   const [type, setType] = useState<ScanSearchType>("All");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [response, setResponse] = useState<ScanSearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
@@ -131,7 +136,7 @@ export function ScanSearch() {
   // Only the answer to the latest request is shown; a slower, older answer is dropped.
   const latest = useRef(0);
 
-  const run = useCallback(async (text: string, filter: ScanSearchType) => {
+  const run = useCallback(async (text: string, filter: ScanSearchType, first: string, last: string) => {
     const trimmed = text.trim();
     const request = ++latest.current;
     if (trimmed.length < MIN_LENGTH) {
@@ -143,7 +148,7 @@ export function ScanSearch() {
     setError(null);
     setSearching(true);
     try {
-      const found = await signedEvidenceApi.search({ q: trimmed, type: filter });
+      const found = await signedEvidenceApi.search({ q: trimmed, type: filter, from: first, to: last });
       if (request === latest.current) setResponse(found);
     } catch (searchError) {
       if (request === latest.current) setError(getScanErrorMessage(searchError, "Không tìm được. Vui lòng thử lại."));
@@ -154,13 +159,13 @@ export function ScanSearch() {
 
   // Search as the employee types (and when the filter changes), a moment after the last key press.
   useEffect(() => {
-    const timer = window.setTimeout(() => void run(query, type), TYPING_DELAY_MS);
+    const timer = window.setTimeout(() => void run(query, type, from, to), TYPING_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [query, type, run]);
+  }, [query, type, from, to, run]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void run(query, type);
+    void run(query, type, from, to);
   };
 
   const typed = query.trim();
@@ -207,6 +212,30 @@ export function ScanSearch() {
             {tooShort ? `Gõ thêm ${MIN_LENGTH - typed.length} ký tự nữa để tìm.` : "Kết quả hiện ngay khi gõ, không cần dấu."}
           </p>
         )}
+        <div className="flex flex-wrap items-end gap-3 text-sm">
+          <label className="space-y-1">
+            <span className="block text-xs text-muted-foreground">Từ ngày</span>
+            <Input type="date" value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} className="w-40" />
+          </label>
+          <label className="space-y-1">
+            <span className="block text-xs text-muted-foreground">Đến ngày</span>
+            <Input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} className="w-40" />
+          </label>
+          {(from || to) && (
+            <Button type="button" variant="ghost" size="sm" onClick={() => { setFrom(""); setTo(""); }}>
+              Bỏ lọc ngày
+            </Button>
+          )}
+          <span className="text-xs text-muted-foreground">Bản scan cũ: theo ngày tải lên. Bản ký giấy: theo ngày ký.</span>
+          <span className="ml-auto flex gap-2">
+            <Button asChild type="button" variant="ghost" size="sm">
+              <Link href="/workspace/scan-emails">
+                <Mail aria-hidden="true" />
+                Lịch sử gửi email
+              </Link>
+            </Button>
+          </span>
+        </div>
         <div role="group" aria-label="Lọc theo loại" className="flex flex-wrap gap-2">
           {FILTERS.map((filter) => {
             const selected = type === filter.value;

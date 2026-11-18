@@ -11,10 +11,31 @@ public sealed record ScanEmailContent(
     string ContentType,
     byte[] Content);
 
-/// <summary>The outcome per address; an address that failed can be tried again.</summary>
-public sealed record ScanEmailResultDto(IReadOnlyList<string> Sent, IReadOnlyList<ScanEmailFailureDto> Failed);
+/// <summary>A sending in progress or finished: emails go out in the background, one per address.</summary>
+public sealed record ScanEmailJobDto(string JobId, bool Done, IReadOnlyList<ScanEmailRecipientDto> Recipients);
 
-public sealed record ScanEmailFailureDto(string Email, string Reason);
+/// <summary><see cref="Status"/> is one of <see cref="ScanEmailStates"/>; <see cref="Reason"/> is set when it failed.</summary>
+public sealed record ScanEmailRecipientDto(string Email, string Status, string? Reason);
+
+/// <summary>One finished sending, from AUDIT_LOG.</summary>
+public sealed record ScanEmailHistoryDto(
+    DateTime SentAt, string Sender, string Kind, long TargetId, string FileName,
+    IReadOnlyList<string> Sent, IReadOnlyList<string> Failed, bool WithNote);
+
+public static class ScanEmailStates
+{
+    public const string Waiting = "Waiting";
+    public const string Sent = "Sent";
+    public const string Failed = "Failed";
+}
+
+public sealed class ScanEmailOptions
+{
+    public const string SectionName = "ScanEmail";
+
+    /// <summary>Recipients one employee may send scans to within an hour.</summary>
+    public int MaxRecipientsPerHour { get; set; } = 30;
+}
 
 /// <summary>Checks the addresses and the note an employee typed, and writes the email that carries a scan.</summary>
 public static class ScanEmail
@@ -73,7 +94,7 @@ public static class ScanEmail
     }
 
     /// <summary>One email per address, so no recipient sees the others.</summary>
-    public static EmailMessage Compose(string recipient, ScanEmailContent content, string senderName, string? note)
+    public static EmailMessage Compose(string recipient, ScanEmailContent content, string senderName, string? note, string? replyTo = null)
     {
         var subject = $"Hợp đồng: {content.Title}";
 
@@ -115,7 +136,9 @@ public static class ScanEmail
             .Append("</div>");
 
         return new EmailMessage(recipient, subject, text.ToString(), html.ToString(),
-            Attachments: [new EmailAttachment(content.FileName, content.ContentType, content.Content)]);
+            Attachments: [new EmailAttachment(content.FileName, content.ContentType, content.Content)],
+            // The system mailbox is not read: an answer should reach the employee who sent the scan.
+            ReplyTo: SmtpEmailOptions.IsEmailAddress(replyTo) ? replyTo : null);
     }
 
     /// <summary>Only the characters that mean something in HTML; Vietnamese letters stay as they are.</summary>

@@ -18,5 +18,5 @@ public sealed class SmtpEmailOptions
 }
 public sealed record EmailAttachment(string FileName, string ContentType, byte[] Content);
 public sealed record EmailMessage(string Recipient, string Subject, string TextBody, string HtmlBody, string? LogoContentId = null,
-    IReadOnlyList<EmailAttachment>? Attachments = null);
+    IReadOnlyList<EmailAttachment>? Attachments = null, string? ReplyTo = null);
 public interface IEmailTransport { Task SendAsync(EmailMessage message, CancellationToken cancellationToken); }

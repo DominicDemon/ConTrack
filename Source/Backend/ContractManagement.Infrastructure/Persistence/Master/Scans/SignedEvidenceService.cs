@@ -368,9 +368,9 @@ public sealed class SignedEvidenceService(
             .Where(candidate => candidate.FileStorageFileid == row.FileId)
             .OrderByDescending(candidate => candidate.OcrJobId)
             .FirstOrDefaultAsync(cancellationToken);
-        if (job?.OcrJobProcessingStatus != OcrJobStatuses.Failed)
+        if (job is null || job.OcrJobProcessingStatus is OcrJobStatuses.Queued or OcrJobStatuses.Processing)
         {
-            throw new InternalAppException(409, "Chỉ đọc lại được bản ký bị lỗi đọc nội dung.");
+            throw new InternalAppException(409, "Hệ thống đang đọc bản ký này. Hãy chờ đọc xong.");
         }
 
         if (await staging.ReadAsync(row.FileId, cancellationToken) is null)
@@ -435,6 +435,7 @@ public sealed class SignedEvidenceService(
                 ScanKeywordType.ContractCode => "Số hợp đồng phải có từ 4 đến 64 ký tự.",
                 ScanKeywordType.TaxCode => "Mã số thuế phải có 10 hoặc 13 chữ số.",
                 ScanKeywordType.CustomerName => "Tên khách hàng phải có từ 3 đến 200 ký tự.",
+                ScanKeywordType.Email => "Email không hợp lệ (ví dụ: ten@congty.vn, tối đa 64 ký tự).",
                 _ => "Số điện thoại phải có 10 hoặc 11 chữ số và bắt đầu bằng 0.",
             });
         return (keywordType, normalised);
@@ -482,6 +483,7 @@ public sealed class SignedEvidenceService(
         var contracts = await Contracts().Where(row => documentIds.Contains(row.DocumentId))
             .ToDictionaryAsync(row => row.DocumentId, cancellationToken);
         var byFile = found.ToLookup(keyword => keyword.FileStorageFileid);
+        var emails = await EmailsAsync(db, rows.Select(row => row.FileId).ToList(), cancellationToken);
 
         return rows
             .Where(row => contracts.ContainsKey(row.DocumentId))
@@ -506,16 +508,27 @@ public sealed class SignedEvidenceService(
                             keyword.ContractScanKeywordValue,
                             keyword.ContractScanKeywordPagenumber,
                             ((ScanKeywordSource)keyword.ContractScanKeywordSource).ToString()))
-                        .ToList());
+                        .ToList(),
+                    emails[row.FileId].ToList());
             })
             .ToList();
     }
+
+    /// <summary>The email addresses on each scan (read by OCR or typed), to offer as recipients when sending it.</summary>
+    internal static async Task<ILookup<long, string>> EmailsAsync(MasterDbContext db, IReadOnlyCollection<long> fileIds, CancellationToken cancellationToken) =>
+        (await db.ContractScanKeywords.AsNoTracking()
+            .Where(keyword => keyword.ContractScanKeywordType == (int)ScanKeywordType.Email && fileIds.Contains(keyword.FileStorageFileid))
+            .OrderBy(keyword => keyword.ContractScanKeywordId)
+            .Select(keyword => new { keyword.FileStorageFileid, keyword.ContractScanKeywordValue })
+            .ToListAsync(cancellationToken))
+        .ToLookup(keyword => keyword.FileStorageFileid, keyword => keyword.ContractScanKeywordValue);
 
     // ---------------------------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------------------------
 
-    private static ArgumentException Invalid(string property, string message) => new(message, property);
+    // Without the parameter name: ArgumentException would append "(Parameter '...')" to what the user reads.
+    private static ArgumentException Invalid(string property, string message) => new(message);
 
     public static string StatusKey(int status) =>
         Enum.IsDefined(typeof(ContractDocumentStatus), status) ? ((ContractDocumentStatus)status).ToString() : status.ToString();
@@ -576,12 +589,12 @@ public sealed class SignedEvidenceService(
             : (Path.GetExtension(fileName) is { Length: > 1 and <= 10 } own ? own.ToLowerInvariant() : ".bin", "application/octet-stream");
         var employeeId = currentEmployee.EmployeeId;
         var now = DateTime.UtcNow;
-        var sha256 = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
+        var sha256 = ScanDuplicates.Hash(content);
+        await ScanDuplicates.EnsureNewAsync(db, fileName, sha256, cancellationToken);
         // A new key every time: the bytes of a stored evidence are never overwritten.
-        var storageKey = $"signed-evidence/{contract.DocumentId}/{versionId}/{Guid.NewGuid():N}{extension}";
-
         // The stored copy is encrypted; OCR reads a plain copy that is deleted once it is read.
         var (storedBytes, fileKey) = protection.Protect(content);
+        var storageKey = $"signed-evidence/{contract.DocumentId}/{versionId}/{Guid.NewGuid():N}{extension}{(fileKey is null ? "" : ".enc")}";
         await files.SaveAsync(storageKey, storedBytes, cancellationToken);
         long? stagedFileId = null;
         try

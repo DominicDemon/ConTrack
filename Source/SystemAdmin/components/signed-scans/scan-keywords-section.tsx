@@ -74,10 +74,23 @@ export function ScanKeywordsSection({
           <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
         </CardTitle>
         {keywords.status === "Done" && (
-          <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
-            <Plus aria-hidden="true" />
-            Thêm từ khóa
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={retry}
+              disabled={retrying}
+              title="Đọc lại bằng OCR mới nhất: lấy thêm từ khóa trước đây bị sót. Từ khóa thêm bằng tay được giữ nguyên."
+            >
+              {retrying ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+              Đọc lại
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
+              <Plus aria-hidden="true" />
+              Thêm từ khóa
+            </Button>
+          </div>
         )}
       </CardHeader>
       <CardContent className="space-y-3">

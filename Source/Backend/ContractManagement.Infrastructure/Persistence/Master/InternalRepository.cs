@@ -25,21 +25,31 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     {
         var employee = await db.Employees.AsNoTracking().SingleOrDefaultAsync(e => e.EmployeeId == id && e.EmployeeStatus == "ACTIVE", ct);
         if (employee is null) return null;
-        var permissions = await (from er in db.EmployeeRoles join r in db.SystemRoles on er.SystemRoleId equals r.SystemRoleId
-            join rp in db.SystemRolePermissions on r.SystemRoleId equals rp.SystemRoleId
-            join p in db.SystemPermissions on rp.SystemPermissionId equals p.SystemPermissionId
-            where er.EmployeeId == id && r.SystemRoleStatus == "ACTIVE" select p.SystemPermissionCode).Distinct().ToArrayAsync(ct);
+        var assignedRoleIds = await (from er in db.EmployeeRoles join role in db.SystemRoles on er.SystemRoleId equals role.SystemRoleId
+            where er.EmployeeId == id && role.SystemRoleStatus == "ACTIVE" select role.SystemRoleId).Distinct().ToArrayAsync(ct);
         var isSalesEmployee = await (from assignment in db.EmployeeDepartments
             join department in db.Departments on assignment.DepartmentId equals department.DepartmentId
             where assignment.EmployeeId == id && department.DepartmentStatus == "ACTIVE"
                 && (department.DepartmentCode == "KD" || department.DepartmentName.Contains("Kinh Doanh"))
             select assignment.EmployeeId).AnyAsync(ct);
         var departmentRow = await (from ed in db.EmployeeDepartments join d in db.Departments on ed.DepartmentId equals d.DepartmentId
-            where ed.EmployeeId == id select new { d.DepartmentName, d.DepartmentManagerEmployeeId }).FirstOrDefaultAsync(ct);
-        var isManager = departmentRow?.DepartmentManagerEmployeeId == id
-            || employee.EmployeeUsername.StartsWith("head.")
-            || permissions.Contains("ticket.manage.all");
-        var isSysAdmin = employee.EmployeeCode == "ADM-SYSADMIN" || employee.EmployeeUsername == "sysadmin";
+            where ed.EmployeeId == id && d.DepartmentStatus == "ACTIVE"
+            select new { d.DepartmentName, d.DepartmentManagerEmployeeId, d.DepartmentStaffRoleId, d.DepartmentManagerRoleId })
+            .FirstOrDefaultAsync(ct);
+        var isManager = departmentRow?.DepartmentManagerEmployeeId == id;
+        var departmentRoleId = departmentRow is null ? null
+            : isManager ? departmentRow.DepartmentManagerRoleId : departmentRow.DepartmentStaffRoleId;
+        var roleIds = departmentRoleId is long roleId
+            ? assignedRoleIds.Append(roleId).Distinct().ToArray()
+            : assignedRoleIds;
+        var roleCodes = await db.SystemRoles.AsNoTracking().Where(r => roleIds.Contains(r.SystemRoleId) && r.SystemRoleStatus == "ACTIVE")
+            .Select(r => r.SystemRoleCode).ToArrayAsync(ct);
+        var permissions = await (from r in db.SystemRoles
+            join rp in db.SystemRolePermissions on r.SystemRoleId equals rp.SystemRoleId
+            join p in db.SystemPermissions on rp.SystemPermissionId equals p.SystemPermissionId
+            where roleIds.Contains(r.SystemRoleId) && r.SystemRoleStatus == "ACTIVE"
+            select p.SystemPermissionCode).Distinct().ToArrayAsync(ct);
+        var isSysAdmin = employee.EmployeeCode == "ADM-SYSADMIN" || roleCodes.Contains("INTERNAL_ADMIN");
 
         if (isSalesEmployee)
             permissions = permissions.Append("draft.write").Distinct().ToArray();

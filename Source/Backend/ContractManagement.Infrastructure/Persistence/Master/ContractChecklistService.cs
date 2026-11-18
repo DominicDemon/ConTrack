@@ -123,7 +123,7 @@ public sealed class ContractChecklistService(MasterDbContext db, InternalWordTem
 
     public async Task Decide(long id, ChecklistDecision input, InternalUser actor, CancellationToken ct)
     {
-        if (!actor.CanCheck) throw new InternalAppException(403, "Chỉ Hành chính xác nhận rà soát.");
+        if (!actor.CanReviewLegal) throw new InternalAppException(403, "Chỉ Hành chính xác nhận rà soát.");
         await ReviewData.InTransaction(db, async () =>
         {
             // Serialize decisions even for legacy versions without a checklist row.

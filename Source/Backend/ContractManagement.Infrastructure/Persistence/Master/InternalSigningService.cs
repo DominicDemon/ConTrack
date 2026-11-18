@@ -33,7 +33,7 @@ public sealed class InternalSigningService(
 
     public async Task<IReadOnlyList<CompanySigningQueueItem>> Queue(InternalUser actor, CancellationToken ct)
     {
-        RequireManager(actor);
+        RequireWorkflowAccess(actor);
         var rows = await (from signature in db.ContractElectronicSignatures.AsNoTracking()
             join document in db.ContractDocuments.AsNoTracking() on signature.ContractDocumentId equals document.ContractDocumentId
             join version in db.ContractVersions.AsNoTracking() on signature.ContractVersionId equals version.ContractVersionId
@@ -52,7 +52,7 @@ public sealed class InternalSigningService(
     public Task<SigningStartResult> Start(long documentId, StartCompanySigningRequest request, InternalUser actor, CancellationToken ct) =>
         InTransaction(async () =>
         {
-            RequireManager(actor);
+            RequireWorkflowAccess(actor);
             var (document, version, customer, content) = await Approved(documentId, ct);
             var versionId = version.ContractVersionId;
             if (content.PartyType == InternalDraftPolicy.Business)
@@ -164,7 +164,7 @@ public sealed class InternalSigningService(
 
     public async Task<byte[]> CompanyDocument(long signatureId, InternalUser actor, CancellationToken ct)
     {
-        RequireManager(actor);
+        RequireWorkflowAccess(actor);
         var signature = await db.ContractElectronicSignatures.AsNoTracking().SingleOrDefaultAsync(x => x.ContractElectronicSignatureId == signatureId
             && x.ContractElectronicPartytype == CompanyParty && x.ContractElectronicStatus == Pending, ct)
             ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y yÃªu cáº§u kÃ½ cá»§a cÃ´ng ty.");
@@ -184,7 +184,7 @@ public sealed class InternalSigningService(
     public Task<SigningStartResult> SignCompany(long signatureId, CompanySignatureRequest request, InternalUser actor, CancellationToken ct) =>
         InTransaction(async () =>
         {
-            RequireManager(actor);
+            if (!actor.CanSignCompany) throw new InternalAppException(403, "Chỉ người được phân quyền ký phía công ty mới được ký.");
             if (!request.Confirmed) throw new ArgumentException("Cáº§n xÃ¡c nháº­n Ä‘Ã£ kiá»ƒm tra há»£p Ä‘á»“ng trÆ°á»›c khi kÃ½.");
             var company = await db.ContractElectronicSignatures.SingleOrDefaultAsync(x => x.ContractElectronicSignatureId == signatureId
                 && x.ContractElectronicPartytype == CompanyParty, ct) ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y bÃªn kÃ½ cÃ´ng ty.");
@@ -643,7 +643,7 @@ public sealed class InternalSigningService(
         int SignatureY, int SignatureWidth, int SignatureHeight);
 
     private static string? Clean(string? input, int max) => string.IsNullOrWhiteSpace(input) ? null : input.Trim()[..Math.Min(input.Trim().Length, max)];
-    private static void RequireManager(InternalUser actor) { if (!actor.CanManageAll) throw new InternalAppException(403, "Chỉ quản trị viên công ty được quản lý luồng ký."); }
+    private static void RequireWorkflowAccess(InternalUser actor) { if (!actor.CanAccessCompanySigning) throw new InternalAppException(403, "Bạn không có quyền truy cập luồng ký."); }
     private static byte[] DecodeSignature(string input)
     {
         if (string.IsNullOrWhiteSpace(input) || input.Length > 1_400_000) throw new ArgumentException("Ảnh chữ ký PNG không hợp lệ.");

@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, FileSignature, RefreshCw, Trash2 } from "lucide-react";
 import { internalApi, type CompanySigningQueueItem } from "@/services/internal-api";
+import { useInternalUser } from "@/components/internal/internal-shell";
 import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
 
 export default function CompanySigningQueuePage() {
+  const user = useInternalUser();
+  const canSign = user.canApprove;
   const [rows, setRows] = useState<CompanySigningQueueItem[]>([]);
   const [selected, setSelected] = useState<CompanySigningQueueItem | null>(null);
   const [documentUrl, setDocumentUrl] = useState("");
@@ -18,13 +21,19 @@ export default function CompanySigningQueuePage() {
   const drawingRef = useRef(false);
 
   const load = useCallback(async () => {
-    setError("");
-    try { setRows(await internalApi<CompanySigningQueueItem[]>("/company-signing/queue")); }
+    try {
+      const queue = await internalApi<CompanySigningQueueItem[]>("/company-signing/queue");
+      setRows(queue);
+      setError("");
+    }
     catch (e) { setError((e as Error).message); }
   }, []);
-  useEffect(() => { void load(); }, [load]);
   useEffect(() => {
-    if (!selected) { setDocumentUrl(""); return; }
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+  useEffect(() => {
+    if (!selected) return;
     let active = true;
     let url = "";
     void fetch(`/api/internal/company-signing/${encodeURIComponent(selected.signatureId)}/document`, { credentials: "same-origin", cache: "no-store" })
@@ -74,18 +83,18 @@ export default function CompanySigningQueuePage() {
     {error && <p role="alert" className={ui.error}>{error}</p>}{notice && <p role="status" className={ui.notice}>{notice}</p>}
     {!rows.length ? <section className={ui.card}><p>Chưa có hợp đồng chờ công ty ký. Hãy duyệt hợp đồng trong mục Hợp đồng nháp, sau đó tạo phiên ký.</p></section> :
       <section className={ui.card} aria-label="Danh sách hợp đồng chờ công ty ký"><div className={s.tableWrap}><table className={s.table}><thead><tr><th>Mã hợp đồng</th><th>Hợp đồng</th><th>Khách hàng</th><th>Người ký</th><th></th></tr></thead><tbody>
-        {rows.map(row => <tr key={row.signatureId}><td>{row.code}</td><td>{row.contractName}</td><td>{row.customerName}</td><td>{row.signerName}</td><td><button className={ui.secondaryButton} onClick={() => { setSelected(row); setConfirmed(false); clearSignature(); }}>Mở để ký</button></td></tr>)}
+        {rows.map(row => <tr key={row.signatureId}><td>{row.code}</td><td>{row.contractName}</td><td>{row.customerName}</td><td>{row.signerName}</td><td><button className={ui.secondaryButton} onClick={() => { setSelected(row); setDocumentUrl(""); setConfirmed(false); clearSignature(); }}>{canSign ? "Mở để ký" : "Xem hợp đồng"}</button></td></tr>)}
       </tbody></table></div></section>}
     {selected && <section className={ui.card} style={{ marginTop: 18 }} aria-label="Ký hợp đồng">
-      <div className={s.titleRow}><div><span className={s.eyebrow}>{selected.code} · {selected.customerName}</span><h2>{selected.contractName}</h2></div><button className={ui.secondaryButton} onClick={() => setSelected(null)}>Đóng</button></div>
+      <div className={s.titleRow}><div><span className={s.eyebrow}>{selected.code} · {selected.customerName}</span><h2>{selected.contractName}</h2></div><button className={ui.secondaryButton} onClick={() => { setSelected(null); setDocumentUrl(""); }}>Đóng</button></div>
       {documentUrl ? <iframe title={`PDF ${selected.contractName}`} src={documentUrl} style={{ width: "100%", height: "58vh", border: "1px solid var(--border)" }}/> : <p>Đang tải PDF…</p>}
-      <div style={{ marginTop: 18, display: "grid", gap: 10 }}><strong>Chữ ký người đại diện công ty</strong>
+      {canSign ? <div style={{ marginTop: 18, display: "grid", gap: 10 }}><strong>Chữ ký người đại diện công ty</strong>
         <canvas ref={canvasRef} width={700} height={180} aria-label="Vẽ chữ ký công ty" onPointerDown={startStroke} onPointerMove={continueStroke} onPointerUp={() => { drawingRef.current = false; }} onPointerCancel={() => { drawingRef.current = false; }}
           style={{ width: "100%", maxWidth: 700, height: 180, border: "1px solid var(--border)", touchAction: "none", background: "white" }}/>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}><button className={ui.secondaryButton} type="button" onClick={clearSignature}><Trash2 size={15}/> Xóa chữ ký</button>
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>Tôi đã kiểm tra PDF và xác nhận ký phiên bản này.</label>
           <button className={ui.primaryButton} type="button" disabled={busy || !confirmed || !documentUrl} onClick={() => void sign()}><FileSignature size={16}/><Check size={15}/>{busy ? "Đang lưu…" : "Ký với tư cách công ty"}</button></div>
-      </div>
+      </div> : <p className={s.muted} style={{ marginTop: 16 }}>Hợp đồng đang chờ người được phân quyền ký phía công ty.</p>}
     </section>}
   </main>;
 }

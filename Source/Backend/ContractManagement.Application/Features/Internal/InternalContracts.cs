@@ -5,6 +5,11 @@ namespace ContractManagement.Application.Features.Internal;
 public sealed record InternalUser(long Id, string Name, string Username, string[] Permissions, bool MustChangePassword = false,
     string? Department = null, bool IsManager = false)
 {
+    public bool CanManageLegal => Permissions.Contains("legal.manage");
+    public bool CanReviewLegal => CanCheck || CanManageLegal;
+    public bool CanManageContractWorkflow => CanManageAll || CanManageLegal;
+    public bool CanAccessCompanySigning => CanManageContractWorkflow || CanSignCompany;
+    public bool CanSignCompany => CanApprove;
     public bool CanCheck => Permissions.Contains("contract.check");
     public bool CanApprove => Permissions.Contains("contract.approve");
     public bool CanManageTemplates => Permissions.Contains("template.manage");
@@ -132,7 +137,7 @@ public sealed class InternalDraftService(IInternalRepository repository)
 {
     public static void RequireAccess(InternalUser user, long owner)
     {
-        if ((!user.CanWrite && !user.CanCheck && !user.CanApprove) || (!user.CanManageAll && user.Id != owner))
+        if ((!user.CanWrite && !user.CanCheck && !user.CanApprove && !user.CanManageLegal) || (!user.CanManageContractWorkflow && user.Id != owner))
             throw new InternalAppException(403, "Bạn không có quyền thao tác bản nháp này.");
     }
 

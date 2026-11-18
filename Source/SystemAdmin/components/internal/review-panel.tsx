@@ -38,12 +38,12 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       internalApi<DraftVersionHistoryItem[]>(`/contract-drafts/${record.id}/versions`),
     ]);
     let signingState: SigningMonitorDetail | null = null;
-    if (approvalState?.signingStarted && user.canManageAll) {
+    if (approvalState?.signingStarted && (user.canManageAll || user.canManageLegal)) {
       try { signingState = await internalApi<SigningMonitorDetail>(`/contract-signing-monitor/${record.id}`); }
       catch { signingState = null; }
     }
     return { reviewRows, approvalState, signingState, versionRows };
-  }, [record.id, user.canManageAll]);
+  }, [record.id, user.canManageAll, user.canManageLegal]);
   const load = useCallback(async () => {
     try {
       const state = await fetchWorkflow();
@@ -66,7 +66,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
   const awaitingInternalApproval = record.status === 2 && approval?.status === 0;
   /** A business signs the printed contract and stamps its red seal; a person signs electronically. */
   const business = record.content.partyType === "BUSINESS";
-  const canStartSigning = !business && user.canManageAll && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
+  const canStartSigning = !business && (user.canManageAll || user.canManageLegal) && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
   const canPrint = business && record.status === 3 && approval?.status === 1;
   const customerApproved = latest?.status === "APPROVED";
   const signingComplete = record.status === 4 || record.status === 5;

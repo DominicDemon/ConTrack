@@ -10,6 +10,7 @@ const nextConfig = {
   env: { NEXT_PUBLIC_APP_NAME: branding.name },
   output: "standalone",
   experimental: {
+    agentUpgrade: "security",
     // Scans go through the /api/internal proxy: up to 20 MB each, and OCR-related calls can take a while.
     proxyClientMaxBodySize: 210 * 1024 * 1024,
     proxyTimeout: 15 * 60 * 1000,

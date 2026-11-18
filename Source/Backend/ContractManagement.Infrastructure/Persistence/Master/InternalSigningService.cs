@@ -168,17 +168,17 @@ public sealed class InternalSigningService(
         RequireManager(actor);
         var signature = await db.ContractElectronicSignatures.AsNoTracking().SingleOrDefaultAsync(x => x.ContractElectronicSignatureId == signatureId
             && x.ContractElectronicPartytype == CompanyParty && x.ContractElectronicStatus == Pending, ct)
-            ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y yÃªu cáº§u kÃ½ cá»§a cÃ´ng ty.");
+            ?? throw new InternalAppException(404, "Không tìm thấy yêu cầu ký của công ty.");
         var path = await (from document in db.ContractDocuments.AsNoTracking()
             join relation in db.ContractDocumentFiles.AsNoTracking() on document.ContractDocumentId equals relation.ContractDocumentId
             join file in db.FileStorages.AsNoTracking() on relation.FileStorageFileid equals file.FileStorageFileid
             where document.TenantId == null && document.ContractDocumentId == signature.ContractDocumentId
                 && relation.ContractVersionId == signature.ContractVersionId && relation.IsPrimary
             select file)
-            .SingleOrDefaultAsync(ct) ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y PDF há»£p Ä‘á»“ng.");
+            .SingleOrDefaultAsync(ct) ?? throw new InternalAppException(404, "Không tìm thấy PDF hợp đồng.");
         var bytes = await ReadFile(path.FileStorageStoragekey, ct);
         if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(path.FileStorageSha256, StringComparison.OrdinalIgnoreCase))
-            throw new InternalAppException(409, "File PDF khÃ´ng khá»›p mÃ£ kiá»ƒm tra Ä‘Ã£ lÆ°u.");
+            throw new InternalAppException(409, "File PDF không khớp mã kiểm tra đã lưu.");
         return bytes;
     }
 
@@ -187,20 +187,20 @@ public sealed class InternalSigningService(
         var result = await InTransaction(async () =>
         {
             RequireManager(actor);
-            if (!request.Confirmed) throw new ArgumentException("Cáº§n xÃ¡c nháº­n Ä‘Ã£ kiá»ƒm tra há»£p Ä‘á»“ng trÆ°á»›c khi kÃ½.");
+            if (!request.Confirmed) throw new ArgumentException("Cần xác nhận đã kiểm tra hợp đồng trước khi ký.");
             var company = await db.ContractElectronicSignatures.SingleOrDefaultAsync(x => x.ContractElectronicSignatureId == signatureId
-                && x.ContractElectronicPartytype == CompanyParty, ct) ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y bÃªn kÃ½ cÃ´ng ty.");
-            if (company.ContractElectronicStatus != Pending) throw new InternalAppException(409, "Chá»¯ kÃ½ cÃ´ng ty Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½.");
+                && x.ContractElectronicPartytype == CompanyParty, ct) ?? throw new InternalAppException(404, "Không tìm thấy bên ký công ty.");
+            if (company.ContractElectronicStatus != Pending) throw new InternalAppException(409, "Chữ ký công ty đã được xử lý.");
             var document = await db.ContractDocuments.SingleAsync(x => x.ContractDocumentId == company.ContractDocumentId && x.TenantId == null, ct);
             var version = await db.ContractVersions.SingleAsync(x => x.ContractVersionId == company.ContractVersionId, ct);
             if (document.ContractDocumentCurrentVersionId != version.ContractVersionId
                 || document.ContractDocumentStatus != ContractDocumentStatus.PendingSignature
                 || !version.ContractVersionIslocked
                 || company.ContractElectronicDocumentHashAtSigning != version.ContractVersionSnapshothash)
-                throw new InternalAppException(409, "Há»£p Ä‘á»“ng Ä‘Ã£ thay Ä‘á»•i sau khi phÃª duyá»‡t.");
+                throw new InternalAppException(409, "Hợp đồng đã thay đổi sau khi phê duyệt.");
             var customer = await db.ContractElectronicSignatures.SingleAsync(x => x.ContractDocumentId == company.ContractDocumentId
                 && x.ContractVersionId == company.ContractVersionId && x.ContractElectronicPartytype == CustomerParty, ct);
-            if (customer.ContractElectronicStatus != Pending) throw new InternalAppException(409, "BÃªn khÃ¡ch khÃ´ng á»Ÿ tráº¡ng thÃ¡i chá» kÃ½.");
+            if (customer.ContractElectronicStatus != Pending) throw new InternalAppException(409, "Bên khách không ở trạng thái chờ ký.");
             var fileInfo = await (from relation in db.ContractDocumentFiles join stored in db.FileStorages on relation.FileStorageFileid equals stored.FileStorageFileid
                 where relation.ContractDocumentId == company.ContractDocumentId && relation.ContractVersionId == company.ContractVersionId && relation.IsPrimary
                 select new { Relation = relation, Storage = stored }).SingleAsync(ct);

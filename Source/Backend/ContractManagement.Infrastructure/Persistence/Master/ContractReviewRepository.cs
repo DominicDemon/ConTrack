@@ -154,7 +154,7 @@ public sealed class ContractReviewRepository(
         if (request is null) return null;
         var workflowName = await db.ApprovalWorkflows.AsNoTracking()
             .Where(x => x.ApprovalWorkflowId == request.ApprovalWorkflowId)
-            .Select(x => x.ApprovalWorkflowName).FirstOrDefaultAsync(ct) ?? "Kiá»ƒm tra ná»™i bá»™";
+            .Select(x => x.ApprovalWorkflowName).FirstOrDefaultAsync(ct) ?? "Kiểm tra nội bộ";
         var currentVersionId = await db.ContractDocuments.AsNoTracking().Where(d => d.ContractDocumentId == documentId)
             .Select(d => d.ContractDocumentCurrentVersionId).SingleAsync(ct);
         var signingStarted = currentVersionId.HasValue && await db.ContractElectronicSignatures.AsNoTracking()
@@ -173,20 +173,20 @@ public sealed class ContractReviewRepository(
             var approval = await db.ContractApprovalRequests
                 .Where(x => x.ContractDocumentId == documentId && x.InternalStage == null && x.ContractReviewRequestId != null)
                 .OrderByDescending(x => x.ContractApprovalRequestId)
-                .FirstOrDefaultAsync(ct) ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y yÃªu cáº§u phÃª duyá»‡t.");
+                .FirstOrDefaultAsync(ct) ?? throw new InternalAppException(404, "Không tìm thấy yêu cầu phê duyệt.");
             if (approval.ContractApprovalRequestStatus != 0 || doc.ContractDocumentStatus != ContractDocumentStatus.PendingApproval)
-                throw new InternalAppException(409, "YÃªu cáº§u phÃª duyá»‡t Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½ hoáº·c há»“ sÆ¡ khÃ´ng cÃ²n chá» duyá»‡t.");
+                throw new InternalAppException(409, "Yêu cầu phê duyệt đã được xử lý hoặc hồ sơ không còn chờ duyệt.");
             if (doc.ContractDocumentCurrentVersionId != approval.ContractVersionId)
-                throw new InternalAppException(409, "YÃªu cáº§u phÃª duyá»‡t khÃ´ng cÃ²n trÃªn phiÃªn báº£n hiá»‡n hÃ nh.");
+                throw new InternalAppException(409, "Yêu cầu phê duyệt không còn trên phiên bản hiện hành.");
             if (approval.ContractReviewRequestId is not long reviewId
                 || !await db.ContractReviewRequests.AnyAsync(r => r.ContractReviewRequestId == reviewId
                     && r.ContractDocumentId == documentId && r.ContractVersionId == approval.ContractVersionId
                     && r.ContractReviewRequestStatus == ContractReviewStatus.Approved, ct))
-                throw new InternalAppException(409, "KhÃ¡ch chÆ°a Ä‘á»“ng Ã½ Ä‘Ãºng phiÃªn báº£n Ä‘ang chá» phÃª duyá»‡t.");
+                throw new InternalAppException(409, "Khách chưa đồng ý đúng phiên bản đang chờ phê duyệt.");
 
             var comment = InternalDraftPolicy.Text(request.Comment, 2000);
             if (!request.Approve && comment.Length == 0)
-                throw new ArgumentException("Vui lÃ²ng ghi rÃµ lÃ½ do tá»« chá»‘i phÃª duyá»‡t.");
+                throw new ArgumentException("Vui lòng ghi rõ lý do từ chối phê duyệt.");
             var now = DateTime.UtcNow;
             approval.ContractApprovalRequestStatus = request.Approve ? 1 : 2;
             approval.ContractApprovalRequestResolvedAt = now;
@@ -211,7 +211,7 @@ public sealed class ContractReviewRepository(
                     await ReviewData.WithPermission(db, "contract.approve", ct), now, ct);
             var workflowName = await db.ApprovalWorkflows.AsNoTracking()
                 .Where(x => x.ApprovalWorkflowId == approval.ApprovalWorkflowId)
-                .Select(x => x.ApprovalWorkflowName).FirstOrDefaultAsync(ct) ?? "Kiá»ƒm tra ná»™i bá»™";
+                .Select(x => x.ApprovalWorkflowName).FirstOrDefaultAsync(ct) ?? "Kiểm tra nội bộ";
             return new InternalApprovalState(approval.ContractApprovalRequestId, approval.ContractApprovalRequestStatus,
                 approval.SubmittedAt, workflowName, approval.ContractApprovalRequestDecisioncomment, true);
         }, ct);

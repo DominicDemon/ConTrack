@@ -170,19 +170,30 @@ public sealed class ScannedContractService(
     // 2. Reading
     // ---------------------------------------------------------------------------------------------
 
-    public async Task<IReadOnlyList<ScannedBatchDto>> ListBatchesAsync(CancellationToken cancellationToken)
+    public const int MaxPageSize = 50;
+
+    /// <summary>Newest first, one page at a time: the list grows with every upload and is asked for again while OCR reads.</summary>
+    public async Task<ScanPageDto<ScannedBatchDto>> ListBatchesAsync(int? page, int? pageSize, CancellationToken cancellationToken)
     {
+        var (number, size) = Paging(page, pageSize, 10);
         var me = currentEmployee.EmployeeId;
         var seesAll = SeesAll;
-        var batches = await db.OcrBatches.AsNoTracking()
+        var query = db.OcrBatches.AsNoTracking()
             .Where(batch => seesAll || batch.UploadedByEmployeeId == me)
             // Only batches of scanned contracts: their jobs have no CONTRACT_DOCUMENTS row.
-            .Where(batch => db.OcrJobs.Any(job => job.OcrBatchId == batch.OcrPatchId && job.ContractDocumentId == null))
+            .Where(batch => db.OcrJobs.Any(job => job.OcrBatchId == batch.OcrPatchId && job.ContractDocumentId == null));
+        var total = await query.CountAsync(cancellationToken);
+        var batches = await query
             .OrderByDescending(batch => batch.OcrPatchId)
-            .Take(50)
+            .Skip((number - 1) * size)
+            .Take(size)
             .ToListAsync(cancellationToken);
-        return await ToBatchDtosAsync(batches, cancellationToken);
+        return new ScanPageDto<ScannedBatchDto>(await ToBatchDtosAsync(batches, cancellationToken), total, number, size);
     }
+
+    /// <summary>Page from 1, size from 1 to <see cref="MaxPageSize"/>; a page past the end comes back empty.</summary>
+    private static (int Page, int Size) Paging(int? page, int? pageSize, int defaultSize) =>
+        (Math.Max(1, page ?? 1), Math.Clamp(pageSize ?? defaultSize, 1, MaxPageSize));
 
     public async Task<ScannedBatchDto> GetBatchAsync(long batchId, CancellationToken cancellationToken)
     {
@@ -226,11 +237,14 @@ public sealed class ScannedContractService(
         return await ReadFileAsync(file, fileKey, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<ScannedContractDto>> ListContractsAsync(CancellationToken cancellationToken)
+    public async Task<ScanPageDto<ScannedContractDto>> ListContractsAsync(int? page, int? pageSize, CancellationToken cancellationToken)
     {
+        var (number, size) = Paging(page, pageSize, 20);
+        var total = await ScopedContracts().CountAsync(cancellationToken);
         var contracts = await ScopedContracts()
             .OrderByDescending(contract => contract.ContractId)
-            .Take(200)
+            .Skip((number - 1) * size)
+            .Take(size)
             .ToListAsync(cancellationToken);
         var result = new List<ScannedContractDto>(contracts.Count);
         foreach (var contract in contracts)
@@ -238,7 +252,7 @@ public sealed class ScannedContractService(
             result.Add(await ToContractDtoAsync(contract, cancellationToken));
         }
 
-        return result;
+        return new ScanPageDto<ScannedContractDto>(result, total, number, size);
     }
 
     public async Task<ScannedFileDto> GetContractFileAsync(long contractId, string? fileKey, CancellationToken cancellationToken)

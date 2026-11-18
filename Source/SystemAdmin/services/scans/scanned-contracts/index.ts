@@ -22,6 +22,14 @@ export interface ScannedJobSummary {
   contractCode: string | null;
 }
 
+/** One page of a list; total counts every row the employee may see. */
+export interface ScanPage<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface ScannedBatch {
   batchId: string;
   status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED";
@@ -117,8 +125,8 @@ export const scannedContractsApi = {
     return data;
   },
 
-  async listBatches(): Promise<ScannedBatch[]> {
-    const { data } = await scanApi.get<ScannedBatch[]>("/scanned-contracts/batches");
+  async listBatches(page = 1, pageSize = 10): Promise<ScanPage<ScannedBatch>> {
+    const { data } = await scanApi.get<ScanPage<ScannedBatch>>("/scanned-contracts/batches", { params: { page, pageSize } });
     return data;
   },
 
@@ -165,8 +173,8 @@ export const scannedContractsApi = {
     return data;
   },
 
-  async listContracts(): Promise<ScannedContract[]> {
-    const { data } = await scanApi.get<ScannedContract[]>("/scanned-contracts");
+  async listContracts(page = 1, pageSize = 20): Promise<ScanPage<ScannedContract>> {
+    const { data } = await scanApi.get<ScanPage<ScannedContract>>("/scanned-contracts", { params: { page, pageSize } });
     return data;
   },
 

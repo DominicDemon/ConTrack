@@ -188,8 +188,8 @@ public static class ScanEndpoints
             .Need(ScannedContractPermissions.View, ScannedContractPermissions.Upload)
             .AcceptsUpload(MaxBatchUploadBytes);
 
-        routes.MapGet("/scanned-contracts/batches", async (ScannedContractService service, CancellationToken ct) =>
-            Results.Ok(await service.ListBatchesAsync(ct))).Need(ScannedContractPermissions.View);
+        routes.MapGet("/scanned-contracts/batches", async (int? page, int? pageSize, ScannedContractService service, CancellationToken ct) =>
+            Results.Ok(await service.ListBatchesAsync(page, pageSize, ct))).Need(ScannedContractPermissions.View);
 
         routes.MapGet("/scanned-contracts/batches/{batchId:long}", async (long batchId, ScannedContractService service, CancellationToken ct) =>
             Results.Ok(await service.GetBatchAsync(batchId, ct))).Need(ScannedContractPermissions.View);
@@ -230,8 +230,8 @@ public static class ScanEndpoints
             return Results.Ok(await service.GetJobAsync(jobId, ct));
         }).Need(ScannedContractPermissions.View, ScannedContractPermissions.Confirm);
 
-        routes.MapGet("/scanned-contracts", async (ScannedContractService service, CancellationToken ct) =>
-            Results.Ok(await service.ListContractsAsync(ct))).Need(ScannedContractPermissions.View);
+        routes.MapGet("/scanned-contracts", async (int? page, int? pageSize, ScannedContractService service, CancellationToken ct) =>
+            Results.Ok(await service.ListContractsAsync(page, pageSize, ct))).Need(ScannedContractPermissions.View);
 
         routes.MapGet("/scanned-contracts/{contractId:long}/file", async (long contractId, HttpContext context, ScannedContractService service, CancellationToken ct) =>
         {

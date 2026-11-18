@@ -121,8 +121,9 @@ public static class ScanEndpoints
             Results.Accepted(value: await service.SendEvidenceAsync(evidenceId, request.Recipients, request.Note, FileKey(context), ct)))
             .Need(SigningPermissions.View);
 
+        // Staff who send scans see their own sendings; the director (audit.security) and the head of legal (keys) see everyone's.
         routes.MapGet("/scan-emails", async (ScanEmailService service, CancellationToken ct) => Results.Ok(await service.HistoryAsync(ct)))
-            .NeedAny(SigningPermissions.View, ScannedContractPermissions.View);
+            .NeedAny(SigningPermissions.View, ScannedContractPermissions.View, ScanEmailService.AuditPermission, EncryptionKeyPermissions.Manage);
 
         // Progress of a sending the caller started (emails go out in the background).
         routes.MapGet("/scan-emails/{jobId}", (string jobId, ScanEmailService service) =>

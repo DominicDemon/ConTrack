@@ -7,12 +7,17 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getScanErrorMessage } from "@/services/scans/http";
 import { signedEvidenceApi, type ScanEmailHistoryItem } from "@/services/scans/signed-scans";
+import { useScanAccess } from "@/components/internal/scan-access";
 import { formatDateTime } from "./format";
 
 /** Who sent which scan to whom: one's own sendings, or everyone's for those who answer for the archive. */
 export function ScanEmailHistory() {
   const [rows, setRows] = useState<ScanEmailHistoryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The director oversees sendings without the scan screens: file names are shown without a link for them.
+  const { can } = useScanAccess();
+  const linkable = (kind: ScanEmailHistoryItem["kind"]) =>
+    can(kind === "scan" ? "contract.scanned.view" : "contract.signed_evidence.view");
 
   useEffect(() => {
     signedEvidenceApi.emailHistory().then(setRows, (loadError: unknown) =>
@@ -47,12 +52,16 @@ export function ScanEmailHistory() {
             <TableCell className="whitespace-nowrap text-sm">{formatDateTime(row.sentAt)}</TableCell>
             <TableCell className="text-sm">{row.sender}</TableCell>
             <TableCell className="max-w-[16rem] text-sm [overflow-wrap:anywhere]">
-              <Link
-                className="text-primary hover:underline"
-                href={row.kind === "scan" ? `/workspace/scanned-contracts/jobs/${row.targetId}` : `/workspace/signed-contracts`}
-              >
-                {row.fileName}
-              </Link>
+              {linkable(row.kind) ? (
+                <Link
+                  className="text-primary hover:underline"
+                  href={row.kind === "scan" ? `/workspace/scanned-contracts/jobs/${row.targetId}` : `/workspace/signed-contracts`}
+                >
+                  {row.fileName}
+                </Link>
+              ) : (
+                row.fileName
+              )}
               {row.withNote && <span className="block text-xs text-muted-foreground">có lời nhắn</span>}
             </TableCell>
             <TableCell className="text-sm [overflow-wrap:anywhere]">{row.sent.join(", ") || "—"}</TableCell>

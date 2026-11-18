@@ -21,6 +21,9 @@ public sealed class ScanEmailService(
     IOptions<SmtpEmailOptions> smtp,
     ICurrentEmployee currentEmployee)
 {
+    /// <summary>The director's permission to read the security audit; it also opens everyone's email history.</summary>
+    public const string AuditPermission = "audit.security";
+
     public const string EvidenceEntity = "CONTRACT_SIGNED_EVIDENCE";
     public const string JobEntity = "OCR_JOB";
 
@@ -65,14 +68,12 @@ public sealed class ScanEmailService(
     public ScanEmailJobDto? Progress(string jobId) => queue.Find(jobId, currentEmployee.EmployeeId);
 
     /// <summary>
-    /// The latest sendings, newest first: one's own, or everyone's for those who manage keys or check scans
-    /// (they answer for what leaves the archive).
+    /// The latest sendings, newest first: one's own, or everyone's for the director (audit.security) and the head of
+    /// legal (who manages the keys): they answer for what leaves the archive. Other staff see only their own.
     /// </summary>
     public async Task<IReadOnlyList<ScanEmailHistoryDto>> HistoryAsync(CancellationToken cancellationToken)
     {
-        var all = currentEmployee.HasPermission(EncryptionKeyPermissions.Manage)
-            || currentEmployee.HasPermission(ScannedContractPermissions.Confirm)
-            || currentEmployee.HasPermission(SigningPermissions.Review);
+        var all = currentEmployee.HasPermission(AuditPermission) || currentEmployee.HasPermission(EncryptionKeyPermissions.Manage);
         var me = currentEmployee.EmployeeId;
         var rows = await db.AuditLogs.AsNoTracking()
             .Where(log => log.ActionType == ScanEmailQueue.EmailedAction && (all || log.ActorId == me))

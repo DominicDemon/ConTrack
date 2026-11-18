@@ -116,3 +116,5 @@ export type ProductRow = { id: string; code: string | null; name: string; unit: 
 export type CategoryOption = { id: number; name: string };
 export type ServiceRow = { id: string; name: string; unit: string | null; price: number | null; typeName: string | null; active: boolean };
 export type DepartmentRow = { id: string; code: string; name: string; description: string | null; status: string; managerName: string | null; memberCount: number; staffRoleName: string | null; managerRoleName: string };
+
+export type CustomerLookupResult = { customer: CustomerOption; businessId: string | null; businessName: string | null };

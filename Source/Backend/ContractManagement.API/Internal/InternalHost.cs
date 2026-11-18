@@ -42,7 +42,8 @@ public static class InternalHost
         if (string.IsNullOrWhiteSpace(masterConn))
             throw new InvalidOperationException("Internal mode requires ConnectionStrings:MasterDatabase.");
         builder.Services.AddMasterDatabase(builder.Configuration);
-        builder.Services.AddScoped<IInternalRepository, InternalRepository>();
+        builder.Services.AddScoped<InternalRepository>();
+        builder.Services.AddScoped<IInternalRepository>(services => services.GetRequiredService<InternalRepository>());
         builder.Services.AddScoped<InternalDraftService>();
         builder.Services.AddScoped<InternalSigningDemoService>();
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
@@ -280,6 +281,8 @@ public static class InternalHost
             RequirePasswordChanged(user);
             return Results.Ok(await reminders.Expiring(ContractExpiryReminders.Today(DateTime.UtcNow), user.CanManageAll ? null : user.Id, ct));
         });
+        secured.MapPatch("/contract-templates/{id:long}/name", async (long id, TemplateNameInput input, HttpContext c, InternalRepository repository, CancellationToken ct) =>
+            Results.Ok(new { name = await repository.RenameTemplate(id, input.Name, Current(c), ct) }));
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
         secured.MapGet("/contract-progress", async ([AsParameters] ProgressFilter filter, HttpContext c, ContractProgressService service, CancellationToken ct) => Results.Ok(await service.List(filter, Current(c), ct)));
         secured.MapGet("/checklist-rules", () => Results.Ok(ContractChecklistService.Catalog));
@@ -364,6 +367,8 @@ public static class InternalHost
             Results.Ok(await importer.Save(input, Current(c).Id, ct)));
         secured.MapGet("/contract-templates/{id:long}", async (long id, IInternalRepository r, CancellationToken ct) =>
             (await r.Templates(ct)).FirstOrDefault(t => t.Id == id) is { } t ? Results.Ok(t) : Results.NotFound());
+        secured.MapGet("/customers/lookup", async (string? search, InternalRepository repository, CancellationToken ct) =>
+            Results.Ok(await repository.LookupCustomers(search, ct)));
         secured.MapGet("/customers", async (string? search, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Customers(search, ct)));
         secured.MapGet("/customers/{id:long}/businesses", async (long id, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Businesses(id, ct)));
         secured.MapPost("/customers/{id:long}/businesses", async (long id, BusinessInput input, HttpContext c, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.CreateBusiness(id, input, Current(c).Id, ct)));
@@ -456,6 +461,7 @@ public static class InternalHost
         if (!long.TryParse(context.Session.GetString(UserKey), out var id)) throw new InternalAppException(401, "Vui lòng đăng nhập.");
         return await repository.GetUser(id, ct) ?? throw new InternalAppException(401, "Phiên đăng nhập hết hạn hoặc tài khoản đã khóa.");
     }
+    public sealed record TemplateNameInput(string? Name);
     public sealed record LoginInput(string Username, string Password);
 }
 

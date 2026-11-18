@@ -29,6 +29,54 @@ export function wordCards(blocks:DocumentBlock[]) {
   return cards;
 }
 
+const partyFields: Record<string, string> = {
+  "địa chỉ": "CUSTOMER_ADDRESS",
+  "điện thoại": "CUSTOMER_CONTACT_PHONE",
+  "số điện thoại": "CUSTOMER_CONTACT_PHONE",
+  "fax": "CUSTOMER_FAX",
+  "đại diện": "CUSTOMER_CONTACT_NAME",
+  "người đại diện": "CUSTOMER_CONTACT_NAME",
+  "chức vụ": "CUSTOMER_CONTACT_TITLE",
+  "mã số thuế": "CUSTOMER_TAX_CODE",
+  "email": "CUSTOMER_EMAIL",
+};
+
+export function wordCustomerValues(source: DocumentBlock[], fields: Readonly<Record<string, string>>, partyType: string | undefined) {
+  const updates = new Map<string, string>();
+  const section = wordCards(source).find(card => card.label === "Thông tin các bên");
+  if (!section) return updates;
+
+  const ids = new Set(section.ids);
+  let inPartyA = false;
+  let pending: { key: string; table: number | null; row: number | null; cell: number | null } | null = null;
+  for (const block of source) {
+    if (!ids.has(block.id)) continue;
+    const text = block.text.trim();
+    const heading = text.match(/^(Bên\s+([AB])\s*[:：])\s*/iu);
+    if (heading) {
+      if (heading[2].toUpperCase() === "B") break;
+      inPartyA = true;
+      const name = fields[partyType === "BUSINESS" ? "CUSTOMER_COMPANY" : "CUSTOMER_CONTACT_NAME"];
+      if (name) updates.set(block.id, heading[1] + " " + name);
+      continue;
+    }
+    if (!inPartyA) continue;
+    const table = block.tableId ?? null, row = block.row ?? null, cell = block.cell ?? null;
+    const label = text.match(/^([^:：]+)[:：]\s*(.*)$/u);
+    const key = partyFields[(label?.[1] ?? text).trim().toLowerCase()];
+    if (key) {
+      if (label?.[2]) updates.set(block.id, label[1] + ": " + (fields[key] ?? ""));
+      else pending = table === null ? null : { key, table, row, cell };
+      continue;
+    }
+    if (pending && pending.table === table && pending.row === row && pending.cell !== cell) {
+      updates.set(block.id, fields[pending.key] ?? "");
+      pending = null;
+    }
+  }
+  return updates;
+}
+
 type Props = { cards:Card[]; blocks:DocumentBlock[]; busy:boolean; active:string; select:(id:string)=>void;
   update:(cards:Card[], blocks:DocumentBlock[])=>void; after:(b:DocumentBlock)=>ReactNode; anchors:Set<string>;
   table:()=>void; image:()=>void; readOnly?:boolean };

@@ -29,7 +29,7 @@ export function draftIssues(c: DraftContent): DraftIssue[] {
   if(c.partyType === "BUSINESS" && !c.fields.CUSTOMER_TAX_CODE?.trim()) add("required","fields.CUSTOMER_TAX_CODE","Mã số thuế pháp nhân");
   for(const f of c.templateSnapshot?.fields ?? []) {
     const value=c.fields[f.key]?.trim();
-    if(f.required && !value) add("required","fields."+f.key,f.label);
+    if(f.required && !value && !(c.templateSnapshot?.wordStorageKey && f.key.startsWith("PROVIDER_"))) add("required","fields."+f.key,f.label);
     if(value && f.dataType === "NUMBER" && (!Number.isFinite(Number(value)) || (f.min != null && Number(value)<f.min) || (f.max != null && Number(value)>f.max))) add("invalid_number","fields."+f.key,`${f.label}: số không hợp lệ`);
     if(value && f.dataType === "SELECT" && !f.options?.includes(value)) add("invalid_choice","fields."+f.key,`${f.label}: chọn giá trị trong danh sách`);
   }

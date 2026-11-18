@@ -73,6 +73,7 @@ public static class EmployeeAdminRules
         System.Security.Cryptography.RandomNumberGenerator.GetString("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz", 8)
         + System.Security.Cryptography.RandomNumberGenerator.GetString("23456789", 4);
 }
+public sealed record CustomerLookupResult(CustomerOption Customer, long? BusinessId, string? BusinessName);
 public sealed record CustomerOption(long Id, string Name, string Phone, Dictionary<string, string> Fields);
 public sealed record CustomerInput(string Name, string Phone, string? Email, string? Company, string? TaxCode, string? Address);
 public sealed record BusinessInput(string Name, string TaxCode, string Address, string Representative);

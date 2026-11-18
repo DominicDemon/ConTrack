@@ -397,7 +397,9 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         string Due(DraftMilestone milestone) => milestone.Anchor == "DATE"
             ? milestone.DueDate?.ToString("dd/MM/yyyy", culture) ?? "Chưa chọn ngày"
             : $"{milestone.OffsetDays} ngày lịch sau {(milestone.Anchor == "SIGNED" ? "ngày ký đủ" : "ngày bàn giao")}";
-        return new Dictionary<string, string>(template.ManualWordContent ? [] : content.Fields)
+        return new Dictionary<string, string>(template.ManualWordContent
+            ? content.Fields.Where(field => field.Key.StartsWith("CUSTOMER_", StringComparison.Ordinal))
+            : content.Fields)
         {
             ["CONTRACT_NAME"] = content.Name, ["EFFECTIVE_DATE"] = content.EffectiveDate?.ToString("dd/MM/yyyy") ?? "",
             ["EXPIRE_DATE"] = content.ExpireDate?.ToString("dd/MM/yyyy") ?? "",

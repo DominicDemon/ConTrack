@@ -1,7 +1,7 @@
 "use client";
 import WordDocumentLayout, { type DocumentBlock } from "./word-document-layout";
 import { createPortal } from "react-dom";
-import WordClauseForm, { wordCards, type Card } from "./word-clause-form";
+import WordClauseForm, { wordCards, wordCustomerValues, type Card } from "./word-clause-form";
 import WordPdfViewer from "./word-pdf-viewer";
 import WordTableEditor, { createTable, type AddedTable } from "./word-table-editor";
 import WordContentEditor, { type AddedContent } from "./word-content-editor";
@@ -67,6 +67,18 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     }
   }, [inline?.content]);
   useEffect(() => () => { revision.current++; }, []);
+  const syncedCustomer = useRef<{ extraction: Extraction; values: Map<string, string> } | null>(null);
+  useEffect(() => {
+    if (!inline || inline.readOnly || draft || !inline.content.customerId || !extraction) return;
+    const values = wordCustomerValues(extraction.blocks, inline.content.fields, inline.content.partyType);
+    const previous = syncedCustomer.current;
+    const changed = new Map([...values].filter(([id, value]) => previous?.extraction !== extraction || previous.values.get(id) !== value));
+    syncedCustomer.current = { extraction, values };
+    if (!changed.size) return;
+    setBlocks(current => current.map(block => changed.has(block.id) ? { ...block, text: changed.get(block.id)! } : block));
+    invalidate();
+  }, [inline?.content, inline?.readOnly, draft, extraction]);
+
   function invalidate(edit = true) { if (inline && edit) { revision.current++; inline.receipt.current = null; inline.changed(); } setPreviewCurrent(false); setConfirmed(false); setError(""); }
   async function extract(file?: File) {
     if (!file) return;

@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, GripVertical, ListChecks, Plus, Save, Send, Trash2, Users, Wallet } from "lucide-react";
-import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
+import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import DraftPreview from "./draft-preview";
 import WordDraftPreview from "./word-draft-preview";
@@ -25,11 +25,11 @@ const ENGLISH_FIELDS = ["CUSTOMER_COMPANY", "CUSTOMER_ADDRESS", "CUSTOMER_CONTAC
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className={s.label}>{label}{children}</label>; }
 export default function DraftEditor({ id }: { id?: string }) {
   const user = useInternalUser(); const router = useRouter(); const [content, setContent] = useState<DraftContent>(blank); const [record, setRecord] = useState<DraftRecord | null>(null);
-  const [templates, setTemplates] = useState<TemplateDefinition[]>([]); const [customers, setCustomers] = useState<CustomerOption[]>([]); const [products, setProducts] = useState<ProductOption[]>([]);
+  const [templates, setTemplates] = useState<TemplateDefinition[]>([]); const [customers, setCustomers] = useState<CustomerLookupResult[]>([]); const [products, setProducts] = useState<ProductOption[]>([]);
   const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [conflict, setConflict] = useState(false);
   const [dirty, setDirty] = useState(false); const dirtyRef = useRef(false); const form = useRef<HTMLFormElement>(null);
   const [mobile, setMobile] = useState(false); const [tab, setTab] = useState("edit"); const [customerForm, setCustomerForm] = useState<CustomerInput | null>(null); const [customerBusy, setCustomerBusy] = useState(false);
-  const [customerSearch, setCustomerSearch] = useState(""); const [lookupError, setLookupError] = useState(""); const [loadAttempt, setLoadAttempt] = useState(0);
+  const [customerSearch, setCustomerSearch] = useState(""); const [searching, setSearching] = useState(false); const [lookupError, setLookupError] = useState(""); const [loadAttempt, setLoadAttempt] = useState(0);
   const [locate, setLocate] = useState<{location:string|null;request:number}|null>(null);
   const [wordInfo, setWordInfo] = useState("");
   const receipt = useRef<string|null|undefined>(undefined);
@@ -38,15 +38,24 @@ export default function DraftEditor({ id }: { id?: string }) {
   const retryLoad = (next: (v: number) => number) => { setLoading(true); setError(""); setLoadAttempt(next); };
   useEffect(() => { const mq = window.matchMedia("(max-width: 850px)"); const update = () => setMobile(mq.matches); update(); mq.addEventListener("change", update); return () => mq.removeEventListener("change", update); }, []);
   useEffect(() => { let active = true;
-    void Promise.all([internalApi<TemplateDefinition[]>("/contract-templates"), internalApi<CustomerOption[]>("/customers"), internalApi<ProductOption[]>("/products"), id ? internalApi<DraftRecord>(`/contract-drafts/${id}`) : Promise.resolve(null)]).then(([ts, cs, ps, draft]) => {
-      if (!active) return; ts = ts.map(completePartyFields); setTemplates(ts); setCustomers(cs); setProducts(ps); setRecord(draft);
+    void Promise.all([internalApi<TemplateDefinition[]>("/contract-templates"), internalApi<ProductOption[]>("/products"), id ? internalApi<DraftRecord>(`/contract-drafts/${id}`) : Promise.resolve(null)]).then(([ts, ps, draft]) => {
+      if (!active) return; ts = ts.map(completePartyFields); setTemplates(ts); setProducts(ps); setRecord(draft);
       setContent(draft?.content ?? { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
       receipt.current = undefined; setDirty(false); dirtyRef.current = false;
     }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; };
   }, [id, loadAttempt]);
-  useEffect(() => { if (id) return; let active = true; const timer = setTimeout(() => {
-    void internalApi<CustomerOption[]>(`/customers?search=${encodeURIComponent(customerSearch)}`).then(cs => { if (active) { setCustomers(old => { const selected = old.find(c => c.id === content.customerId); return selected && !cs.some(c => c.id === selected.id) ? [selected, ...cs] : cs; }); setLookupError(""); } }).catch(e => { if (active) setLookupError(e.message); });
-  }, 300); return () => { active = false; clearTimeout(timer); }; }, [customerSearch, id, content.customerId]);
+  useEffect(() => {
+    const search = customerSearch.trim();
+    if (id || !search) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      void internalApi<CustomerLookupResult[]>(`/customers/lookup?search=${encodeURIComponent(search)}`)
+        .then(results => { if (active) setCustomers(results); })
+        .catch(error => { if (active) setLookupError(error.message); })
+        .finally(() => { if (active) setSearching(false); });
+    }, 300);
+    return () => { active = false; clearTimeout(timer); };
+  }, [customerSearch, id]);
   useEffect(() => {
     const unload = (e: BeforeUnloadEvent) => { if (dirtyRef.current) { e.preventDefault(); e.returnValue = ""; } };
     const click = (e: MouseEvent) => { const target = (e.target as HTMLElement).closest("a[href],button[data-leave-workspace]"); if (target && dirtyRef.current && !window.confirm("Bạn có thay đổi chưa lưu. Rời trang và bỏ các thay đổi này?")) { e.preventDefault(); e.stopPropagation(); } };
@@ -73,11 +82,21 @@ export default function DraftEditor({ id }: { id?: string }) {
   const totals = estimateTotals(content);
   const issues = draftIssues({...content, templateSnapshot: template ?? null});
   const missing = issues.map(i => i.message);
-  function selectCustomer(customer: CustomerOption) { change(c => ({ ...c, customerId: customer.id, partyType: "", customerBusinessId: null, fields: c.templateSnapshot?.manualWordContent ? { ...customer.fields, ...c.fields } : { ...c.fields, ...customer.fields } })); }
+  function selectCustomer(customer: CustomerOption, businessId: string | null = null) {
+    change(current => ({
+      ...current, customerId: customer.id, partyType: businessId ? "BUSINESS" : "PERSON", customerBusinessId: businessId,
+      fields: { ...Object.fromEntries(Object.entries(current.fields).filter(([key]) => !key.startsWith("CUSTOMER_"))), ...customer.fields },
+      fieldsEn: current.fieldsEn && Object.fromEntries(Object.entries(current.fieldsEn).filter(([key]) => !key.startsWith("CUSTOMER_")))
+    }));
+    setCustomerSearch("");
+    setCustomers([]);
+    setLookupError("");
+    setSearching(false);
+  }
   async function selectWordTemplate(t: TemplateDefinition) {
     receipt.current = undefined;
     const version = ++wordReadVersion.current;
-    change(c => ({...c, ...(t.wordStorageKey ? {name:"",fields:{},items:[],effectiveDate:null,expireDate:null,customerId:"",partyType:"",customerBusinessId:null} : {fields:Object.fromEntries(Object.entries(c.fields).filter(([key]) => t.fields.some(f => f.key === key)))}), templateId:String(t.id), templateSnapshot:t, terms:structuredClone(t.terms)}));
+    change(c => ({...c, ...(t.wordStorageKey ? {name:"",fields:Object.fromEntries(Object.entries(c.fields).filter(([key]) => c.customerId && key.startsWith("CUSTOMER_"))),items:[],effectiveDate:null,expireDate:null} : {fields:Object.fromEntries(Object.entries(c.fields).filter(([key]) => t.fields.some(f => f.key === key)))}), templateId:String(t.id), templateSnapshot:t, terms:structuredClone(t.terms)}));
     setWordInfo("");
     if (!t.wordStorageKey) return;
     setWordInfo("Đang đọc thông tin từ bản Word đã lưu…");
@@ -87,13 +106,32 @@ export default function DraftEditor({ id }: { id?: string }) {
       change(c => c.templateId !== String(t.id) ? c : {...c,
         name:c.name.trim() ? c.name : details.name,
         effectiveDate:c.effectiveDate || details.effectiveDate, expireDate:c.expireDate || details.expireDate,
-        fields:{...c.fields,...Object.fromEntries(Object.entries(details.fields).filter(([key]) => !c.fields[key]?.trim() && t.fields.some(f => f.key === key)))},
+        fields:{...c.fields,...Object.fromEntries(Object.entries(details.fields).filter(([key]) => !(c.customerId && key.startsWith("CUSTOMER_")) && !c.fields[key]?.trim() && t.fields.some(f => f.key === key)))},
         items:c.items.length ? c.items : details.items});
       setWordInfo(`Đã điền thông tin nhận diện từ Word. ${details.totalAmount != null ? `Tổng tiền ghi trong tài liệu: ${money(details.totalAmount)}. ` : ""}Hãy đối chiếu và chọn khách nhận hợp đồng. ${details.notes.join(" ")}`);
     } catch(e) {if(version === wordReadVersion.current) setWordInfo("Chưa đọc được thông tin tự động: " + (e as Error).message);}
   }
-  async function createCustomer() { if (!customerForm) return; setCustomerBusy(true); setError(""); try { const c = await internalApi<CustomerOption>("/customers", "POST", customerForm); setCustomers(old => [c, ...old]); selectCustomer(c); setCustomerForm(null); } catch (e) { setError((e as Error).message); } finally { setCustomerBusy(false); } }
-  async function save() { if (!form.current?.reportValidity()) return; setBusy(true); setError(""); setSuccess(""); setConflict(false);
+  async function createCustomer() {
+    if (!customerForm) return;
+    setCustomerBusy(true);
+    setError("");
+    try {
+      const customer = await internalApi<CustomerOption>("/customers", "POST", customerForm);
+      setCustomerForm(null);
+      selectCustomer(customer);
+      if (customerForm.company.trim()) {
+        const results = await internalApi<CustomerLookupResult[]>(`/customers/lookup?search=${encodeURIComponent(customerForm.taxCode)}`);
+        const business = results.find(result => result.customer.id === customer.id && result.businessId);
+        if (business) selectCustomer(business.customer, business.businessId);
+      }
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setCustomerBusy(false);
+    }
+  }
+  async function save() { if (!form.current?.reportValidity()) return;
+    if (!content.customerId) { setError("Tìm và chọn khách hàng trước khi lưu nháp."); focusIssue("partyType"); return; } setBusy(true); setError(""); setSuccess(""); setConflict(false);
     try { if (receipt.current === null) throw new Error("Cập nhật bản xem trước Word trước khi lưu nháp.");
       const saved = await internalApi<DraftRecord>(id ? `/contract-drafts/${id}` : "/contract-drafts", id ? "PUT" : "POST", { content, wordPreviewToken:receipt.current, rowVersion: record?.rowVersion, versionRowVersion: record?.versionRowVersion });
       receipt.current = undefined; setRecord(saved); setContent(saved.content); setDirty(false); dirtyRef.current = false; setSuccess("Đã lưu bản nháp thành công."); if (!id) router.replace(`/workspace/contracts/drafts/${saved.id}`);
@@ -129,14 +167,29 @@ export default function DraftEditor({ id }: { id?: string }) {
       <div className={s.columns}><Field label="Ngày hiệu lực"><input type="date" className={ui.field} value={content.effectiveDate ?? ""} onChange={e => change(c => ({ ...c, effectiveDate: e.target.value || null }))}/></Field><Field label="Ngày hết hạn"><input type="date" className={ui.field} min={content.effectiveDate ?? undefined} value={content.expireDate ?? ""} onChange={e => change(c => ({ ...c, expireDate: e.target.value || null }))}/></Field></div>
     </div></section>
     <section id="customer-fields" tabIndex={-1} className={s.section}><h2><Users/>Khách hàng · Bên A</h2><div className={s.fields}>
-      {!id && <><input className={ui.field} aria-label="Tìm khách hàng" placeholder="Tìm theo tên hoặc số điện thoại…" value={customerSearch} onChange={e => setCustomerSearch(e.target.value)}/>{lookupError && <p role="alert" className={ui.error}>{lookupError}</p>}
-        <Field label="Khách hàng *"><select required className={ui.field} value={content.customerId} onChange={e => { const c = customers.find(x => x.id === e.target.value); if (c) selectCustomer(c); }}><option value="">Chọn khách hàng</option>{customers.map(c => <option value={c.id} key={c.id}>{c.name} · {c.phone}</option>)}</select></Field>
+      {!id && <><Field label="Tìm khách hàng"><input type="search" className={ui.field} placeholder="Nhập email, mã số thuế hoặc số điện thoại…" value={customerSearch}
+          onChange={event => {
+            setCustomerSearch(event.target.value);
+            setCustomers([]);
+            setLookupError("");
+            setSearching(Boolean(event.target.value.trim()));
+          }}/></Field>
+        {content.customerId && <p role="status">Đã chọn {content.partyType === "BUSINESS" ? content.fields.CUSTOMER_COMPANY : content.fields.CUSTOMER_CONTACT_NAME}</p>}
+        {!customerSearch.trim() && !content.customerId && <p className={s.muted}>Nhập email, mã số thuế hoặc số điện thoại để tìm khách có sẵn.</p>}
+        {lookupError ? <p role="alert" className={ui.error}>{lookupError}</p> : searching ?
+          <p role="status">Đang tìm khách hàng…</p> : customerSearch.trim() && (customers.length ?
+          <ul className={s.fields} aria-label="Kết quả tìm khách hàng">{customers.map(result => <li key={result.businessId ? `business-${result.businessId}` : `customer-${result.customer.id}`}>
+            <button type="button" className={ui.secondaryButton} onClick={() => selectCustomer(result.customer, result.businessId)}>
+              {result.businessName || result.customer.name} · {result.businessId ? "Doanh nghiệp" : "Cá nhân"}
+              {["CUSTOMER_TAX_CODE", "CUSTOMER_CONTACT_PHONE", "CUSTOMER_EMAIL"].map(key => result.customer.fields[key]).filter(Boolean).map((value, index) => <span key={index}> · {value}</span>)}
+            </button>
+          </li>)}</ul> : <p role="status">Không tìm thấy khách hàng phù hợp.</p>)}
         <button type="button" className={ui.secondaryButton} onClick={() => setCustomerForm(customerForm ? null : newCustomer())}><Plus size={16}/>{customerForm ? "Đóng tạo khách hàng" : "Tạo nhanh khách hàng"}</button>
         {customerForm && <div className={s.lineItem}><strong style={{ fontSize: 14 }}>Khách hàng mới</strong>{([["name", "Tên hiển thị *"], ["phone", "Số điện thoại *"], ["email", "Email"], ["company", "Tên doanh nghiệp (nếu có)"], ["taxCode", "Mã số thuế doanh nghiệp"], ["address", "Địa chỉ"]] as const).map(([key, label]) => <Field key={key} label={label}><input className={ui.field} value={customerForm[key]} onChange={e => setCustomerForm({ ...customerForm, [key]: e.target.value })}/></Field>)}<button disabled={customerBusy} type="button" className={ui.primaryButton} onClick={createCustomer}>{customerBusy ? "Đang tạo…" : "Tạo và chọn khách hàng"}</button></div>}
       </>}
       <PartyEditor content={content} change={change}/>{template.fields.filter(f => f.key.startsWith("CUSTOMER_")).map(partyField)}
     </div></section>
-    {<section id="provider-fields" tabIndex={-1} className={s.section}><h2><Building2/>Công ty mình · Bên B</h2><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></section>}
+    {!template.wordStorageKey && <section id="provider-fields" tabIndex={-1} className={s.section}><h2><Building2/>Công ty mình · Bên B</h2><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></section>}
     <section id="contract-items" tabIndex={-1} className={s.section}><h2><Wallet/>Hạng mục và giá trị</h2>
       {content.items.map((item, index) => <div key={index} className={s.lineItem}><header><strong style={{ fontSize: 12 }}>Hạng mục {index + 1}</strong><button type="button" className={s.iconButton} aria-label={`Xóa hạng mục ${index + 1}`} onClick={() => change(c => ({ ...c, items: c.items.filter((_, i) => i !== index) }))}><Trash2 size={16}/></button></header>
         <Field label="Tên sản phẩm / dịch vụ"><input required maxLength={500} className={ui.field} value={item.name} onChange={e => editItem(index, { name: e.target.value })}/></Field>

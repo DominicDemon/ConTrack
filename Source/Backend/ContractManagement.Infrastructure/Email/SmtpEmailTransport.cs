@@ -42,6 +42,14 @@ public sealed class SmtpEmailTransport(IOptions<SmtpEmailOptions> options) : IEm
             { ContentId = message.LogoContentId, ContentLink = new Uri($"cid:{message.LogoContentId}"), TransferEncoding = TransferEncoding.Base64 };
             resource.ContentType.Name = null; html.LinkedResources.Add(resource);
         }
-        mail.AlternateViews.Add(html); return mail;
+        mail.AlternateViews.Add(html);
+        foreach (var file in message.Attachments ?? [])
+        {
+            var attachment = new Attachment(new MemoryStream(file.Content, writable: false), file.FileName, file.ContentType);
+            attachment.NameEncoding = Encoding.UTF8;
+            attachment.ContentDisposition!.FileName = file.FileName;
+            mail.Attachments.Add(attachment);
+        }
+        return mail;
     }
 }

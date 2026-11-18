@@ -41,6 +41,9 @@ public static class ScanEndpoints
 
     public sealed record AddKeywordRequest(string? Type, string? Value);
 
+    /// <summary>Addresses to send a scan to (each entry may hold several, as pasted) and an optional note.</summary>
+    public sealed record EmailRequest(List<string?>? Recipients, string? Note);
+
     public sealed record ConfirmRequest(
         string? ContractCode,
         string? ContractName,
@@ -112,6 +115,11 @@ public static class ScanEndpoints
             var file = await service.GetFileAsync(evidenceId, FileKey(context), ct);
             return Results.File(file.Content, file.ContentType, file.FileName);
         }).Need(SigningPermissions.View);
+
+        // Sends the evidence file as a PDF attachment; opened with the sender's own key, like "View".
+        routes.MapPost("/signed-evidence/{evidenceId:long}/email", async (long evidenceId, EmailRequest request, HttpContext context, ScanEmailService service, CancellationToken ct) =>
+            Results.Ok(await service.SendEvidenceAsync(evidenceId, request.Recipients, request.Note, FileKey(context), ct)))
+            .Need(SigningPermissions.View);
 
         routes.MapPost("/signed-evidence/{evidenceId:long}/accept", async (long evidenceId, AcceptRequest request, SignedEvidenceService service, CancellationToken ct) =>
         {
@@ -189,6 +197,11 @@ public static class ScanEndpoints
         routes.MapPost("/scanned-contracts/jobs/{jobId:long}/retry", async (long jobId, HttpContext context, ScannedContractService service, CancellationToken ct) =>
             Results.Ok(await service.GetJobAsync(await service.RetryAsync(jobId, FileKey(context), ct), ct)))
             .Need(ScannedContractPermissions.View, ScannedContractPermissions.Upload);
+
+        // Sends the scan as a PDF attachment; opened with the sender's own key, like "View".
+        routes.MapPost("/scanned-contracts/jobs/{jobId:long}/email", async (long jobId, EmailRequest request, HttpContext context, ScanEmailService service, CancellationToken ct) =>
+            Results.Ok(await service.SendScannedJobAsync(jobId, request.Recipients, request.Note, FileKey(context), ct)))
+            .Need(ScannedContractPermissions.View);
 
         // A keyword OCR missed or read wrong; the scan is found by it at once.
         routes.MapPost("/scanned-contracts/jobs/{jobId:long}/keywords", async (long jobId, AddKeywordRequest request, ScannedContractService service, CancellationToken ct) =>

@@ -11,7 +11,7 @@ export const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
   [TicketStatus.Open]: "Chờ Trưởng phòng tiếp nhận",
   [TicketStatus.InProgress]: "Đang xử lý (Đã giao nhân viên)",
   [TicketStatus.PendingHeadApproval]: "Chờ Trưởng phòng duyệt kết quả",
-  [TicketStatus.Resolved]: "Đã xử lý",
+  [TicketStatus.Resolved]: "Đã hoàn thành",
 };
 
 export enum TicketPriority {
@@ -51,6 +51,7 @@ export interface TicketEmployeeAssignmentDto {
   ticketSupportId: number;
   employeeId: number;
   employeeName: string;
+  employeeCode?: string | null;
   employeeEmail?: string | null;
   assignmentRole: string;
   assignedAt: string;
@@ -94,7 +95,9 @@ export interface TicketDto {
   departmentHeadEmployeeId?: number | null;
   departmentHeadName?: string | null;
   assignedEmployeeId?: number | null;
+  assignedEmployeeIds?: number[];
   assignedEmployeeName?: string | null;
+  assignedAt?: string | null;
   viewerRole?: "DEPARTMENT_HEAD" | "STAFF" | "CUSTOMER" | "SYSADMIN" | string | null;
   viewerEmployeeId?: number | null;
   viewerDepartmentId?: number | null;
@@ -201,7 +204,7 @@ export const ticketApi = {
 
   assignToStaff: async (
     ticketId: number,
-    payload: { staffEmployeeId: number; priority?: TicketPriority | string; note?: string },
+    payload: { staffEmployeeId?: number; staffEmployeeIds?: number[]; priority?: TicketPriority | string; note?: string },
   ) => {
     return await axiosClient.post<unknown, TicketDto>(
       `/api/admin/tickets/${ticketId}/assign`,
@@ -211,7 +214,7 @@ export const ticketApi = {
 
   staffComplete: async (
     ticketId: number,
-    payload: { resolution: string },
+    payload: { resolution: string; reportType?: "COMPLETED" | "UNRESOLVED"; note?: string },
   ) => {
     return await axiosClient.post<unknown, TicketDto>(
       `/api/admin/tickets/${ticketId}/staff-complete`,

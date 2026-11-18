@@ -28,6 +28,7 @@ public sealed class SupportTicketDto
     public int? DepartmentHeadEmployeeId { get; set; }
     public string? DepartmentHeadName { get; set; }
     public int? AssignedEmployeeId { get; set; }
+    public List<int> AssignedEmployeeIds { get; set; } = [];
     public string? AssignedEmployeeName { get; set; }
     public DateTime? AssignedAt { get; set; }
 
@@ -157,6 +158,7 @@ public sealed class CreateSupportTicketRequestDto
 public sealed class AssignTicketToStaffRequestDto
 {
     public int StaffEmployeeId { get; set; }
+    public List<int>? StaffEmployeeIds { get; set; }
     public string? Priority { get; set; }
     public string? Note { get; set; }
 }
@@ -165,6 +167,10 @@ public sealed class StaffCompleteTicketRequestDto
 {
     public string Resolution { get; set; } = string.Empty;
     public string? Note { get; set; }
+    /// <summary>
+    /// "COMPLETED" (Đã xử lý xong) | "UNRESOLVED" (Chưa xử lý được / Đề xuất chuyển người khác)
+    /// </summary>
+    public string? ReportType { get; set; }
 }
 
 public sealed class HeadResolveTicketRequestDto

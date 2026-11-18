@@ -91,6 +91,39 @@ Trang Tổng quan liệt kê hợp đồng hết hạn trong 30 ngày tới (Ban
 nghiệp đóng dấu đỏ, rồi scan và tải lên màn "Bản ký giấy"; xác nhận bản scan chuyển hồ sơ sang Đã ký. Danh sách hợp đồng nháp,
 Theo dõi ký và Kho hợp đồng có bộ lọc "Loại khách hàng" (`?partyType=PERSON|BUSINESS`, theo phiên bản hiện hành).
 
+**Luồng duyệt và ký:** Sale tạo nháp → Sale "Trình Hành chính" → Hành chính (`contract.check`) duyệt → Sale gửi khách (nút
+"Gửi khách xem" chỉ hiện sau khi Hành chính duyệt; trước đó hiện dòng trạng thái) → khách đồng ý → Hành chính duyệt bản chốt
+(`POST /contract-drafts/{id}/internal-approval`) → Sếp (`contract.approve`) tạo phiên ký và ký ở "Ký phía công ty" → khách ký OTP
+(cá nhân), hoặc in, ký và đóng dấu rồi tải bản scan (doanh nghiệp). Sếp không duyệt, chỉ ký; Hành chính và trưởng phòng Sale không
+tạo phiên ký được. Yêu cầu cũ còn ở lượt `DIRECTOR` được coi là đã duyệt. Khách đồng ý thì thông báo Hành chính; Hành chính duyệt bản
+chốt thì thông báo Sếp ký. Tiến độ hợp đồng: `OFFICE` → `APPROVED` → `CUSTOMER` → `FINAL_CHECK` (Hành chính) → `SIGNATURE` (Sếp ký).
+
+**Thông báo hợp đồng:** một chuông "Thông báo" chung cho hỗ trợ và hợp đồng (lọc Tất cả / Hợp đồng / Hỗ trợ); phần hợp đồng đọc `NOTIFICATION` / `NOTIFICATION_RECIPIENT`
+module `CONTRACT` (`GET /contract-notifications`, `POST /contract-notifications/{id}/read`, `POST /contract-notifications/read-all`),
+hỏi lại mỗi 4 giây và hiện toast khi có thông báo mới; bấm vào mở hợp đồng. Ai nhận gì: Sale trình → Hành chính; Hành chính duyệt / trả
+lại → Sale phụ trách; khách góp ý, đồng ý, yêu cầu sửa, từ chối, ký xong → Sale phụ trách và Hành chính; Hành chính duyệt bản chốt → Sếp;
+nhắc hạn → người phụ trách và Ban Giám Đốc. Người thao tác không tự nhận thông báo của mình. Sale gửi khách: khách nhận email có link
+như trước.
+
+**Thông báo cho khách (không có bảng riêng):** chuông "Thông báo" chung trên Portal (hỗ trợ + hợp đồng, lọc theo loại); phần hợp đồng (`GET /api/customer/contract-notices`) suy ra
+từ dữ liệu hợp đồng: hợp đồng mới cần xem / chờ phản hồi, nhân viên ghi chú hoặc trả lời góp ý, công ty duyệt bản chốt (hoặc cần sửa thêm),
+công ty đã ký (đến lượt khách ký), hợp đồng đã ký xong; bấm vào mở `/portal/contracts/{lần gửi}`. Trạng thái đã đọc lưu trong trình duyệt
+(máy khác sẽ thấy lại là mới); lần đầu mở, mục cũ hơn 3 ngày coi như đã đọc. Email cho khách (`CustomerContractMailer`, gửi sau khi lưu
+xong; lỗi SMTP chỉ ghi log, không gửi lại): nhân viên ghi chú / trả lời góp ý, Hành chính duyệt hoặc trả lại bản chốt, Sếp ký xong (mời
+khách ký), khách ký xong. Địa chỉ: email trong hợp đồng, nếu không có thì email của khách; link mở đúng hợp đồng trên Portal.
+Khi khách yêu cầu sửa, cả Sale và Hành chính đều bấm được "Tạo phiên bản mới để chỉnh sửa".
+
+**Số hợp đồng:** hệ thống tự sinh (`HD-yyyyMMdd-xxxxxx`), người dùng không nhập. Khi dựng Word/PDF, ngoài `{{CONTRACT_NUMBER}}`,
+dòng "Số: …" / "Số hợp đồng: …" ở phần đầu văn bản (trước "Căn cứ", "Điều 1", "Hôm nay", "Chúng tôi gồm") được thay bằng số đó.
+
+**Portal khách:** đồng ý và góp ý loại trừ nhau. Đã góp ý trên phiên bản đang xem thì không còn nút "Đồng ý" (API cũng từ chối);
+góp ý chuyển từ bản trước không tính. Đã đồng ý thì ẩn khung góp ý. Khách sửa / xóa được góp ý của mình
+(`PUT` / `DELETE /api/customer/reviews/{id}/comments/{commentId}`) khi lần gửi còn mở và nhân viên chưa trả lời hoặc xử lý góp ý đó.
+
+**Mẫu Word:** không hiện và không bắt buộc các trường Bên A / Bên B nhập tay (thông tin hai bên nằm trong file Word); vẫn chọn khách
+hàng và loại bên giao dịch. Hồ sơ mở để xem tự hiện bản xem trước Word. Nhận xét nội bộ thêm được nhiều dòng ("+ Thêm nhận xét"),
+gửi một lần (`items` trong `POST /contract-drafts/{id}/internal-comments`).
+
 ## Nhân viên & phân quyền
 
 Ban Giám Đốc (quyền `employee.manage`) thấy menu **Nhân viên & phân quyền**
@@ -137,6 +170,10 @@ Session khách dùng cookie riêng `.ConTrack.Customer` (chọn theo đường d
    (trống hoặc sai định dạng thì lấy SĐT của khách) rồi nhập OTP 6 số.
 3. Sau OTP, phiên chỉ mở được đúng lần gửi đó, để xem, góp ý, đồng ý, yêu cầu sửa hoặc từ chối. Link hết hạn thì phiên cũng hết.
 4. **Gửi lại link**: chỉ khi khách chưa phản hồi. Link cũ bị thu hồi; dùng khi email lỗi, khách mất mail hoặc link hết hạn.
+5. **Gửi lại mã OTP** (`POST /contract-reviews/{id}/resend-otp`): khi khách không kịp nhập mã, nhập sai quá nhiều hoặc bị khóa.
+   Sale gửi mã mới tới SĐT trong hợp đồng và gỡ mọi khóa của khách cho lần gửi đó (sai SĐT, quá số lần gửi, sai mật khẩu đăng nhập);
+   khách mở link, bấm "Đã có mã (nhân viên gửi)" và nhập mã. Link phải còn hạn (hết hạn thì Gửi lại link trước). "Cấp lại mật khẩu
+   tạm" cũng gỡ khóa sai mật khẩu.
 
 Giới hạn: OTP 5 phút, gửi lại sau 60 giây, tối đa 5 lần gửi/giờ, 5 lần nhập sai/mã, 5 lần sai SĐT thì khóa 15 phút.
 Dữ liệu: `CONTRACT_ACCESS_LINK` (hash token, hạn, thu hồi, `activated_at`) và `CONTRACT_PHONE_VERIFY` (SĐT đối chiếu); không đổi schema.

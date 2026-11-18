@@ -23,7 +23,8 @@ public sealed class CustomerSigningService(
     IDataProtectionProvider protection,
     IHostEnvironment environment,
     ILogger<CustomerSigningService> logger,
-    IOptions<EsmsOptions> smsOptions) : ICustomerSigningService
+    IOptions<EsmsOptions> smsOptions,
+    CustomerContractMailer? customerMail = null) : ICustomerSigningService
 {
     private const int CustomerParty = 2;
     private const int Pending = 0;
@@ -138,7 +139,7 @@ public sealed class CustomerSigningService(
         await File.WriteAllBytesAsync(Path.Combine(root, companySignedLayoutKey), source, ct);
         try
         {
-            return await InTransaction(async () =>
+            var result = await InTransaction(async () =>
             {
                 var now = DateTime.UtcNow;
                 var current = await (from relation in db.ContractDocumentFiles join stored in db.FileStorages on relation.FileStorageFileid equals stored.FileStorageFileid
@@ -173,6 +174,10 @@ public sealed class CustomerSigningService(
                 };
                 db.FileStorages.Add(companySignedLayout);
                 await db.SaveChangesAsync(ct);
+                // The customer finished signing on the portal: the Sale in charge and Hành chính are told at once.
+                await ReviewData.Notify(db, document, $"customer-signed:{document.ContractDocumentId}:{version.ContractVersionId}", "CUSTOMER_SIGNED",
+                    "Khách đã ký hợp đồng", $"{document.ContractDocumentCode} · {document.ContractDocumentName}",
+                    await ReviewData.WithPermission(db, "contract.check", ct), now, ct);
                 db.ContractDocumentFiles.Add(new ContractDocumentFile { ContractDocumentId = document.ContractDocumentId, ContractVersionId = version.ContractVersionId,
                     FileStorageFileid = companySignedLayout.FileStorageFileid, ContractDocumentFileRole = 1, IsPrimary = false, CreatedDate = now, CreatedEmployeeId = document.EmployeeId });
                 await db.SaveChangesAsync(ct);
@@ -196,6 +201,11 @@ public sealed class CustomerSigningService(
                 await db.SaveChangesAsync(ct);
                 return signed;
             }, ct);
+            // After the commit: confirm by email that the contract is signed by both sides (the portal shows the final PDF).
+            if (customerMail is not null)
+                await customerMail.Send(link.ContractDocumentId, "Hợp đồng đã ký xong",
+                    "Bạn và công ty đã ký đủ hợp đồng. Bạn có thể tải bản PDF đã ký trên Cổng khách hàng.", ct);
+            return result;
         }
         catch
         {

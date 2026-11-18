@@ -453,7 +453,33 @@ public sealed class InternalWordDocument(IConfiguration configuration)
                 Replace(paragraph, current, current[..match.Index] + replacement + current[(match.Index + match.Length)..]);
             }
         }
+        // The system issues the contract number; nobody types it. A template without {{CONTRACT_NUMBER}} still carries the
+        // number of the document it was made from ("Số: DTC-PCM20140407/HDKT"), so that line gets the issued number.
+        if (values.TryGetValue("CONTRACT_NUMBER", out var number) && !string.IsNullOrWhiteSpace(number))
+        {
+            stream.Position = 0;
+            using (var doc = WordprocessingDocument.Open(stream, true)) StampContractNumber(Paragraphs(doc).Select(p => p.Paragraph), number);
+        }
         return stream.ToArray();
+    }
+
+    // "Số: …" or "Số hợp đồng: …" in the heading, before the legal bases or the first article.
+    private static readonly Regex NumberLine = new(@"^(\s*Số(?:\s+hợp\s+đồng)?\s*[:：]\s*)(\S.*?)\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex HeadingEnd = new(@"^\s*(căn\s+cứ|điều\s+\d|chúng\s+tôi\s+gồm|hôm\s+nay)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>Replaces the value of the first contract number line of the heading; false when the heading has none.</summary>
+    internal static bool StampContractNumber(IEnumerable<Paragraph> paragraphs, string number)
+    {
+        foreach (var paragraph in paragraphs.Take(60))
+        {
+            var text = string.Concat(TextNodes(paragraph).Select(t => t.Text));
+            if (HeadingEnd.IsMatch(text)) return false;
+            var match = NumberLine.Match(text);
+            if (!match.Success) continue;
+            Replace(paragraph, text, match.Groups[1].Value + number);
+            return true;
+        }
+        return false;
     }
 
     public Task<byte[]> Pdf(byte[] bytes, CancellationToken ct) => Convert(bytes, ".docx", "pdf:writer_pdf_Export", ".pdf", ct);

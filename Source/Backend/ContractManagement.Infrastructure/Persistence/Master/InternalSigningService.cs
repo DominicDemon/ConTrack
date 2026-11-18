@@ -15,7 +15,8 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 public sealed class InternalSigningService(
     MasterDbContext db,
     InternalTemplateStorage storage,
-    IElectronicSigningPdfService signatures) : IInternalSigningService
+    IElectronicSigningPdfService signatures,
+    CustomerContractMailer? customerMail = null) : IInternalSigningService
 {
     static InternalSigningService()
     {
@@ -181,8 +182,9 @@ public sealed class InternalSigningService(
         return bytes;
     }
 
-    public Task<SigningStartResult> SignCompany(long signatureId, CompanySignatureRequest request, InternalUser actor, CancellationToken ct) =>
-        InTransaction(async () =>
+    public async Task<SigningStartResult> SignCompany(long signatureId, CompanySignatureRequest request, InternalUser actor, CancellationToken ct)
+    {
+        var result = await InTransaction(async () =>
         {
             RequireManager(actor);
             if (!request.Confirmed) throw new ArgumentException("Cáº§n xÃ¡c nháº­n Ä‘Ã£ kiá»ƒm tra há»£p Ä‘á»“ng trÆ°á»›c khi kÃ½.");
@@ -277,6 +279,12 @@ public sealed class InternalSigningService(
                 throw;
             }
         }, ct);
+        // After the commit: it is now the customer's turn to sign on the portal.
+        if (customerMail is not null)
+            await customerMail.Send(result.DocumentId, "Công ty đã ký hợp đồng, mời bạn ký",
+                "Đại diện công ty đã ký hợp đồng. Bạn mở hợp đồng trên Cổng khách hàng, xác nhận mã OTP gửi tới số điện thoại và ký để hoàn tất.", ct);
+        return result;
+    }
 
     private async Task<T> InTransaction<T>(Func<Task<T>> action, CancellationToken ct) => await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
     {
@@ -643,7 +651,8 @@ public sealed class InternalSigningService(
         int SignatureY, int SignatureWidth, int SignatureHeight);
 
     private static string? Clean(string? input, int max) => string.IsNullOrWhiteSpace(input) ? null : input.Trim()[..Math.Min(input.Trim().Length, max)];
-    private static void RequireManager(InternalUser actor) { if (!actor.CanManageAll) throw new InternalAppException(403, "Chỉ quản trị viên công ty được quản lý luồng ký."); }
+    // Sếp (contract.approve) signs for the company and opens the signing session; Hành chính and Sale do not.
+    private static void RequireManager(InternalUser actor) { if (!actor.CanApprove) throw new InternalAppException(403, "Chỉ Sếp (người ký cho công ty) được tạo phiên ký và ký."); }
     private static byte[] DecodeSignature(string input)
     {
         if (string.IsNullOrWhiteSpace(input) || input.Length > 1_400_000) throw new ArgumentException("Ảnh chữ ký PNG không hợp lệ.");

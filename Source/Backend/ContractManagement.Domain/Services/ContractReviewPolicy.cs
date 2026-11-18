@@ -54,6 +54,9 @@ public static class ContractReviewPolicy
             _ => throw new ArgumentException("Quyết định không hợp lệ.")
         };
         if (decision == "REJECT" && string.IsNullOrWhiteSpace(note)) throw new ArgumentException("Vui lòng nhập lý do từ chối.");
+        // Agreeing and asking for changes exclude each other: comments on this version mean a change request.
+        if (decision == "APPROVE" && hasComments)
+            throw new ArgumentException("Bạn đã góp ý cho phiên bản này. Hãy bấm Gửi yêu cầu sửa để nhân viên chỉnh lại hợp đồng.");
         if (decision == "REQUEST_CHANGES" && string.IsNullOrWhiteSpace(note) && !hasComments)
             throw new ArgumentException("Thêm ít nhất một góp ý theo mục hoặc nhập nội dung cần sửa.");
         return result;

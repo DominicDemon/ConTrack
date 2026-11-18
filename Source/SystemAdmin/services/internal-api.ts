@@ -90,7 +90,7 @@ export function estimateTotals(content: DraftContent): DraftTotals {
   const vat = round((subtotal - discount) * content.vatPercent / 100);
   return { subtotal: round(subtotal), discount: round(discount), vat, total: round(subtotal - discount + vat) };
 }
-export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string; section?: string | null };
+export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string; section?: string | null; carried?: boolean };
 export type ReviewSummary = { id: string; versionId: string; versionNo: string; status: string; sentAt: string; sentByName: string; message: string | null; firstViewedAt: string | null; customerNote: string | null; respondedAt: string | null; followupDecision: string | null; followupNote: string | null; followupDecidedAt: string | null; rowVersion: string; comments: ReviewComment[]; linkExpiresAt: string | null; linkEmailSent?: boolean | null };
 export type DraftVersionHistoryItem = { id: string; versionNo: string; changeNote: string | null; createdAt: string; isCurrent: boolean; locked: boolean; snapshotHash: string | null };
 export type InternalApprovalState = { id: string; status: number; submittedAt: string; workflowName: string; comment: string | null; signingStarted: boolean };

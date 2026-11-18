@@ -143,19 +143,34 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             select new { business, customer }).Take(50).ToListAsync(ct);
 
         var results = individuals.Select(c => new CustomerLookupResult(CustomerProfile(c), null, null)).ToList();
-        results.AddRange(companies.Select(row =>
-        {
-            var b = row.business;
-            var contact = CustomerProfile(row.customer);
-            contact.Fields["CUSTOMER_COMPANY"] = b.CustomerBusinessLegalName;
-            contact.Fields["CUSTOMER_ADDRESS"] = b.CustomerBusinessOfficeAddress ?? b.CustomerBusinessHeadOfficeAddress ?? "";
-            contact.Fields["CUSTOMER_CONTACT_NAME"] = b.CustomerBusinessRepresentativeName ?? "";
-            contact.Fields["CUSTOMER_CONTACT_PHONE"] = b.CustomerBusinessPhone ?? row.customer.CustomerPersonalPhone;
-            contact.Fields["CUSTOMER_EMAIL"] = b.CustomerBusinessEmail ?? row.customer.CustomerEmail ?? "";
-            contact.Fields["CUSTOMER_TAX_CODE"] = b.CustomerBusinessCompanyTaxIdentifier;
-            return new CustomerLookupResult(contact, b.CustomerBusinessId, b.CustomerBusinessLegalName);
-        }));
+        results.AddRange(companies.Select(row => BusinessProfile(row.customer, row.business)));
         return results;
+    }
+
+    /// <summary>Bên A as the customer's legal entity: the entity's name, address, representative and tax code over the person's details.</summary>
+    private static CustomerLookupResult BusinessProfile(Customer customer, CustomerBusiness b)
+    {
+        var contact = CustomerProfile(customer);
+        contact.Fields["CUSTOMER_COMPANY"] = b.CustomerBusinessLegalName;
+        contact.Fields["CUSTOMER_ADDRESS"] = b.CustomerBusinessOfficeAddress ?? b.CustomerBusinessHeadOfficeAddress ?? "";
+        contact.Fields["CUSTOMER_CONTACT_NAME"] = b.CustomerBusinessRepresentativeName ?? "";
+        contact.Fields["CUSTOMER_CONTACT_PHONE"] = b.CustomerBusinessPhone ?? customer.CustomerPersonalPhone;
+        contact.Fields["CUSTOMER_EMAIL"] = b.CustomerBusinessEmail ?? customer.CustomerEmail ?? "";
+        contact.Fields["CUSTOMER_TAX_CODE"] = b.CustomerBusinessCompanyTaxIdentifier;
+        return new CustomerLookupResult(contact, b.CustomerBusinessId, b.CustomerBusinessLegalName);
+    }
+
+    /// <summary>
+    /// The customer's current details for Bên A of a contract (the person, or the chosen legal entity of that customer),
+    /// so an editable version can be refilled from the customer record. Null when the customer is gone or locked.
+    /// </summary>
+    public async Task<CustomerLookupResult?> CustomerProfileFor(long customerId, long? businessId, CancellationToken ct)
+    {
+        var customer = await db.Customers.AsNoTracking().SingleOrDefaultAsync(c => c.CustomerId == customerId && c.CustomerStatus == 1, ct);
+        if (customer is null) return null;
+        if (businessId is null) return new CustomerLookupResult(CustomerProfile(customer), null, null);
+        var business = await db.CustomerBusinesses.AsNoTracking().SingleOrDefaultAsync(b => b.CustomerBusinessId == businessId && b.CustomerId == customerId, ct);
+        return business is null ? new CustomerLookupResult(CustomerProfile(customer), null, null) : BusinessProfile(customer, business);
     }
 
     public async Task<CustomerOption?> Customer(long id, CancellationToken ct)
@@ -441,8 +456,8 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!;
         if (!v.ContractVersionIslocked) DraftValidation.Recheck(content);
         var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone);
-        var internallyApproved = await db.ContractApprovalRequests.AnyAsync(a => a.ContractDocumentId == id && a.ContractVersionId == v.ContractVersionId && a.InternalStage == "APPROVED", ct);
-        var blocked = !internallyApproved ? "Cần Hành chính và Sếp duyệt trước khi gửi khách." : ContractReviewPolicy.CanSend(d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? ContractDocumentStatus.Draft : d.ContractDocumentStatus, latest, d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? false : v.ContractVersionIslocked, content.MissingFields.Count)
+        var internallyApproved = await db.ContractApprovalRequests.AnyAsync(a => a.ContractDocumentId == id && a.ContractVersionId == v.ContractVersionId && (a.InternalStage == "APPROVED" || a.InternalStage == "DIRECTOR"), ct);
+        var blocked = !internallyApproved ? "Cần Hành chính duyệt trước khi gửi khách." : ContractReviewPolicy.CanSend(d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? ContractDocumentStatus.Draft : d.ContractDocumentStatus, latest, d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? false : v.ContractVersionIslocked, content.MissingFields.Count)
             ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null)
             ?? (ReviewLink.ContactEmail(content.Fields, customer.CustomerEmail) is null ? "Nhập email khách hàng trong hợp đồng để gửi link xem." : null);
         var carried = await (from comment in db.ContractNegotiationComments.AsNoTracking()

@@ -19,7 +19,7 @@ export function wordBlob(base64: string, type: string) {
   return new Blob([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], { type });
 }
 const documentTypes = ["Hợp đồng", "Phụ lục", "Biên bản bàn giao", "Biên lai", "Đề nghị thanh toán"];
-export default function TemplateUpload({ onImported, disabled, draft, locate, inline }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string} }) {
+export default function TemplateUpload({ onImported, disabled, draft, locate, inline }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; saved?:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string} }) {
   const endpoint = draft ? `/contract-drafts/${draft.id}/word` : inline ? `/contract-drafts/from-template/${inline.templateId}/word` : "/contract-templates/word";
   const [mobile, setMobile] = useState(false);
   const [tab, setTab] = useState("edit");
@@ -69,10 +69,13 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
   useEffect(() => () => { revision.current++; }, []);
   const syncedCustomer = useRef<{ extraction: Extraction; values: Map<string, string> } | null>(null);
   useEffect(() => {
-    if (!inline || inline.readOnly || draft || !inline.content.customerId || !extraction) return;
+    if (!inline || inline.readOnly || !inline.content.customerId || !extraction) return;
     const values = wordCustomerValues(extraction.blocks, inline.content.fields, inline.content.partyType);
-    const previous = syncedCustomer.current;
-    const changed = new Map([...values].filter(([id, value]) => previous?.extraction !== extraction || previous.values.get(id) !== value));
+    // A new draft takes Bên A from the chosen customer. A saved draft keeps its Word text as stored: only Bên A values
+    // that differ from what was saved (customer details refilled after opening it) are written into the Word content.
+    const previous = syncedCustomer.current?.extraction === extraction ? syncedCustomer.current.values
+      : draft && inline.saved ? wordCustomerValues(extraction.blocks, inline.saved.fields, inline.saved.partyType) : null;
+    const changed = new Map([...values].filter(([id, value]) => previous?.get(id) !== value));
     syncedCustomer.current = { extraction, values };
     if (!changed.size) return;
     setBlocks(current => current.map(block => changed.has(block.id) ? { ...block, text: changed.get(block.id)! } : block));
@@ -276,13 +279,13 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
       <DialogContent className={styles.dialog} style={{width:"98vw",maxWidth:"98vw",height:"96dvh",display:"flex",overflow:"hidden"}} onInteractOutside={e => e.preventDefault()}>
         <DialogHeader><DialogTitle>Soạn mẫu Word</DialogTitle><DialogDescription>Bên trái sửa nội dung trực tiếp, thêm điều khoản, bảng và ảnh. Bên phải xem bản in giữ bố cục của file Word.</DialogDescription></DialogHeader>
         <fieldset disabled={busy} className={styles.metadata} hidden={!!draft}>
-          <label>File Word<Input type="file" accept=".doc,.docx" onChange={e => void extract(e.target.files?.[0])}/></label>
-          <label>Tên mẫu<Input value={name} maxLength={500} onChange={e => {setName(e.target.value); invalidate();}}/></label>
-          <label>Loại mẫu<select className={styles.select} value={documentType} onChange={e => {setDocumentType(Number(e.target.value)); invalidate();}}>
+          <label><span>File Word (.doc, .docx, tối đa 10 MB)<span className={styles.required} aria-hidden>*</span></span><Input type="file" accept=".doc,.docx" onChange={e => void extract(e.target.files?.[0])}/></label>
+          <label><span>Tên mẫu<span className={styles.required} aria-hidden>*</span></span><Input value={name} maxLength={500} placeholder="Ví dụ: Hợp đồng cung cấp phần mềm 2026" onChange={e => {setName(e.target.value); invalidate();}}/></label>
+          <label><span>Loại mẫu<span className={styles.required} aria-hidden>*</span></span><select className={styles.select} value={documentType} onChange={e => {setDocumentType(Number(e.target.value)); invalidate();}}>
             {documentTypes.map((label,index) => <option value={index+1} key={label}>{label}</option>)}
           </select></label>
         </fieldset>
-        {!draft && documentType === 1 && <details><summary>Điều khoản cần rà soát · {checklistConfirmed ? "Đã chọn" : "Cần xác nhận"}</summary>
+        {!draft && documentType === 1 && <details className={styles.checklist} data-done={checklistConfirmed}><summary>Điều khoản cần rà soát · {checklistConfirmed ? "Đã xác nhận" : "Cần xác nhận trước khi kích hoạt"}</summary>
           <fieldset disabled={busy} style={{display:"flex",flexWrap:"wrap",gap:12}}>{checklistOptions.map(rule=><label key={rule.key}><input type="checkbox" checked={checklistRules.includes(rule.key)} onChange={e=>{setChecklistRules(old=>e.target.checked?[...old,rule.key]:old.filter(key=>key!==rule.key));setChecklistConfirmed(false);invalidate();}}/> {rule.label}</label>)}</fieldset>
           <label><input type="checkbox" disabled={busy || checklistOptions.length===0} checked={checklistConfirmed} onChange={e=>{setChecklistConfirmed(e.target.checked);invalidate();}}/> Xác nhận lựa chọn (có thể bỏ chọn tất cả nếu không áp dụng)</label>
         </details>}

@@ -382,7 +382,8 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             entry.SlidingExpiration = TimeSpan.FromHours(1);
             return InternalWordDocument.Blocks(bytes).SelectMany(b => Placeholder.Matches(b.Text).Select(m => m.Groups[1].Value)).ToHashSet();
         })!;
-        var signature = template.ManualWordContent + "|" + string.Join("\u0001", used.Order().Select(k => k + "\u0002" + values.GetValueOrDefault(k)));
+        // The contract number is also stamped on the "Số: …" line without a placeholder, so it always belongs to the signature.
+        var signature = template.ManualWordContent + "|" + string.Join("\u0001", used.Append("CONTRACT_NUMBER").Distinct().Order().Select(k => k + "\u0002" + values.GetValueOrDefault(k)));
         var lastKey = "word-pdf-last:" + template.WordSha256;
         if (cache.TryGetValue(lastKey, out (string Signature, byte[] Pdf) last) && last.Signature == signature) return last.Pdf;
         var result = await word.Pdf(filled, ct);

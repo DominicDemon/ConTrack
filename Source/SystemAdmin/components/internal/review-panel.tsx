@@ -24,6 +24,8 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [versions, setVersions] = useState<DraftVersionHistoryItem[]>([]);
   const [approval, setApproval] = useState<InternalApprovalState | null>(null);
+  /** Hành chính's approval before sending (the Duyệt nội bộ panel): DRAFT, OFFICE, RETURNED, APPROVED or CUSTOMER_*. */
+  const [preSend, setPreSend] = useState<{ stage: string } | null>(null);
   const [signingProgress, setSigningProgress] = useState<SigningMonitorDetail | null>(null);
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [confirm, setConfirm] = useState<Confirm | null>(null); const [note, setNote] = useState(""); const [busy, setBusy] = useState(false); const [expiry, setExpiry] = useState("");
@@ -32,29 +34,30 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
   const [signerTitle, setSignerTitle] = useState(record.content.fields.PROVIDER_REPRESENTATIVE_TITLE ?? "");
   const [signerPhone, setSignerPhone] = useState(record.content.fields.PROVIDER_PHONE ?? "");
   const fetchWorkflow = useCallback(async () => {
-    const [reviewRows, approvalState, versionRows] = await Promise.all([
+    const [reviewRows, approvalState, versionRows, preSendState] = await Promise.all([
       internalApi<ReviewSummary[]>(`/contract-drafts/${record.id}/reviews`),
       internalApi<InternalApprovalState | null>(`/contract-drafts/${record.id}/internal-approval`),
       internalApi<DraftVersionHistoryItem[]>(`/contract-drafts/${record.id}/versions`),
+      internalApi<{ stage: string }>(`/contract-drafts/${record.id}/approval`),
     ]);
     let signingState: SigningMonitorDetail | null = null;
     if (approvalState?.signingStarted && user.canManageAll) {
       try { signingState = await internalApi<SigningMonitorDetail>(`/contract-signing-monitor/${record.id}`); }
       catch { signingState = null; }
     }
-    return { reviewRows, approvalState, signingState, versionRows };
+    return { reviewRows, approvalState, signingState, versionRows, preSendState };
   }, [record.id, user.canManageAll]);
   const load = useCallback(async () => {
     try {
       const state = await fetchWorkflow();
-      setReviews(state.reviewRows); setApproval(state.approvalState); setSigningProgress(state.signingState); setVersions(state.versionRows);
+      setReviews(state.reviewRows); setApproval(state.approvalState); setSigningProgress(state.signingState); setVersions(state.versionRows); setPreSend(state.preSendState);
     } catch (e) { setError((e as Error).message); }
   }, [fetchWorkflow]);
   useEffect(() => {
     let active = true;
     void fetchWorkflow().then(state => {
       if (!active) return;
-      setReviews(state.reviewRows); setApproval(state.approvalState); setSigningProgress(state.signingState); setVersions(state.versionRows); setError("");
+      setReviews(state.reviewRows); setApproval(state.approvalState); setSigningProgress(state.signingState); setVersions(state.versionRows); setPreSend(state.preSendState); setError("");
     }).catch(e => { if (active) setError((e as Error).message); });
     return () => { active = false; };
   }, [fetchWorkflow, record.rowVersion]);
@@ -63,10 +66,20 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
   const canCreateVersion = (record.canEdit && !["SENT", "VIEWED"].includes(latest?.status ?? ""))
     || (record.status === 1 && record.locked && (latest?.status === "CHANGES_REQUESTED" || (latest?.status === "REJECTED" && latest.followupDecision === "NEGOTIATE")));
   const awaitingDecision = record.status === 7 && latest?.status === "REJECTED" && !latest.followupDecision;
+  // Flow: Sale trình → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → Sếp ký (Sếp does not approve).
   const awaitingInternalApproval = record.status === 2 && approval?.status === 0;
+  const canDecideFinal = awaitingInternalApproval && user.canCheck;
+  const preSendStage = preSend?.stage ?? "DRAFT";
+  const officeApproved = preSendStage === "APPROVED" || preSendStage.startsWith("CUSTOMER_");
+  /** "Gửi khách xem" appears only once Hành chính has approved this version; before that a status line explains why. */
+  const sendWaiting = canSendToCustomer && !officeApproved
+    ? preSendStage === "OFFICE" ? "Đang chờ Hành chính duyệt. Hành chính duyệt xong mới gửi khách được."
+      : preSendStage === "RETURNED" ? "Hành chính đã trả lại để chỉnh sửa. Sửa theo nhận xét rồi Trình Hành chính lại."
+      : "Chưa trình Hành chính. Bấm Trình Hành chính ở khung Duyệt nội bộ; Hành chính duyệt xong mới gửi khách được."
+    : null;
   /** A business signs the printed contract and stamps its red seal; a person signs electronically. */
   const business = record.content.partyType === "BUSINESS";
-  const canStartSigning = !business && user.canManageAll && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
+  const canStartSigning = !business && user.canApprove && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
   const canPrint = business && record.status === 3 && approval?.status === 1;
   const customerApproved = latest?.status === "APPROVED";
   const signingComplete = record.status === 4 || record.status === 5;
@@ -74,12 +87,13 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
   const customerSigned = signingProgress?.signers.some(signer => signer.party === "Khách hàng" && signer.status === 1) ?? signingComplete;
   const workflowSteps = [
     { title: "Hoàn thiện bản nháp", detail: record.status === 0 ? (record.sendBlockedReason ?? "Điền đủ nội dung, thông tin khách hàng và điều khoản.") : "Phiên bản hợp đồng đã được lưu.", done: record.status !== 0, current: record.status === 0 },
+    { title: "Hành chính duyệt trước khi gửi", detail: officeApproved ? "Hành chính đã duyệt, Sale gửi khách được." : preSendStage === "OFFICE" ? "Đang chờ Hành chính duyệt." : preSendStage === "RETURNED" ? "Hành chính trả lại, Sale chỉnh sửa rồi trình lại." : "Sale bấm Trình Hành chính ở khung Duyệt nội bộ.", done: officeApproved, current: preSendStage === "OFFICE" || preSendStage === "RETURNED" },
     { title: "Khách hàng duyệt nội dung", detail: customerApproved ? "Khách hàng đã đồng ý phiên bản này." : latest && ["SENT", "VIEWED"].includes(latest.status) ? "Đang chờ khách xem và phản hồi." : "Gửi phiên bản đã hoàn thiện để khách xác nhận nội dung.", done: customerApproved, current: !customerApproved && record.status === 1 },
-    { title: "Quản lý duyệt bản chốt", detail: approval?.status === 1 ? "Đã được quản lý phê duyệt." : awaitingInternalApproval ? "Đang chờ quản lý công ty duyệt." : "Chỉ mở sau khi khách hàng đồng ý.", done: approval?.status === 1, current: awaitingInternalApproval },
+    { title: "Hành chính duyệt bản chốt", detail: approval?.status === 1 ? "Hành chính đã duyệt bản khách đồng ý." : awaitingInternalApproval ? "Đang chờ Hành chính duyệt bản khách đã đồng ý." : "Chỉ mở sau khi khách hàng đồng ý.", done: approval?.status === 1, current: awaitingInternalApproval },
     ...business ? [
-      { title: "In, ký và đóng dấu đỏ", detail: signingComplete ? "Hai bên đã ký giấy." : approval?.status === 1 ? "In hợp đồng; đại diện hai bên ký, doanh nghiệp đóng dấu đỏ." : "Sau khi quản lý duyệt, in hợp đồng để ký giấy.", done: signingComplete, current: record.status === 3 },
+      { title: "In, ký và đóng dấu đỏ", detail: signingComplete ? "Hai bên đã ký giấy." : approval?.status === 1 ? "In hợp đồng; đại diện hai bên ký, doanh nghiệp đóng dấu đỏ." : "Sau khi Hành chính duyệt bản chốt, in hợp đồng để Sếp ký và khách đóng dấu.", done: signingComplete, current: record.status === 3 },
       { title: "Lưu bản ký giấy", detail: signingComplete ? "Bản scan đã được xác nhận, hồ sơ đã ký." : "Scan bản đã đóng dấu, tải lên màn Bản ký giấy và xác nhận.", done: signingComplete, current: false },
-    ] : [{ title: "Công ty ký trước", detail: companySigned ? "Đại diện công ty đã ký." : approval?.signingStarted ? "Đang chờ đại diện công ty ký trong hàng đợi." : "Sau khi duyệt, tạo phiên ký và ký với tư cách công ty.", done: companySigned, current: record.status === 3 && !companySigned },
+    ] : [{ title: "Sếp ký cho công ty", detail: companySigned ? "Sếp đã ký." : approval?.signingStarted ? "Đang chờ Sếp ký trong hàng đợi Ký phía công ty." : "Sau khi Hành chính duyệt bản chốt, Sếp tạo phiên ký và ký.", done: companySigned, current: record.status === 3 && !companySigned },
     { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned }],
   ];
 
@@ -123,10 +137,10 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     run: n => internalApi(`/contract-reviews/${latest.id}/followup`, "POST", { decision, note: n || null, rowVersion: latest.rowVersion }) });
 
   const decideApproval = (approve: boolean) => ask({
-    title: approve ? "Phê duyệt hợp đồng" : "Từ chối phê duyệt",
-    action: approve ? "Duyệt, chuyển sang ký" : "Từ chối phê duyệt",
+    title: approve ? "Hành chính duyệt bản chốt" : "Từ chối bản chốt",
+    action: approve ? "Duyệt, chuyển Sếp ký" : "Từ chối bản chốt",
     description: approve
-      ? `Xác nhận đã kiểm tra hợp đồng ${record.code}, phiên bản ${record.versionNo}. Hồ sơ sẽ chuyển sang bước ký.`
+      ? `Xác nhận đã kiểm tra bản khách đồng ý của hợp đồng ${record.code}, phiên bản ${record.versionNo}. Hồ sơ chuyển sang chờ Sếp ký.`
       : "Ghi rõ lý do để lưu vào nhật ký hồ sơ.",
     note: approve
       ? { label: "Ghi chú kiểm tra (tùy chọn)", max: 2000 }
@@ -157,7 +171,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
   }
   return <section className={ui.card} style={{ margin: "0 0 16px" }} aria-label="Gửi khách xem">
     <div className={s.workflowGuide} aria-label="Các bước ký hợp đồng">
-      <div className={s.workflowGuideHeader}><div><strong>Quy trình ký hợp đồng</strong><p>{business ? "Khách hàng doanh nghiệp: khách duyệt nội dung → quản lý duyệt bản chốt → in hợp đồng, ký và đóng dấu đỏ → tải bản scan lên." : "Khách hàng cá nhân: khách duyệt nội dung → quản lý duyệt bản chốt → công ty ký trước → khách hàng ký sau."}</p></div>{approval?.signingStarted && !signingComplete && <Link className={ui.secondaryButton} href="/workspace/contracts/company-signing">Mở hàng đợi ký công ty</Link>}</div>
+      <div className={s.workflowGuideHeader}><div><strong>Quy trình ký hợp đồng</strong><p>{business ? "Khách hàng doanh nghiệp: Sale trình → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → in hợp đồng, Sếp ký và doanh nghiệp đóng dấu đỏ → tải bản scan lên." : "Khách hàng cá nhân: Sale trình → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → Sếp ký → khách hàng ký."}</p></div>{approval?.signingStarted && !signingComplete && <Link className={ui.secondaryButton} href="/workspace/contracts/company-signing">Mở hàng đợi ký công ty</Link>}</div>
       <ol className={s.workflowSteps}>{workflowSteps.map((step, index) => <li key={step.title} className={`${s.workflowStep} ${step.done ? s.workflowStepDone : step.current ? s.workflowStepCurrent : ""}`}>
         <span className={s.workflowStepNumber}>{step.done ? <Check size={14}/> : index + 1}</span><div><strong>{step.title}</strong><p>{step.detail}</p></div>
       </li>)}</ol>
@@ -171,14 +185,16 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <button className={ui.secondaryButton} disabled={busy || dirty} title={dirty ? "Lưu nháp trước khi tải lại trạng thái" : "Tải trạng thái khách hàng và phê duyệt mới nhất"} onClick={() => void refreshWorkflow()}><RefreshCw size={15}/>Làm mới trạng thái</button>
-        {user.canWrite && canSendToCustomer && <button type="button" className={ui.primaryButton} disabled={busy || dirty || !!record.sendBlockedReason}
+        {user.canWrite && canSendToCustomer && officeApproved && <button type="button" className={ui.primaryButton} disabled={busy || dirty || !!record.sendBlockedReason}
           aria-describedby="review-send-guidance" title={dirty ? "Lưu nháp trước khi gửi" : record.sendBlockedReason || undefined} onClick={send}><Send size={16}/>Gửi khách xem</button>}
-        {user.canWrite && canCreateVersion && <button className={ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới để chỉnh sửa</button>}
+        {(user.canWrite || user.canCheck) && canCreateVersion && <button className={latest?.status === "CHANGES_REQUESTED" ? ui.primaryButton : ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới để chỉnh sửa</button>}
         {user.canWrite && awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
           <button className={ui.secondaryButton} disabled={busy} onClick={() => followup("CLOSE")}><XCircle size={16}/>Đóng draft</button></>}
         {user.canWrite && (latest?.status === "SENT" || latest?.status === "VIEWED") && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
-        {user.canApprove && awaitingInternalApproval && <>
-          <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>Duyệt, chuyển sang ký</button>
+        {user.canWrite && (latest?.status === "SENT" || latest?.status === "VIEWED") && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách không kịp nhập mã, nhập sai quá nhiều lần hoặc bị khóa đăng nhập"
+          onClick={() => void act(() => internalApi(`/contract-reviews/${latest.id}/resend-otp`, "POST"), `Đã gửi mã OTP mới tới ${record.customerPhoneMasked} và mở khóa cho khách. Khách mở link trong email, chọn “Đã có mã” và nhập mã (hiệu lực 5 phút).`)}><KeyRound size={16}/>Gửi lại mã OTP</button>}
+        {canDecideFinal && <>
+          <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>Duyệt, chuyển Sếp ký</button>
           <button className={ui.secondaryButton} disabled={busy || dirty} onClick={() => decideApproval(false)}><XCircle size={16}/>Từ chối</button>
         </>}
         {canStartSigning && <button className={ui.primaryButton} disabled={busy || dirty || signerName.trim().length < 2 || !signerPhone.trim()} onClick={() => void startSigning()}>
@@ -191,11 +207,12 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       </div>
     </div>
     {user.canWrite && canSendToCustomer && <div id="review-send-guidance" className={s.muted} style={{ marginTop: 8 }} aria-live="polite">
-      {dirty ? <p>Lưu nháp để cập nhật thông tin và kiểm tra điều kiện gửi khách.</p> : record.sendBlockedReason ? <>
+      {sendWaiting ? <p role="status" className={ui.notice}>{sendWaiting}</p> : dirty ? <p>Lưu nháp để cập nhật thông tin và kiểm tra điều kiện gửi khách.</p> : record.sendBlockedReason ? <>
         <p>Chưa thể gửi khách: {record.sendBlockedReason}</p>
         {!!record.content.missingFields.length && <p>Cần bổ sung: {record.content.missingFields.join(", ")}.</p>}
       </> : <p>Nháp đã đủ thông tin. Bạn có thể gửi phiên bản này cho khách xem và phản hồi.</p>}
     </div>}
+    {latest?.status === "CHANGES_REQUESTED" && record.locked && (user.canWrite || user.canCheck) && <p role="status" className={ui.notice} style={{ marginTop: 8 }}>Khách đã góp ý và yêu cầu sửa. Sale hoặc Hành chính bấm <strong>Tạo phiên bản mới để chỉnh sửa</strong>, sửa nội dung theo các góp ý bên dưới, rồi Trình Hành chính và gửi lại khách.</p>}
     {(record.issues ?? []).some(i => i.path.startsWith("milestones")) && <button type="button" className={ui.secondaryButton} onClick={() => focusIssue("milestones")}>Đi tới lịch thanh toán</button>}
     {(record.carriedComments?.length ?? 0) > 0 && <section className={ui.notice}><strong>Góp ý chuyển tiếp sang phiên bản này</strong>{record.carriedComments?.map(c => <div key={c.id}><p>{c.content} · chuyển từ bản trước · {c.resolved ? "Đã xử lý" : "Chưa xử lý"}</p>{!c.resolved && <button type="button" disabled={busy} className={ui.secondaryButton} onClick={() => void act(async () => { await internalApi(`/contract-comments/${c.id}/resolve`,"POST"); onChanged(); })}>Đánh dấu đã xử lý</button>}</div>)}</section>}
     {latest && <div className={s.customerPortalAccess}>
@@ -207,7 +224,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
     {notice && <p role="status" className={ui.notice} style={{ marginTop: 10 }}>{notice}</p>}
     {approval && <div className={ui.notice} style={{ marginTop: 10 }}>
       <strong>{approval.workflowName}:</strong>{" "}
-      {approval.status === 0 ? "Đang chờ công ty kiểm tra" : approval.status === 1 ? "Đã duyệt, hồ sơ chuyển sang bước ký" : "Đã từ chối phê duyệt"}
+      {approval.status === 0 ? "Đang chờ Hành chính duyệt bản khách đã đồng ý" : approval.status === 1 ? "Hành chính đã duyệt, hồ sơ chờ Sếp ký" : "Đã từ chối phê duyệt"}
       {approval.comment && <span> · {approval.comment}</span>}
     </div>}
     {canStartSigning && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 12 }}>

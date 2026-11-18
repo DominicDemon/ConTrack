@@ -21,17 +21,45 @@ public sealed class ReviewLinkOtp(IMemoryCache cache, ISmsSender sms, IOptions<E
     public async Task Issue(ReviewLinkAccess link, string? phone, CancellationToken ct)
     {
         var failures = cache.GetOrCreate($"otp-phone-fail:{link.ReviewId}", e => { e.AbsoluteExpirationRelativeToNow = PhoneLock; return new Counter(); })!;
-        if (Volatile.Read(ref failures.Value) >= MaxPhoneFailures) throw new InternalAppException(429, "Nhập sai số điện thoại quá nhiều lần. Thử lại sau 15 phút.");
+        if (Volatile.Read(ref failures.Value) >= MaxPhoneFailures) throw new InternalAppException(429, "Nhập sai số điện thoại quá nhiều lần. Thử lại sau 15 phút hoặc liên hệ nhân viên phụ trách để được gửi mã.");
         if (PhoneNumber.Normalize(phone) != link.Phone)
         {
             Interlocked.Increment(ref failures.Value);
             throw new InternalAppException(422, "Số điện thoại không khớp với số trong hợp đồng.");
         }
+        CheckCooldown(link.ReviewId);
+        var sends = cache.GetOrCreate($"otp-sends:{link.ReviewId}", e => { e.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1); return new Counter(); })!;
+        if (Interlocked.Increment(ref sends.Value) > MaxSendsPerHour) throw new InternalAppException(429, "Đã gửi mã quá nhiều lần. Liên hệ nhân viên phụ trách để được gửi lại mã.");
+        await Send(link, ct);
+    }
+
+    /// <summary>
+    /// The sale resends the code to the phone in the contract: the customer's locks for this review (wrong phone, too many sends,
+    /// too many wrong codes) and the password-login lock of that phone are lifted, so the customer is never stuck waiting.
+    /// </summary>
+    public async Task ResendByEmployee(ReviewLinkAccess link, CancellationToken ct)
+    {
+        CheckCooldown(link.ReviewId);
+        cache.Remove($"otp-phone-fail:{link.ReviewId}");
+        cache.Remove($"otp-sends:{link.ReviewId}");
+        cache.Remove(LoginFailureKey(link.Phone));
+        await Send(link, ct);
+    }
+
+    /// <summary>Wrong-password counter of the portal login (CustomerPortalEndpoints), keyed by normalized phone.</summary>
+    public static string LoginFailureKey(string phone) => "customer-login-fail:" + phone;
+
+    // Also stops a double click (customer or sale) from sending two SMS.
+    private void CheckCooldown(long reviewId)
+    {
+        if (cache.TryGetValue(Key(reviewId), out Challenge? previous) && DateTime.UtcNow - previous!.SentAt < Cooldown)
+            throw new InternalAppException(429, "Mã vừa được gửi. Vui lòng chờ 60 giây rồi gửi lại.");
+    }
+
+    private async Task Send(ReviewLinkAccess link, CancellationToken ct)
+    {
         var key = Key(link.ReviewId);
         var now = DateTime.UtcNow;
-        if (cache.TryGetValue(key, out Challenge? previous) && now - previous!.SentAt < Cooldown) throw new InternalAppException(429, "Vui lòng chờ 60 giây rồi gửi lại mã.");
-        var sends = cache.GetOrCreate($"otp-sends:{link.ReviewId}", e => { e.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1); return new Counter(); })!;
-        if (Interlocked.Increment(ref sends.Value) > MaxSendsPerHour) throw new InternalAppException(429, "Đã gửi mã quá nhiều lần. Thử lại sau 1 giờ.");
         var code = RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
         cache.Set(key, new Challenge(Hash(link.ReviewId, code), now), Lifetime);
         if (environment.IsDevelopment() && config.GetValue<bool>("CustomerPortal:ConsoleDelivery"))
@@ -52,7 +80,7 @@ public sealed class ReviewLinkOtp(IMemoryCache cache, ISmsSender sms, IOptions<E
         if (!cache.TryGetValue(key, out Challenge? challenge)) throw new InternalAppException(422, "Mã đã hết hạn. Hãy gửi lại mã mới.");
         var attempts = Interlocked.Increment(ref challenge!.Attempts);
         if (attempts <= MaxAttempts && code is { Length: 6 } && CryptographicOperations.FixedTimeEquals(challenge.Hash, Hash(reviewId, code))) { cache.Remove(key); return; }
-        if (attempts >= MaxAttempts) { cache.Remove(key); throw new InternalAppException(429, "Nhập sai quá nhiều lần. Hãy gửi lại mã mới."); }
+        if (attempts >= MaxAttempts) { cache.Remove(key); throw new InternalAppException(429, "Nhập sai quá nhiều lần. Hãy gửi lại mã mới hoặc nhờ nhân viên phụ trách gửi mã."); }
         throw new InternalAppException(422, $"Mã không đúng. Còn {MaxAttempts - attempts} lần thử.");
     }
 

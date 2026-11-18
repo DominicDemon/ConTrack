@@ -2,12 +2,13 @@
 import { isGroupedWordSection, wordDisplaySections } from "../../../Shared/word-display-sections";
 import { draftIssues, focusIssue } from "../../../Shared/draft-validation";
 import { PartyEditor, PaymentEditor } from "./draft-details";
+import { keepInView } from "./word-clause-form";
 
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, GripVertical, ListChecks, Plus, Save, Send, Trash2, Users, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, GripVertical, ListChecks, Plus, RefreshCw, Save, Send, Trash2, Users, Wallet } from "lucide-react";
 import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import DraftPreview from "./draft-preview";
@@ -32,6 +33,9 @@ export default function DraftEditor({ id }: { id?: string }) {
   const [customerSearch, setCustomerSearch] = useState(""); const [searching, setSearching] = useState(false); const [lookupError, setLookupError] = useState(""); const [loadAttempt, setLoadAttempt] = useState(0);
   const [locate, setLocate] = useState<{location:string|null;request:number}|null>(null);
   const [wordInfo, setWordInfo] = useState("");
+  /** Result of refilling Bên A from the customer record (shown in the Bên A section). */
+  const [customerNotice, setCustomerNotice] = useState("");
+  const refilled = useRef("");
   const receipt = useRef<string|null|undefined>(undefined);
   const [previewHost,setPreviewHost] = useState<HTMLDivElement|null>(null);
   const wordReadVersion = useRef(0);
@@ -93,6 +97,32 @@ export default function DraftEditor({ id }: { id?: string }) {
     setLookupError("");
     setSearching(false);
   }
+  /**
+   * Bên A of a saved, editable version refilled from the customer record (the person or the legal entity of the draft).
+   * A new version copies Bên A from the previous one, which may be outdated or wrongly read from the Word file.
+   */
+  async function refillCustomer(auto: boolean) {
+    if (!content.customerId) return;
+    try {
+      const profile = await internalApi<CustomerLookupResult>(`/customers/${encodeURIComponent(content.customerId)}/profile`
+        + (content.customerBusinessId ? `?businessId=${encodeURIComponent(content.customerBusinessId)}` : ""));
+      if (!Object.entries(profile.customer.fields).some(([key, value]) => (content.fields[key] ?? "") !== (value ?? ""))) {
+        if (!auto) setCustomerNotice("Thông tin Bên A đã khớp với hồ sơ khách hàng.");
+        return;
+      }
+      selectCustomer(profile.customer, profile.businessId);
+      setCustomerNotice((auto ? "Đã điền lại" : "Đã lấy lại") + " thông tin Bên A theo hồ sơ khách hàng (cả trong nội dung Word). Kiểm tra rồi bấm Lưu nháp.");
+    } catch (e) { if (!auto) setCustomerNotice("Chưa lấy được thông tin khách hàng: " + (e as Error).message); }
+  }
+  // Opening an editable version (e.g. the one created after the customer asked for changes) refills Bên A once.
+  useEffect(() => {
+    if (!record?.canEdit || !(user.canWrite || user.canCheck) || dirtyRef.current) return;
+    const key = `${record.id}:${record.versionNo}`;
+    if (refilled.current === key) return;
+    refilled.current = key;
+    void refillCustomer(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [record]);
   async function selectWordTemplate(t: TemplateDefinition) {
     receipt.current = undefined;
     const version = ++wordReadVersion.current;
@@ -139,7 +169,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   }
   async function reload() { if (dirty && !window.confirm("Tải lại sẽ bỏ nội dung chưa lưu của bạn. Tiếp tục?")) return; retryLoad(v => v + 1); setConflict(false); }
   function editItem(index: number, patch: Partial<DraftItem>) { change(c => ({ ...c, items: c.items.map((item, i) => i === index ? { ...item, ...patch } : item) })); }
-  function moveTerm(index: number, offset: number) { change(c => { const terms = [...c.terms]; [terms[index], terms[index + offset]] = [terms[index + offset], terms[index]]; return { ...c, terms }; }); }
+  function moveTerm(index: number, offset: number) { keepInView(`contract-term-${content.terms[index].key}`, offset < 0 ? `Đưa điều ${index + offset + 1} lên` : `Đưa điều ${index + offset + 1} xuống`); change(c => { const terms = [...c.terms]; [terms[index], terms[index + offset]] = [terms[index + offset], terms[index]]; return { ...c, terms }; }); }
   const readOnly = !user.canWrite && !user.canCheck || !!record && !record.canEdit;
   if (loading) return <div className={s.empty}>Đang chuẩn bị không gian soạn thảo…</div>;
   if (!template || (id && !record)) return <div className={s.empty}><p role="alert">{error || "Chưa có mẫu hợp đồng hoạt động. Liên hệ quản trị để khởi tạo mẫu."}</p><button className={ui.secondaryButton} onClick={() => retryLoad(v => v + 1)}>Thử lại</button><Link href="/workspace/contracts/drafts">Về danh sách nháp</Link></div>;
@@ -156,7 +186,7 @@ export default function DraftEditor({ id }: { id?: string }) {
         onChange={e => { const mode = e.target.value === "VI_EN" ? "VI_EN" : null; change(c => ({ ...c, languageMode: mode })); }}>
         <option value="VI">Tiếng Việt</option><option value="VI_EN">Song ngữ Anh – Việt (tiếng Anh trước, tiếng Việt in nghiêng)</option></select></Field>
       <Field label="Tên hợp đồng *"><input required maxLength={1000} className={ui.field} placeholder="Ví dụ: Hợp đồng cung cấp phần mềm…" value={content.name} onChange={e => change(c => ({ ...c, name: e.target.value }))}/></Field>
-      <Field label="Số hợp đồng"><p>{content.contractNumber || record?.code || "Cấp khi lưu hợp đồng mới"}</p></Field>
+      <Field label="Số hợp đồng"><p>{content.contractNumber || record?.code || "Cấp khi lưu hợp đồng mới"}</p>{template.wordStorageKey && <span className={s.muted} style={{ fontWeight: 400 }}>Hệ thống tự sinh và tự điền vào dòng “Số: …” đầu văn bản; không cần nhập tay.</span>}</Field>
       <Field label="Phương thức thanh toán"><select className={ui.field} value={content.paymentMethod ?? ""} onChange={e => change(c => ({ ...c, paymentMethod: (e.target.value || null) as DraftContent["paymentMethod"] }))}>
         <option value="">Chọn phương thức</option>
         <option value="BANK_TRANSFER">Chuyển khoản</option>
@@ -187,6 +217,8 @@ export default function DraftEditor({ id }: { id?: string }) {
         <button type="button" className={ui.secondaryButton} onClick={() => setCustomerForm(customerForm ? null : newCustomer())}><Plus size={16}/>{customerForm ? "Đóng tạo khách hàng" : "Tạo nhanh khách hàng"}</button>
         {customerForm && <div className={s.lineItem}><strong style={{ fontSize: 14 }}>Khách hàng mới</strong>{([["name", "Tên hiển thị *"], ["phone", "Số điện thoại *"], ["email", "Email"], ["company", "Tên doanh nghiệp (nếu có)"], ["taxCode", "Mã số thuế doanh nghiệp"], ["address", "Địa chỉ"]] as const).map(([key, label]) => <Field key={key} label={label}><input className={ui.field} value={customerForm[key]} onChange={e => setCustomerForm({ ...customerForm, [key]: e.target.value })}/></Field>)}<button disabled={customerBusy} type="button" className={ui.primaryButton} onClick={createCustomer}>{customerBusy ? "Đang tạo…" : "Tạo và chọn khách hàng"}</button></div>}
       </>}
+      {id && record?.canEdit && !!content.customerId && <button type="button" className={ui.secondaryButton} onClick={() => void refillCustomer(false)}><RefreshCw size={16}/>Lấy lại thông tin khách hàng</button>}
+      {customerNotice && <p role="status" className={ui.notice}>{customerNotice}</p>}
       <PartyEditor content={content} change={change}/>{template.fields.filter(f => f.key.startsWith("CUSTOMER_")).map(partyField)}
     </div></section>
     {!template.wordStorageKey && <section id="provider-fields" tabIndex={-1} className={s.section}><h2><Building2/>Công ty mình · Bên B</h2><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></section>}
@@ -202,7 +234,7 @@ export default function DraftEditor({ id }: { id?: string }) {
     </section>
     <section id="contract-terms" tabIndex={-1} className={s.section}><h2><ListChecks/>{showWordSections ? "Nội dung hợp đồng" : "Điều khoản hợp đồng"}</h2>
       {template.wordStorageKey && <TemplateUpload key={String(template.id) + ":" + template.wordStorageKey} draft={record ?? undefined} locate={locate} onImported={() => {}}
-        inline={{readOnly:!inlineWord,content,templateId:String(template.id),previewHost,receipt,changed:() => {setDirty(true); dirtyRef.current=true;setSuccess("");}}}/>}
+        inline={{readOnly:!inlineWord,content,saved:record?.content,templateId:String(template.id),previewHost,receipt,changed:() => {setDirty(true); dirtyRef.current=true;setSuccess("");}}}/>}
       <fieldset hidden={!!template.wordStorageKey} disabled={!canEditTerms || showWordSections} style={{border:0,padding:0}}>
       {!template.isImported && <Field label="Căn cứ hợp đồng"><textarea className={`${ui.field} ${s.termContent}`} maxLength={4000} value={content.fields.CONTRACT_LEGAL_BASES ?? ""} onChange={e => setField("CONTRACT_LEGAL_BASES", e.target.value)}/></Field>}
       <div style={{ marginTop: 18 }}>{showWordSections

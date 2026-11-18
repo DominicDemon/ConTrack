@@ -1,6 +1,6 @@
 "use client";
 import WordPdfViewer from "./word-pdf-viewer";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { internalApi, type DraftContent } from "@/services/internal-api";
 import { wordBlob } from "./template-upload";
@@ -33,6 +33,13 @@ export default function WordDraftPreview({ content, draftId, dirty = false, down
       }
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
+  // A saved contract opened to read (e.g. Hành chính checking what Sale submitted) shows its content right away.
+  const autoShown = useRef(false);
+  useEffect(() => {
+    if (!draftId || dirty || downloadOnly || autoShown.current) return;
+    autoShown.current = true; void render(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftId, dirty, downloadOnly]);
   return <div className="p-4 space-y-3">
     <div className="flex gap-2">{!downloadOnly && <Button type="button" disabled={busy || needsSave} onClick={() => void render(true)}>Xem trước Word</Button>}
       <Button type="button" variant="outline" disabled={busy || needsSave || (downloadOnly && dirty)} onClick={() => void render(false)}>Tải DOCX</Button></div>

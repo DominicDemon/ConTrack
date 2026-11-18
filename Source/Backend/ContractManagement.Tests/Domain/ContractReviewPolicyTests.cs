@@ -49,6 +49,9 @@ public class ContractReviewPolicyTests
         // Comments by section are the change request themselves; a rejection still needs its reason.
         Assert.Equal((S.ChangesRequested, D.Negotiating), ContractReviewPolicy.Respond(S.Sent, "REQUEST_CHANGES", null, hasComments: true));
         Assert.Throws<ArgumentException>(() => ContractReviewPolicy.Respond(S.Sent, "REJECT", null, hasComments: true));
+        // Agreeing after commenting on the same version is refused: the comments mean a change request.
+        Assert.Throws<ArgumentException>(() => ContractReviewPolicy.Respond(S.Sent, "APPROVE", null, hasComments: true));
+        Assert.Equal((S.Approved, D.PendingApproval), ContractReviewPolicy.Respond(S.Sent, "APPROVE", null, hasComments: false));
     }
 
     [Theory]

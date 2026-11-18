@@ -48,7 +48,8 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
             var doc = item.doc; var version = item.version;
             var approval = approvals.Where(x => x.ContractDocumentId == doc.ContractDocumentId && x.ContractVersionId == version.ContractVersionId).MaxBy(x => x.ContractApprovalRequestId);
             var review = reviews.Where(x => x.ContractVersionId == version.ContractVersionId).MaxBy(x => x.ContractReviewRequestId);
-            var stage = approval?.InternalStage ?? "DRAFT";
+            // The former Sếp turn before sending no longer exists: a request left there counts as approved.
+            var stage = approval?.InternalStage is "DIRECTOR" ? "APPROVED" : approval?.InternalStage ?? "DRAFT";
             var transition = events.Where(x => x.audit.EntityId == doc.ContractDocumentId.ToString()
                 && x.audit.NewData != null && JsonDocument.Parse(x.audit.NewData).RootElement.TryGetProperty("version", out var number) && number.GetInt64() == version.ContractVersionVersionNo).MaxBy(x => x.audit.AuditLogId);
             DateTime? entered = transition?.audit.CreatedAt;
@@ -56,12 +57,13 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
             if (stage == "DRAFT") entered = version.ContractVersionVersionNo > 1 || doc.ContractDocumentCode?.StartsWith("HD-") == true ? version.ContractVersionCreatedDate : null;
             if (review is not null && version.ContractVersionIslocked)
             {
-                stage = review.ContractReviewRequestStatus switch { "SENT" or "VIEWED" => "CUSTOMER", "CHANGES_REQUESTED" or "REJECTED" => "CHANGES", "APPROVED" => doc.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? "FINAL_CHECK" : "SIGNATURE", _ => stage };
+                stage = review.ContractReviewRequestStatus switch { "SENT" or "VIEWED" => "CUSTOMER", "CHANGES_REQUESTED" or "REJECTED" => "CHANGES", "APPROVED" => doc.ContractDocumentStatus == ContractDocumentStatus.PendingApproval
+                    ? "FINAL_CHECK" : "SIGNATURE", _ => stage };
                 entered = stage == "CUSTOMER" ? review.SentAt : review.RespondedAt;
             }
             if (doc.ContractDocumentStatus is 4 or 5 or 6) { stage = "CLOSED"; entered = null; }
-            var department = stage switch { "OFFICE" or "RETURNED" => "Hành chính", "DIRECTOR" or "FINAL_CHECK" => "Sếp", "CUSTOMER" => "Khách hàng", "SIGNATURE" => "Các bên ký", "CLOSED" => "Đã đóng", _ => "Sale" };
-            var mine = stage switch { "OFFICE" or "RETURNED" => actor.CanCheck, "DIRECTOR" or "FINAL_CHECK" => actor.CanApprove, "DRAFT" or "APPROVED" or "CHANGES" => actor.CanWrite && doc.EmployeeId == actor.Id, _ => false };
+            var department = stage switch { "OFFICE" or "FINAL_CHECK" => "Hành chính", "CUSTOMER" => "Khách hàng", "SIGNATURE" => "Sếp ký, rồi khách ký", "CLOSED" => "Đã đóng", _ => "Sale" };
+            var mine = stage switch { "OFFICE" or "FINAL_CHECK" => actor.CanCheck, "SIGNATURE" => actor.CanApprove, "DRAFT" or "RETURNED" or "APPROVED" or "CHANGES" => actor.CanWrite && doc.EmployeeId == actor.Id, _ => false };
             if (filter.Mine && !mine || filter.WaitingDays.HasValue && (entered is null || now - entered < TimeSpan.FromDays(filter.WaitingDays.Value))) continue;
             var config = checklists.GetValueOrDefault(version.ContractVersionId);
             var configured = config?.Configured ?? false;

@@ -38,13 +38,13 @@ public sealed class ContractReviewRepository(
         var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleAsync(x => x.ContractDocumentId == documentId
             && x.ContractVersionId == version.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
-        if (!version.ContractVersionIslocked) {
-            if (content.FormatVersion < 2) throw new InternalAppException(422, "Mở nháp, bổ sung pháp nhân/lịch thanh toán và lưu lại trước khi gửi.");
-            DraftValidation.Prepare(content, content.TemplateSnapshot ?? throw new InternalAppException(409, "Thiếu bản chụp mẫu."));
-            if (content.MissingFields.Count > 0) throw new DraftValidationException(DraftValidation.Missing(content));
-            if (content.CustomerBusinessId is { } business && !await db.CustomerBusinesses.AnyAsync(b => b.CustomerId == doc.CustomerId && b.CustomerBusinessId == business, ct)) throw new InternalAppException(422, "Pháp nhân không thuộc khách hàng.");
-            if (content.TemplateSnapshot.IsImported && !request.ContentConfirmed) throw new InternalAppException(422, "Cần xác nhận đã kiểm tra nội dung mẫu tải lên.");
-        }
+        DraftValidation.RequireContractDates(content);
+        if (content.FormatVersion < 2) throw new InternalAppException(422, "Mở nháp, bổ sung pháp nhân/lịch thanh toán và lưu lại trước khi gửi.");
+        DraftValidation.Prepare(content, content.TemplateSnapshot ?? throw new InternalAppException(409, "Thiếu bản chụp mẫu."));
+        var issues = DraftValidation.SendIssues(content);
+        if (issues.Count > 0) throw new DraftValidationException(issues);
+        if (content.CustomerBusinessId is { } business && !await db.CustomerBusinesses.AnyAsync(b => b.CustomerId == doc.CustomerId && b.CustomerBusinessId == business, ct)) throw new InternalAppException(422, "Pháp nhân không thuộc khách hàng.");
+        if (content.TemplateSnapshot.IsImported && !request.ContentConfirmed) throw new InternalAppException(422, "Cần xác nhận đã kiểm tra nội dung mẫu tải lên.");
         if (ContractReviewPolicy.CanSend(doc.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? ContractDocumentStatus.Draft : doc.ContractDocumentStatus, latest?.ContractReviewRequestStatus, doc.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? false : version.ContractVersionIslocked, content.MissingFields.Count) is { } error)
             throw new InternalAppException(409, error);
         var customer = await db.Customers.SingleOrDefaultAsync(c => c.CustomerId == doc.CustomerId && c.CustomerStatus == 1, ct)

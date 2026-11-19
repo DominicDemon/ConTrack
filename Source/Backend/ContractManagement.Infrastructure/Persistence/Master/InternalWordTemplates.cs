@@ -220,7 +220,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             {
                 // Consecutive title lines ("HỢP ĐỒNG" / "CUNG CẤP PHẦN MỀM") form one title rather than empty terms.
                 var heading = Regex.Replace(text, @"\s+", " ");
-                var merge = terms.Count > 0 && group == location && terms[^1].Content.Length == 0 && terms[^1].Title != "Phần mở đầu"
+                var merge = !Regex.IsMatch(heading, @"^Điều\s*\d+", RegexOptions.IgnoreCase) && terms.Count > 0 && !Regex.IsMatch(terms[^1].Title, @"^Điều\s*\d+", RegexOptions.IgnoreCase) && group == location && terms[^1].Content.Length == 0 && terms[^1].Title != "Phần mở đầu"
                     && terms[^1].Title.Length + heading.Length < 200;
                 if (merge) heading = terms[^1].Title + " " + heading;
                 var title = heading.Length <= 200 ? heading : heading[..200] + "…";
@@ -372,6 +372,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
     {
         InternalDraftPolicy.Prepare(content, template, forPreview: true);
         var values = PrintValues(content, template);
+        if (string.IsNullOrWhiteSpace(content.ContractNumber)) values["CONTRACT_NUMBER"] = "Chờ cấp số khi lưu nháp";
         // Manual Word content keeps its own text; only placeholders that have a draft value are filled.
         var filled = InternalWordDocument.Fill(bytes, values, preserveUnknown: template.ManualWordContent);
         if (!pdf) return filled;

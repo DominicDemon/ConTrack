@@ -464,7 +464,7 @@ public sealed class InternalWordDocument(IConfiguration configuration)
     }
 
     // "Số: …" or "Số hợp đồng: …" in the heading, before the legal bases or the first article.
-    private static readonly Regex NumberLine = new(@"^(\s*Số(?:\s+hợp\s+đồng)?\s*[:：]\s*)(\S.*?)\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex NumberLine = new(@"^(\s*Số(?:\s+hợp\s+đồng)?\s*[:：]\s*)(.*?)\s*$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex HeadingEnd = new(@"^\s*(căn\s+cứ|điều\s+\d|chúng\s+tôi\s+gồm|hôm\s+nay)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Replaces the value of the first contract number line of the heading; false when the heading has none.</summary>

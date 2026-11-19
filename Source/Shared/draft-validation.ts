@@ -23,6 +23,8 @@ export function draftIssues(c: DraftContent): DraftIssue[] {
   const issues: DraftIssue[]=[];
   const add=(code:string,path:string,message:string)=>issues.push({code,path,message});
   if(!c.name.trim()) add("required","name","Tên hợp đồng");
+  if(!c.expireDate) add("required","expireDate","Vui lòng nhập ngày hết hạn hợp đồng.");
+  else if(c.effectiveDate && c.expireDate < c.effectiveDate) add("invalid_date","expireDate","Ngày hết hạn phải sau hoặc bằng ngày hiệu lực.");
   if(!c.customerId) add("required","partyType","Chọn khách hàng");
   if(!c.partyType) add("required","partyType","Chọn cá nhân hoặc doanh nghiệp");
   if(c.partyType === "BUSINESS" && !c.customerBusinessId) add("required","customerBusinessId","Chọn pháp nhân khách hàng");
@@ -49,5 +51,27 @@ export function draftIssues(c: DraftContent): DraftIssue[] {
   if(rows.length && (summary.remaining!==0 || (c.paymentMode!=='AMOUNT' && summary.percent!==100))) add("payment_total","milestones","Lịch thanh toán phải đủ tổng sau VAT");
   return issues;
 }
+export const requiredPartyFields = [
+    {key:"CUSTOMER_CONTACT_NAME",label:"Người đại diện khách hàng",required:true},
+    {key:"CUSTOMER_COMPANY",label:"Tên bên khách hàng",required:true},
+    {key:"CUSTOMER_CONTACT_PHONE",label:"SĐT khách hàng",required:true},
+    {key:"CUSTOMER_ADDRESS",label:"Địa chỉ khách hàng",required:true},
+    {key:"PROVIDER_LEGAL_NAME",label:"Tên pháp lý công ty",required:true},
+    {key:"PROVIDER_REPRESENTATIVE_NAME",label:"Người đại diện công ty",required:true},
+    {key:"PROVIDER_ADDRESS",label:"Địa chỉ công ty",required:true},
+    {key:"PROVIDER_TAX_CODE",label:"Mã số thuế công ty",required:true},
+  ];
+export function sendIssues(c: DraftContent): DraftIssue[] {
+  const issues = draftIssues(c);
+  for (const f of [...requiredPartyFields, ...(c.templateSnapshot?.fields ?? [])]) {
+    if (f.required && !c.fields[f.key]?.trim() && !issues.some(i => i.path === "fields."+f.key))
+      issues.push({code:"required",path:"fields."+f.key,message:f.label});
+  }
+  for (const t of c.terms) {
+    if ((!c.templateSnapshot?.wordStorageKey || t.editable !== false || /^Điều\s*\d+/iu.test(t.title)) && !t.content.trim())
+      issues.push({code:"required",path:"terms",message:`Thiếu nội dung điều khoản “${t.title}”.`});
+  }
+  return issues;
+}
 export function issueTarget(path:string) { return path.startsWith("milestones") ? "payment-schedule" : path.startsWith("fields.PROVIDER") ? "provider-fields" : path.startsWith("fields.CUSTOMER") || path==='partyType' || path==='customerBusinessId' ? "customer-fields" : path.startsWith("items") ? "contract-items" : path.startsWith("terms") ? "contract-terms" : "contract-info"; }
-export function focusIssue(path:string) { const el=document.getElementById(issueTarget(path)); el?.scrollIntoView({behavior:"smooth",block:"start"}); el?.focus({preventScroll:true}); }
+export function focusIssue(path:string) { const el=document.getElementById(issueTarget(path)); const details = el?.querySelector("details"); if(details) details.open = true; el?.scrollIntoView({behavior:"smooth",block:"start"}); el?.focus({preventScroll:true}); }

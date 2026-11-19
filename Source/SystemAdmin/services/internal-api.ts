@@ -1,3 +1,4 @@
+import { requiredPartyFields } from "../../Shared/draft-validation";
 export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean; canCheck: boolean; canApprove: boolean; canManageTemplates: boolean; canManageEmployees: boolean; mustChangePassword: boolean; department: string | null; isManager: boolean };
 export type EmployeeAdminRow = { id: string; code: string; username: string; name: string; email: string | null; phone: string | null; status: "ACTIVE" | "LOCKED" | string; mustChangePassword: boolean; lastLoginAt: string | null; departmentId: string | null; isManager: boolean };
 /** staffPermissions is null when the department has a manager only (Ban Giám Đốc). */
@@ -102,14 +103,8 @@ export const reviewStatusLabel: Record<string, string> = { SENT: "Đã gửi, kh
 
 // Older uploaded templates did not declare the company fields.
 export function completePartyFields(template: TemplateDefinition): TemplateDefinition {
-  if (!template.isImported) return template;
-  const required: DraftField[] = [
-    {key:"PROVIDER_LEGAL_NAME",label:"Tên pháp lý công ty",required:true},
-    {key:"PROVIDER_REPRESENTATIVE_NAME",label:"Người đại diện công ty",required:true},
-    {key:"PROVIDER_ADDRESS",label:"Địa chỉ công ty",required:true},
-    {key:"PROVIDER_TAX_CODE",label:"Mã số thuế công ty",required:true},
-  ];
-  return {...template,fields:[...template.fields,...required.filter(f => !template.fields.some(x => x.key === f.key))]};
+
+  return {...template,fields:[...template.fields,...requiredPartyFields.filter(f => !template.fields.some(x => x.key === f.key))]};
 }
 export type CustomerRow = { id: string; name: string; phone: string; email: string | null; address: string | null; taxIdentifier: string | null; active: boolean; businessCount: number; createdAt: string; lastLoginAt: string | null };
 export type ProductRow = { id: string; code: string | null; name: string; unit: string | null; categoryId: number | null; categoryName: string | null; price: number | null; description: string | null };

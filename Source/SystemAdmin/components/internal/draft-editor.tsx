@@ -1,6 +1,6 @@
 "use client";
 import { isGroupedWordSection, wordDisplaySections } from "../../../Shared/word-display-sections";
-import { draftIssues, focusIssue } from "../../../Shared/draft-validation";
+import { sendIssues, focusIssue } from "../../../Shared/draft-validation";
 import { PartyEditor, PaymentEditor } from "./draft-details";
 import { keepInView } from "./word-clause-form";
 
@@ -84,7 +84,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   const sourceTemplate = content.templateSnapshot ?? templates.find(t => t.id === content.templateId);
   const template = sourceTemplate && (!record?.locked ? completePartyFields(sourceTemplate) : sourceTemplate);
   const totals = estimateTotals(content);
-  const issues = draftIssues({...content, templateSnapshot: template ?? null});
+  const issues = sendIssues({...content, templateSnapshot: template ?? null});
   const missing = issues.map(i => i.message);
   function selectCustomer(customer: CustomerOption, businessId: string | null = null) {
     change(current => ({
@@ -194,7 +194,7 @@ export default function DraftEditor({ id }: { id?: string }) {
         <option value="CASH_OR_TRANSFER">Tiền mặt hoặc chuyển khoản</option>
       </select></Field>
       {bilingual && <Field label="Tên hợp đồng tiếng Anh *"><input maxLength={1000} className={ui.field} lang="en" placeholder="Ví dụ: Supply and installation contract" value={content.nameEn ?? ""} onChange={e => { const value = e.target.value; change(c => ({ ...c, nameEn: value })); }}/></Field>}
-      <div className={s.columns}><Field label="Ngày hiệu lực"><input type="date" className={ui.field} value={content.effectiveDate ?? ""} onChange={e => change(c => ({ ...c, effectiveDate: e.target.value || null }))}/></Field><Field label="Ngày hết hạn"><input type="date" className={ui.field} min={content.effectiveDate ?? undefined} value={content.expireDate ?? ""} onChange={e => change(c => ({ ...c, expireDate: e.target.value || null }))}/></Field></div>
+      <div className={s.columns}><Field label="Ngày hiệu lực"><input type="date" className={ui.field} value={content.effectiveDate ?? ""} onChange={e => change(c => ({ ...c, effectiveDate: e.target.value || null }))}/></Field><Field label="Ngày hết hạn *"><input required aria-label="Ngày hết hạn" type="date" className={ui.field} min={content.effectiveDate ?? undefined} value={content.expireDate ?? ""} onChange={e => change(c => ({ ...c, expireDate: e.target.value || null }))}/></Field></div>
     </div></section>
     <section id="customer-fields" tabIndex={-1} className={s.section}><h2><Users/>Khách hàng · Bên A</h2><div className={s.fields}>
       {!id && <><Field label="Tìm khách hàng"><input type="search" className={ui.field} placeholder="Nhập email, mã số thuế hoặc số điện thoại…" value={customerSearch}
@@ -221,7 +221,7 @@ export default function DraftEditor({ id }: { id?: string }) {
       {customerNotice && <p role="status" className={ui.notice}>{customerNotice}</p>}
       <PartyEditor content={content} change={change}/>{template.fields.filter(f => f.key.startsWith("CUSTOMER_")).map(partyField)}
     </div></section>
-    {!template.wordStorageKey && <section id="provider-fields" tabIndex={-1} className={s.section}><h2><Building2/>Công ty mình · Bên B</h2><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></section>}
+    <section id="provider-fields" tabIndex={-1} className={s.section}><details open={!template.wordStorageKey || undefined}><summary><Building2/> Công ty mình · Bên B</summary><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></details></section>
     <section id="contract-items" tabIndex={-1} className={s.section}><h2><Wallet/>Hạng mục và giá trị</h2>
       {content.items.map((item, index) => <div key={index} className={s.lineItem}><header><strong style={{ fontSize: 12 }}>Hạng mục {index + 1}</strong><button type="button" className={s.iconButton} aria-label={`Xóa hạng mục ${index + 1}`} onClick={() => change(c => ({ ...c, items: c.items.filter((_, i) => i !== index) }))}><Trash2 size={16}/></button></header>
         <Field label="Tên sản phẩm / dịch vụ"><input required maxLength={500} className={ui.field} value={item.name} onChange={e => editItem(index, { name: e.target.value })}/></Field>
@@ -261,7 +261,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   return <><div className={s.editorHeader}><Link href="/workspace/contracts/drafts" className={s.iconButton} aria-label="Về danh sách"><ArrowLeft size={20}/></Link><div><h1>{readOnly ? "Xem hợp đồng" : id ? "Chỉnh sửa hợp đồng nháp" : "Tạo hợp đồng nháp"}</h1><p className={s.muted}>{record ? `${record.employeeName} · Cập nhật ${dateTime(record.updatedAt)}` : "Bắt đầu từ mẫu, hoàn thiện theo nhu cầu"}</p></div><div className={s.actions}><span className={`${s.badge} ${dirty ? s.warning : ""}`}>{dirty ? "Chưa lưu thay đổi" : record ? "Đã lưu" : "Nháp mới"}</span>{!readOnly && <button disabled={busy || customerBusy} className={ui.primaryButton} onClick={save}><Save size={17}/>{busy ? "Đang lưu…" : "Lưu nháp"}</button>}</div></div>
     {(error || success) && <div className={s.messages}>{error && <div role="alert" className={ui.error}>{error}{conflict && <button className={ui.secondaryButton} style={{ marginLeft: 12 }} onClick={reload}>Tải lại bản mới</button>}</div>}{success && <div role="status" className={ui.notice}>{success}</div>}</div>}
     {!record && <div className={s.messages}><section className={ui.card} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }} aria-label="Gửi khách xem"><button type="button" className={ui.primaryButton} disabled aria-describedby="new-draft-send-guidance"><Send size={16}/>Gửi khách xem</button><p id="new-draft-send-guidance" className={s.muted}>Lưu nháp trước, sau đó hoàn thiện các mục còn thiếu để gửi khách xem.</p></section></div>}
-    {record && <div className={s.messages}><ChecklistPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)} onLocate={location => { setTab("edit"); if (template.wordStorageKey && canEditTerms && !readOnly && !dirty) setLocate({location,request:Date.now()}); else requestAnimationFrame(() => { const target = document.getElementById(`contract-term-${location}`) ?? document.getElementById("contract-terms"); target?.scrollIntoView({behavior:"smooth"}); target?.focus({preventScroll:true}); }); }}/><ApprovalPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/><ReviewPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/></div>}
+    {record && <div className={s.messages}><ChecklistPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)} onLocate={location => { setTab("edit"); if (template.wordStorageKey && canEditTerms && !readOnly && !dirty) setLocate({location,request:Date.now()}); else requestAnimationFrame(() => { const target = document.getElementById(`contract-term-${location}`) ?? document.getElementById("contract-terms"); target?.scrollIntoView({behavior:"smooth"}); target?.focus({preventScroll:true}); }); }}/><ApprovalPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/><ReviewPanel onLocate={path => { setTab("edit"); requestAnimationFrame(() => focusIssue(path)); }} record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/></div>}
     <div className={s.mobileTabs}><button type="button" className={tab === "edit" ? ui.primaryButton : ui.secondaryButton} onClick={() => setTab("edit")}>Soạn thảo</button><button type="button" className={tab === "preview" ? ui.primaryButton : ui.secondaryButton} onClick={() => setTab("preview")}>Xem trước</button></div>
     <div className={s.editorBody} style={mobile ? {height:"calc(100dvh - 140px)",minHeight:480}:undefined}><PanelGroup direction="horizontal">
       <Panel defaultSize={48} minSize={30} style={mobile ? {display:tab==="edit"?"block":"none",flexGrow:1}:undefined}>{editor}</Panel>

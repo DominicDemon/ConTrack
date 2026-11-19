@@ -1,5 +1,5 @@
 "use client";
-import { focusIssue } from "../../../Shared/draft-validation";
+import { sendIssues as validateSend, focusIssue } from "../../../Shared/draft-validation";
 import DraftPreview from "./draft-preview";
 
 import { useCallback, useEffect, useState } from "react";
@@ -18,8 +18,9 @@ const inSevenDays = () => { const d = new Date(Date.now() + 7 * 864e5); return n
 const customerPortalLoginUrl = process.env.NEXT_PUBLIC_CUSTOMER_PORTAL_URL || "http://localhost:3000/portal/login";
 
 /** Customer review actions and history for a saved draft. All state transitions are re-checked by the API. */
-export default function ReviewPanel({ record, dirty, onChanged }: { record: DraftRecord; dirty: boolean; onChanged: () => void }) {
+export default function ReviewPanel({ record, dirty, onChanged, onLocate = focusIssue }: { onLocate?: (path:string) => void; record: DraftRecord; dirty: boolean; onChanged: () => void }) {
   const user = useInternalUser();
+  const sendIssues = validateSend(record.content);
   const [confirmed, setConfirmed] = useState(false);
   const [reviews, setReviews] = useState<ReviewSummary[]>([]);
   const [versions, setVersions] = useState<DraftVersionHistoryItem[]>([]);
@@ -185,7 +186,7 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <button className={ui.secondaryButton} disabled={busy || dirty} title={dirty ? "Lưu nháp trước khi tải lại trạng thái" : "Tải trạng thái khách hàng và phê duyệt mới nhất"} onClick={() => void refreshWorkflow()}><RefreshCw size={15}/>Làm mới trạng thái</button>
-        {user.canWrite && canSendToCustomer && officeApproved && <button type="button" className={ui.primaryButton} disabled={busy || dirty || !!record.sendBlockedReason}
+        {user.canWrite && canSendToCustomer && officeApproved && <button type="button" className={ui.primaryButton} disabled={busy || dirty || sendIssues.length > 0 || !!record.sendBlockedReason}
           aria-describedby="review-send-guidance" title={dirty ? "Lưu nháp trước khi gửi" : record.sendBlockedReason || undefined} onClick={send}><Send size={16}/>Gửi khách xem</button>}
         {(user.canWrite || user.canCheck) && canCreateVersion && <button className={latest?.status === "CHANGES_REQUESTED" ? ui.primaryButton : ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới để chỉnh sửa</button>}
         {user.canWrite && awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
@@ -207,9 +208,9 @@ export default function ReviewPanel({ record, dirty, onChanged }: { record: Draf
       </div>
     </div>
     {user.canWrite && canSendToCustomer && <div id="review-send-guidance" className={s.muted} style={{ marginTop: 8 }} aria-live="polite">
-      {sendWaiting ? <p role="status" className={ui.notice}>{sendWaiting}</p> : dirty ? <p>Lưu nháp để cập nhật thông tin và kiểm tra điều kiện gửi khách.</p> : record.sendBlockedReason ? <>
-        <p>Chưa thể gửi khách: {record.sendBlockedReason}</p>
-        {!!record.content.missingFields.length && <p>Cần bổ sung: {record.content.missingFields.join(", ")}.</p>}
+      {sendWaiting ? <p role="status" className={ui.notice}>{sendWaiting}</p> : dirty ? <p>Lưu nháp để cập nhật thông tin và kiểm tra điều kiện gửi khách.</p> : record.sendBlockedReason || sendIssues.length ? <>
+        <p>Chưa thể gửi khách: {record.sendBlockedReason || "Cần hoàn thiện thông tin hợp đồng."}</p>
+        {sendIssues.map((issue,i) => <button key={i} type="button" className={ui.secondaryButton} onClick={() => onLocate(issue.path)}>{issue.message}</button>)}
       </> : <p>Nháp đã đủ thông tin. Bạn có thể gửi phiên bản này cho khách xem và phản hồi.</p>}
     </div>}
     {latest?.status === "CHANGES_REQUESTED" && record.locked && (user.canWrite || user.canCheck) && <p role="status" className={ui.notice} style={{ marginTop: 8 }}>Khách đã góp ý và yêu cầu sửa. Sale hoặc Hành chính bấm <strong>Tạo phiên bản mới để chỉnh sửa</strong>, sửa nội dung theo các góp ý bên dưới, rồi Trình Hành chính và gửi lại khách.</p>}

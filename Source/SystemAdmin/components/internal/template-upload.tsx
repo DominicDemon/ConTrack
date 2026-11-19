@@ -67,10 +67,13 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     }
   }, [inline?.content]);
   useEffect(() => () => { revision.current++; }, []);
+  const [partyWarnings, setPartyWarnings] = useState<string[]>([]);
   const syncedCustomer = useRef<{ extraction: Extraction; values: Map<string, string> } | null>(null);
   useEffect(() => {
     if (!inline || inline.readOnly || !inline.content.customerId || !extraction) return;
-    const values = wordCustomerValues(extraction.blocks, inline.content.fields, inline.content.partyType);
+    const warnings: string[] = [];
+    const values = wordCustomerValues(extraction.blocks, inline.content.fields, inline.content.partyType, warnings);
+    setPartyWarnings([...new Set(warnings)]);
     // A new draft takes Bên A from the chosen customer. A saved draft keeps its Word text as stored: only Bên A values
     // that differ from what was saved (customer details refilled after opening it) are written into the Word content.
     const previous = syncedCustomer.current?.extraction === extraction ? syncedCustomer.current.values
@@ -81,6 +84,20 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     setBlocks(current => current.map(block => changed.has(block.id) ? { ...block, text: changed.get(block.id)! } : block));
     invalidate();
   }, [inline?.content, inline?.readOnly, draft, extraction]);
+
+  useEffect(() => {
+    if (!inline || !extraction) return;
+    const number = inline.content.contractNumber || "Chờ cấp số khi lưu nháp";
+    const changes = new Map<string, string>();
+    for (const block of extraction.blocks.filter(block => block.bodyUnit != null)) {
+      if (/^\s*(căn\s+cứ|điều\s+\d|hôm\s+nay)/iu.test(block.text)) break;
+      if (/^\s*Số(?:\s+hợp\s+đồng)?\s*[:：]/iu.test(block.text)) {
+        changes.set(block.id, block.text.replace(/^(\s*Số(?:\s+hợp\s+đồng)?\s*[:：]\s*).*$/iu, "$1" + number));
+        break;
+      }
+    }
+    setBlocks(current => current.map(block => changes.has(block.id) ? { ...block, text: changes.get(block.id)! } : block));
+  }, [extraction, inline?.content.contractNumber]);
 
   function invalidate(edit = true) { if (inline && edit) { revision.current++; inline.receipt.current = null; inline.changed(); } setPreviewCurrent(false); setConfirmed(false); setError(""); }
   async function extract(file?: File) {
@@ -263,6 +280,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     </div>
   </section>;
   if (inline) return <>
+    {partyWarnings.map(message => <p key={message} role="status">{message}</p>)}
     {error && <p role="alert">{error}</p>}
     {!extraction && !busy && <Button type="button" onClick={() => void openEditor()}>Tải lại nội dung Word</Button>}
     {busy && !extraction && <p role="status">Đang đọc nội dung Word…</p>}

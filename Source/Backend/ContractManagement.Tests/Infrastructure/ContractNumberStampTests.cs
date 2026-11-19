@@ -30,6 +30,15 @@ public class ContractNumberStampTests
     }
 
     [Fact]
+    public void ReplacesBlankNumberAndSplitPlaceholderWithIssuedNumber()
+    {
+        var blank = Docx(["Số hợp đồng:", "   "], ["Căn cứ vào:"]);
+        Assert.Equal("Số hợp đồng:   HD-20261118-000001", Texts(InternalWordDocument.Fill(blank, Number))[0]);
+        var placeholder = Docx(["Số: {{CONTRACT_", "NUMBER}}"]);
+        Assert.Equal("Số: HD-20261118-000001", Texts(InternalWordDocument.Fill(placeholder, Number))[0]);
+    }
+
+    [Fact]
     public void LeavesATemplateWithoutANumberLineAndAnEmptyNumberUntouched()
     {
         var plain = Docx(["HỢP ĐỒNG"], ["Điều 1: Số: 5 bộ"]);

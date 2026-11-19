@@ -7,6 +7,35 @@ public sealed class DraftValidationException(List<DraftIssue> issues) : Argument
 }
 public static class DraftValidation
 {
+    public static void RequireContractDates(DraftContent content)
+    {
+        if (content.ExpireDate is null)
+            throw new DraftValidationException([new("required", "expireDate", "Vui lòng nhập ngày hết hạn hợp đồng.")]);
+        if (content.EffectiveDate > content.ExpireDate)
+            throw new DraftValidationException([new("invalid_date", "expireDate", "Ngày hết hạn phải sau hoặc bằng ngày hiệu lực.")]);
+    }
+
+    public static List<DraftIssue> SendIssues(DraftContent content)
+    {
+        var issues = Missing(content);
+        var fields = DraftCompletionPolicy.PartyFields.Concat(content.TemplateSnapshot?.Fields ?? []);
+        foreach (var field in fields.Where(f => f.Required))
+        {
+            var path = "fields." + field.Key;
+            if (string.IsNullOrWhiteSpace(content.Fields.GetValueOrDefault(field.Key)) && issues.All(i => i.Path != path))
+                issues.Add(new("required", path, field.Label));
+        }
+        foreach (var term in content.Terms)
+        {
+            // Word also produces fixed headings for cover pages and signature blocks.
+            var clause = content.TemplateSnapshot?.WordStorageKey is null || term.Editable ||
+                System.Text.RegularExpressions.Regex.IsMatch(term.Title, @"^Điều\s*\d+", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (clause && string.IsNullOrWhiteSpace(term.Content))
+                issues.Add(new("required", "terms", $"Thiếu nội dung điều khoản “{term.Title}”."));
+        }
+        return issues;
+    }
+
     public static DraftContent Prepare(DraftContent content, TemplateDefinition template)
     {
         try { return InternalDraftPolicy.Prepare(content, template); }

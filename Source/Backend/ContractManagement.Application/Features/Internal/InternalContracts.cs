@@ -175,6 +175,7 @@ public sealed class InternalDraftService(IInternalRepository repository)
         template = DraftCompletionPolicy.UpgradeTemplate(template);
         if (template.WordStorageKey is null)
             template = template with { Terms = content.Terms.Select(t => t with { Editable = true }).ToList() };
+        DraftValidation.RequireContractDates(content);
         DraftValidation.Prepare(content, template);
         if (content.CustomerBusinessId.HasValue && !(await repository.Businesses(content.CustomerId, ct)).Any(b => b.Id == content.CustomerBusinessId))
             throw new ArgumentException("Pháp nhân không thuộc khách hàng đã chọn.");

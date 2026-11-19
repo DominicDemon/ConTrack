@@ -50,10 +50,11 @@ public class InternalApprovalTests
         Directory.CreateDirectory(storage.Root);
         var wordKey = Guid.NewGuid().ToString("N") + ".docx";
         await File.WriteAllBytesAsync(Path.Combine(storage.Root, wordKey), approvedWord);
-        template = template with { WordStorageKey = wordKey, WordSha256 = Convert.ToHexString(SHA256.HashData(approvedWord)), ManualWordContent = true };
+        template = DraftCompletionPolicy.UpgradeTemplate(template) with { WordStorageKey = wordKey, WordSha256 = Convert.ToHexString(SHA256.HashData(approvedWord)), ManualWordContent = true };
         var content = new DraftContent { TemplateId = templateId, CustomerId = await db.Customers.Select(c => c.CustomerId).FirstAsync(),
-            Name = "TEST — Duyệt hai cấp", PartyType = "PERSON", PaymentMethod = "BANK_TRANSFER", TemplateSnapshot = template, Terms = template.Terms,
+            ExpireDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(1)), Name = "TEST — Duyệt hai cấp", PartyType = "PERSON", PaymentMethod = "BANK_TRANSFER", TemplateSnapshot = template, Terms = template.Terms,
             Items = [new(null, "Dịch vụ", 1, 100000, 0, 0)], Milestones = [new("PAY1", "Thanh toán", "PAY", 100)] };
+        foreach (var field in DraftCompletionPolicy.PartyFields.Where(f => f.Required)) content.Fields[field.Key] = "Thông tin kiểm thử";
         content.Fields["CUSTOMER_CONTACT_PHONE"] = "0901234567";
         content.Fields["CUSTOMER_EMAIL"] = "approval@example.invalid";
         DraftValidation.Prepare(content, template);
@@ -152,6 +153,28 @@ public class InternalApprovalTests
         // The agreed version is Hành chính's turn now (Sếp only signs afterwards).
         Assert.Contains((await progress.List(new(Search: draft.Code, Stage: "FINAL_CHECK", Mine: true), office, default)).Items, row => row.Id == draft.Id);
         Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => reviews.SendReview(draft.Id, new(null, request.RowVersion, request.VersionRowVersion, true, DateTimeOffset.UtcNow.AddDays(1)), sale, default))).Status);
+        Assert.Equal(2, mailbox.Messages.Count);
+        // A Word draft may be saved and approved while its provider address is missing.
+        content.Fields["PROVIDER_ADDRESS"] = " ";
+        draft = await repository.Save(null, new(content, null, null), sale, default);
+        await approvals.Act(draft.Id, "submit", await Input(), sale, default);
+        await approvals.Act(draft.Id, "approve", await Input(), office, default);
+        request = await Input();
+        var missingParty = await Assert.ThrowsAsync<DraftValidationException>(() => reviews.SendReview(draft.Id,
+            new(null, request.RowVersion, request.VersionRowVersion, true, DateTimeOffset.UtcNow.AddDays(1)), sale, default));
+        Assert.Contains(missingParty.Issues, issue => issue.Path == "fields.PROVIDER_ADDRESS");
+        Assert.Equal(2, mailbox.Messages.Count);
+        content.Fields["PROVIDER_ADDRESS"] = "Địa chỉ kiểm thử";
+        // Reproduce a pre-upgrade approved snapshot lacking its expiry date.
+        content.ExpireDate = null;
+        draft = await repository.Save(null, new(content, null, null), sale, default);
+        await approvals.Act(draft.Id, "submit", await Input(), sale, default);
+        await approvals.Act(draft.Id, "approve", await Input(), office, default);
+        request = await Input();
+        Assert.True(draft.Locked);
+        var invalid = await Assert.ThrowsAsync<DraftValidationException>(() => reviews.SendReview(draft.Id,
+            new(null, request.RowVersion, request.VersionRowVersion, true, DateTimeOffset.UtcNow.AddDays(1)), sale, default));
+        Assert.Contains(invalid.Issues, issue => issue.Path == "expireDate");
         Assert.Equal(2, mailbox.Messages.Count);
     }
 

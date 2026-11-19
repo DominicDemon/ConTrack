@@ -41,17 +41,17 @@ const partyFields: Record<string, string> = {
   "email": "CUSTOMER_EMAIL",
 };
 
-export function wordCustomerValues(source: DocumentBlock[], fields: Readonly<Record<string, string>>, partyType: string | undefined) {
+export function wordCustomerValues(source: DocumentBlock[], fields: Readonly<Record<string, string>>, partyType: string | undefined, warnings: string[] = []) {
   const updates = new Map<string, string>();
   const section = wordCards(source).find(card => card.label === "Thông tin các bên");
   if (!section) return updates;
 
   const ids = new Set(section.ids);
   let inPartyA = false;
-  let pending: { key: string; table: number | null; row: number | null; cell: number | null } | null = null;
+  let pending: { key: string; label: string; table: number | null; row: number | null; cell: number | null } | null = null;
   for (const block of source) {
     if (!ids.has(block.id)) continue;
-    const text = block.text.trim();
+    const text = block.text.normalize("NFC").replace(/\s+/gu, " ").trim();
     const heading = text.match(/^(Bên\s+([AB])\s*[:：])\s*/iu);
     if (heading) {
       if (heading[2].toUpperCase() === "B") break;
@@ -64,16 +64,22 @@ export function wordCustomerValues(source: DocumentBlock[], fields: Readonly<Rec
     const table = block.tableId ?? null, row = block.row ?? null, cell = block.cell ?? null;
     const label = text.match(/^([^:：]+)[:：]\s*(.*)$/u);
     const key = partyFields[(label?.[1] ?? text).trim().toLowerCase()];
+    if (pending && (key || pending.table !== table || pending.row !== row)) {
+      warnings.push("Kiểm tra ô " + pending.label + " của Bên A.");
+      pending = null;
+    }
     if (key) {
+      if (/(?:fax|điện thoại|chức vụ)\s*[:：]/iu.test(label?.[2] ?? "")) { warnings.push("Kiểm tra dòng có nhiều trường: " + text); continue; }
       if (label?.[2]) updates.set(block.id, label[1] + ": " + (fields[key] ?? ""));
-      else pending = table === null ? null : { key, table, row, cell };
+      else pending = table === null ? null : { key, label: label?.[1] ?? text, table, row, cell };
       continue;
     }
-    if (pending && pending.table === table && pending.row === row && pending.cell !== cell) {
+    if (pending && pending.table === table && pending.row === row && pending.cell != null && cell === pending.cell + 1) {
       updates.set(block.id, fields[pending.key] ?? "");
       pending = null;
     }
   }
+  if (pending) warnings.push("Kiểm tra ô " + pending.label + " của Bên A.");
   return updates;
 }
 

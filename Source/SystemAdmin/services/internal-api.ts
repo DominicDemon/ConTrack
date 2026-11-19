@@ -1,3 +1,4 @@
+import { requiredPartyFields } from "../../Shared/draft-validation";
 export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean; canCheck: boolean; canApprove: boolean; canManageTemplates: boolean; canManageEmployees: boolean; mustChangePassword: boolean; department: string | null; isManager: boolean };
 export type EmployeeAdminRow = { id: string; code: string; username: string; name: string; email: string | null; phone: string | null; status: "ACTIVE" | "LOCKED" | string; mustChangePassword: boolean; lastLoginAt: string | null; departmentId: string | null; isManager: boolean };
 /** staffPermissions is null when the department has a manager only (Ban Giám Đốc). */
@@ -17,7 +18,7 @@ export type DraftMilestone = { key: string; title: string; termKey: string; perc
 export type DraftContent = { contractNumber?: string | null; paymentMethod?: "BANK_TRANSFER" | "CASH" | "CASH_OR_TRANSFER" | null; formatVersion?: number; partyType?: string; customerBusinessId?: string | null; paymentMode?: "PERCENT" | "AMOUNT"; milestones?: DraftMilestone[]; templateId: string; customerId: string; name: string; fields: Record<string, string>; items: DraftItem[]; terms: DraftTerm[]; vatPercent: number; effectiveDate: string | null; expireDate: string | null; templateSnapshot: TemplateDefinition | null; totals: DraftTotals; missingFields: string[]; languageMode?: "VI_EN" | null; nameEn?: string | null; fieldsEn?: Record<string, string> | null };
 export type DraftIssue = { code: string; path: string; message: string };
 export type CarriedDraftComment = { id: string; termKey: string | null; content: string; sourceCommentId: string | null; sourceVersionId: string | null; resolved: boolean };
-export type DraftRecord = { issues?: DraftIssue[]; carriedComments?: CarriedDraftComment[]; id: string; code: string; employeeId: string; employeeName: string; rowVersion: string; versionRowVersion: string; updatedAt: string; content: DraftContent; status: number; versionNo: string; locked: boolean; canEdit: boolean; customerName: string; customerPhoneMasked: string; latestReviewStatus: string | null; sendBlockedReason: string | null };
+export type DraftRecord = { issues?: DraftIssue[]; carriedComments?: CarriedDraftComment[]; id: string; code: string; employeeId: string; employeeName: string; rowVersion: string; versionRowVersion: string; updatedAt: string; content: DraftContent; status: number; versionNo: string; locked: boolean; canEdit: boolean; customerName: string; customerPhoneMasked: string; latestReviewStatus: string | null; sendBlockedReason: string | null; /** False for a prospect: no portal login yet, reads and signs through the emailed link. */ customerHasAccount?: boolean };
 export type DraftSummary = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; updatedAt: string; missingCount: number; status: number; latestReviewStatus: string | null };
 export type ContractArchiveEntry = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; updatedAt: string; status: number; versionNo: string; versionLocked: boolean; signatureCount: number; lastSignedAt: string | null };
 export type SigningMonitorEntry = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; updatedAt: string; status: number; versionNo: string; signatureCount: number; signedCount: number; companySigned: boolean; customerSigned: boolean; latestReviewStatus: string | null; lastSignedAt: string | null; paper?: boolean };
@@ -90,7 +91,7 @@ export function estimateTotals(content: DraftContent): DraftTotals {
   const vat = round((subtotal - discount) * content.vatPercent / 100);
   return { subtotal: round(subtotal), discount: round(discount), vat, total: round(subtotal - discount + vat) };
 }
-export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string; section?: string | null };
+export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string; section?: string | null; carried?: boolean };
 export type ReviewSummary = { id: string; versionId: string; versionNo: string; status: string; sentAt: string; sentByName: string; message: string | null; firstViewedAt: string | null; customerNote: string | null; respondedAt: string | null; followupDecision: string | null; followupNote: string | null; followupDecidedAt: string | null; rowVersion: string; comments: ReviewComment[]; linkExpiresAt: string | null; linkEmailSent?: boolean | null };
 export type DraftVersionHistoryItem = { id: string; versionNo: string; changeNote: string | null; createdAt: string; isCurrent: boolean; locked: boolean; snapshotHash: string | null };
 export type InternalApprovalState = { id: string; status: number; submittedAt: string; workflowName: string; comment: string | null; signingStarted: boolean };
@@ -102,17 +103,13 @@ export const reviewStatusLabel: Record<string, string> = { SENT: "Đã gửi, kh
 
 // Older uploaded templates did not declare the company fields.
 export function completePartyFields(template: TemplateDefinition): TemplateDefinition {
-  if (!template.isImported) return template;
-  const required: DraftField[] = [
-    {key:"PROVIDER_LEGAL_NAME",label:"Tên pháp lý công ty",required:true},
-    {key:"PROVIDER_REPRESENTATIVE_NAME",label:"Người đại diện công ty",required:true},
-    {key:"PROVIDER_ADDRESS",label:"Địa chỉ công ty",required:true},
-    {key:"PROVIDER_TAX_CODE",label:"Mã số thuế công ty",required:true},
-  ];
-  return {...template,fields:[...template.fields,...required.filter(f => !template.fields.some(x => x.key === f.key))]};
+
+  return {...template,fields:[...template.fields,...requiredPartyFields.filter(f => !template.fields.some(x => x.key === f.key))]};
 }
 export type CustomerRow = { id: string; name: string; phone: string; email: string | null; address: string | null; taxIdentifier: string | null; active: boolean; businessCount: number; createdAt: string; lastLoginAt: string | null };
 export type ProductRow = { id: string; code: string | null; name: string; unit: string | null; categoryId: number | null; categoryName: string | null; price: number | null; description: string | null };
 export type CategoryOption = { id: number; name: string };
 export type ServiceRow = { id: string; name: string; unit: string | null; price: number | null; typeName: string | null; active: boolean };
 export type DepartmentRow = { id: string; code: string; name: string; description: string | null; status: string; managerName: string | null; memberCount: number; staffRoleName: string | null; managerRoleName: string };
+
+export type CustomerLookupResult = { customer: CustomerOption; businessId: string | null; businessName: string | null };

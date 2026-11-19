@@ -70,7 +70,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             var id = t.ContractTemplateId;
             var file = await db.FileStorages.AsNoTracking().Where(f => f.FileStorageObjecttype == "INTERNAL_TEMPLATE" && f.FileStorageObjectid == id)
                 .OrderByDescending(f => f.FileStorageFileid).FirstOrDefaultAsync(ct);
-            if (file is not null) { result.Add(DraftCompletionPolicy.UpgradeTemplate(await storage.Read(file, ct))); continue; }
+            if (file is not null) { result.Add(DraftCompletionPolicy.UpgradeTemplate((await storage.Read(file, ct)) with { Name = t.ContractTemplateName })); continue; }
             // An uploaded template whose definition file is missing is skipped, as before; only SQL-defined templates have no stored files.
             if (await db.FileStorages.AnyAsync(f => f.FileStorageObjecttype.StartsWith("INTERNAL_TEMPLATE") && f.FileStorageObjectid == id, ct)) continue;
             if (await FromDatabase(t, ct) is { } defined) result.Add(DraftCompletionPolicy.UpgradeTemplate(defined));
@@ -89,6 +89,36 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             .Select(f => new DraftField(f.ContractTemplateFieldKey, f.ContractTemplateFieldLabel, f.IsRequired, f.ContractTemplateFieldDataType)).ToList();
         return new(t.ContractTemplateId, t.ContractTemplateName, $"db-{(t.UpdatedDate ?? t.CreatedDate).Ticks}", true, fields, terms);
     }
+    public async Task<string> RenameTemplate(long id, string? name, InternalUser actor, CancellationToken ct)
+    {
+        if (!actor.CanManageTemplates)
+            throw new InternalAppException(403, "Bạn không có quyền quản lý mẫu hợp đồng.");
+        name = name?.Trim();
+        if (string.IsNullOrEmpty(name) || name.Length > 500)
+            throw new ArgumentException("Tên mẫu phải có từ 1 đến 500 ký tự.");
+        var template = await db.ContractTemplates.SingleOrDefaultAsync(
+            t => t.ContractTemplateId == id && t.IsActive && t.ContractTemplateDocumentType == 1, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy mẫu hợp đồng đang hoạt động.");
+        if (template.ContractTemplateName == name) return name;
+
+        var now = DateTime.UtcNow;
+        db.AuditLogs.Add(new AuditLog
+        {
+            ActionType = "RENAME_TEMPLATE",
+            EntityName = "CONTRACT_TEMPLATE",
+            EntityId = id.ToString(),
+            ActorType = "EMPLOYEE",
+            ActorId = actor.Id,
+            CreatedAt = now,
+            OldData = JsonSerializer.Serialize(new { name = template.ContractTemplateName }, Json),
+            NewData = JsonSerializer.Serialize(new { name }, Json)
+        });
+        template.ContractTemplateName = name;
+        template.UpdatedDate = now;
+        await db.SaveChangesAsync(ct);
+        return name;
+    }
+
     public async Task<List<CustomerOption>> Customers(string? search, CancellationToken ct)
     {
         var query = db.Customers.AsNoTracking().Where(c => c.CustomerStatus == 1);
@@ -98,18 +128,74 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         foreach (var id in ids) { var customer = await Customer(id, ct); if (customer is not null) results.Add(customer); }
         return results;
     }
+    public async Task<List<CustomerLookupResult>> LookupCustomers(string? search, CancellationToken ct)
+    {
+        var term = search?.Trim() ?? "";
+        if (term.Length == 0 || term.Length > 255) return [];
+        var email = term.ToLowerInvariant();
+        var phone = PhoneNumber.Normalize(term);
+        var internationalPhone = phone is null ? null : "+84" + phone[1..];
+        var tax = term.Replace("-", "").Replace(" ", "");
+
+        var active = db.Customers.AsNoTracking().Where(c => c.CustomerStatus == 1);
+        var people = active.Where(c => (c.CustomerEmail != null && c.CustomerEmail.ToLower() == email)
+            || (phone != null && (c.CustomerPersonalPhone == phone || c.CustomerPersonalPhone == internationalPhone)));
+        var individuals = await people.OrderBy(c => c.CustomerDisplayName).ThenBy(c => c.CustomerId).Take(50).ToListAsync(ct);
+        var companies = await (from business in db.CustomerBusinesses.AsNoTracking()
+            join customer in active on business.CustomerId equals customer.CustomerId
+            where people.Any(c => c.CustomerId == customer.CustomerId)
+                || (business.CustomerBusinessEmail != null && business.CustomerBusinessEmail.ToLower() == email)
+                || (phone != null && (business.CustomerBusinessPhone == phone || business.CustomerBusinessPhone == internationalPhone))
+                || (tax != "" && business.CustomerBusinessCompanyTaxIdentifier.Replace("-", "").Replace(" ", "") == tax)
+            orderby business.CustomerBusinessLegalName, business.CustomerBusinessId
+            select new { business, customer }).Take(50).ToListAsync(ct);
+
+        var results = individuals.Select(c => new CustomerLookupResult(CustomerProfile(c), null, null)).ToList();
+        results.AddRange(companies.Select(row => BusinessProfile(row.customer, row.business)));
+        return results;
+    }
+
+    /// <summary>Bên A as the customer's legal entity: the entity's name, address, representative and tax code over the person's details.</summary>
+    private static CustomerLookupResult BusinessProfile(Customer customer, CustomerBusiness b)
+    {
+        var contact = CustomerProfile(customer);
+        contact.Fields["CUSTOMER_COMPANY"] = b.CustomerBusinessLegalName;
+        contact.Fields["CUSTOMER_ADDRESS"] = b.CustomerBusinessOfficeAddress ?? b.CustomerBusinessHeadOfficeAddress ?? "";
+        contact.Fields["CUSTOMER_CONTACT_NAME"] = b.CustomerBusinessRepresentativeName ?? "";
+        contact.Fields["CUSTOMER_CONTACT_PHONE"] = b.CustomerBusinessPhone ?? customer.CustomerPersonalPhone;
+        contact.Fields["CUSTOMER_EMAIL"] = b.CustomerBusinessEmail ?? customer.CustomerEmail ?? "";
+        contact.Fields["CUSTOMER_TAX_CODE"] = b.CustomerBusinessCompanyTaxIdentifier;
+        return new CustomerLookupResult(contact, b.CustomerBusinessId, b.CustomerBusinessLegalName);
+    }
+
+    /// <summary>
+    /// The customer's current details for Bên A of a contract (the person, or the chosen legal entity of that customer),
+    /// so an editable version can be refilled from the customer record. Null when the customer is gone or locked.
+    /// </summary>
+    public async Task<CustomerLookupResult?> CustomerProfileFor(long customerId, long? businessId, CancellationToken ct)
+    {
+        var customer = await db.Customers.AsNoTracking().SingleOrDefaultAsync(c => c.CustomerId == customerId && c.CustomerStatus == 1, ct);
+        if (customer is null) return null;
+        if (businessId is null) return new CustomerLookupResult(CustomerProfile(customer), null, null);
+        var business = await db.CustomerBusinesses.AsNoTracking().SingleOrDefaultAsync(b => b.CustomerBusinessId == businessId && b.CustomerId == customerId, ct);
+        return business is null ? new CustomerLookupResult(CustomerProfile(customer), null, null) : BusinessProfile(customer, business);
+    }
+
     public async Task<CustomerOption?> Customer(long id, CancellationToken ct)
     {
         var c = await db.Customers.AsNoTracking().SingleOrDefaultAsync(x => x.CustomerId == id && x.CustomerStatus == 1, ct);
-        if (c is null) return null;
-        return new(c.CustomerId, c.CustomerDisplayName, c.CustomerPersonalPhone, new()
+        return c is null ? null : CustomerProfile(c);
+    }
+
+    private static CustomerOption CustomerProfile(Customer c) =>
+        new(c.CustomerId, c.CustomerDisplayName, c.CustomerPersonalPhone, new()
         {
             ["CUSTOMER_CONTACT_NAME"] = c.CustomerDisplayName, ["CUSTOMER_CONTACT_PHONE"] = c.CustomerPersonalPhone,
             ["CUSTOMER_COMPANY"] = c.CustomerDisplayName,
             ["CUSTOMER_ADDRESS"] = c.CustomerAddress ?? "",
             ["CUSTOMER_EMAIL"] = c.CustomerEmail ?? "", ["CUSTOMER_TAX_CODE"] = ""
         });
-    }
+
     public async Task<CustomerOption> CreateCustomer(CustomerInput input, long actor, CancellationToken ct)
     {
         var name = InternalDraftPolicy.Text(input.Name, 200);
@@ -378,8 +464,8 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!;
         if (!v.ContractVersionIslocked) DraftValidation.Recheck(content);
         var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone);
-        var internallyApproved = await db.ContractApprovalRequests.AnyAsync(a => a.ContractDocumentId == id && a.ContractVersionId == v.ContractVersionId && a.InternalStage == "APPROVED", ct);
-        var blocked = !internallyApproved ? "Cần Hành chính và Sếp duyệt trước khi gửi khách." : ContractReviewPolicy.CanSend(d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? ContractDocumentStatus.Draft : d.ContractDocumentStatus, latest, d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? false : v.ContractVersionIslocked, content.MissingFields.Count)
+        var internallyApproved = await db.ContractApprovalRequests.AnyAsync(a => a.ContractDocumentId == id && a.ContractVersionId == v.ContractVersionId && (a.InternalStage == "APPROVED" || a.InternalStage == "DIRECTOR"), ct);
+        var blocked = !internallyApproved ? "Cần Hành chính duyệt trước khi gửi khách." : ContractReviewPolicy.CanSend(d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? ContractDocumentStatus.Draft : d.ContractDocumentStatus, latest, d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? false : v.ContractVersionIslocked, content.MissingFields.Count)
             ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null)
             ?? (ReviewLink.ContactEmail(content.Fields, customer.CustomerEmail) is null ? "Nhập email khách hàng trong hợp đồng để gửi link xem." : null);
         var carried = await (from comment in db.ContractNegotiationComments.AsNoTracking()
@@ -391,7 +477,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         return new(id, d.ContractDocumentCode!, d.EmployeeId, name, Convert.ToBase64String(d.RowVersion), Convert.ToBase64String(v.ContractVersionRowversion),
             d.UpdatedDate ?? d.CreatedDate, content, d.ContractDocumentStatus, v.ContractVersionVersionNo, v.ContractVersionIslocked,
             ContractReviewPolicy.CanEdit(d.ContractDocumentStatus, v.ContractVersionIslocked), customer.CustomerDisplayName,
-            PhoneNumber.Mask(phone ?? customer.CustomerPersonalPhone), latest, blocked, DraftValidation.Missing(content), carried);
+            PhoneNumber.Mask(phone ?? customer.CustomerPersonalPhone), latest, blocked, DraftValidation.Missing(content), carried, await ReviewData.HasAccount(db, d.CustomerId, ct));
     }
     public async Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct)
     {

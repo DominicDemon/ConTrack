@@ -2,8 +2,8 @@ import type { DraftContent } from "@/services/internal-api";
 export type CustomerSession = { id: string; name: string; mustChangePassword: boolean };
 export type ReviewLinkStatus = { verified: boolean; reviewId: string | null; expiresAt: string };
 export type CustomerSigningOtpResult = { challengeId: string; expiresAt: string; deliveryChannel: string; developmentOtp: string | null };
-export type CustomerReviewSummary = { id: string; contractName: string; versionNo: string; status: string; sentAt: string; respondedAt: string | null };
-export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string; section?: string | null };
+export type CustomerReviewSummary = { id: string; contractName: string; versionNo: string; status: string; sentAt: string; respondedAt: string | null; firstViewedAt?: string | null };
+export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string; section?: string | null; carried?: boolean };
 export type CustomerReviewDetail = { id: string; contractName: string; versionNo: string; status: string; sentAt: string; message: string | null; customerNote: string | null;
   respondedAt: string | null; documentHash: string; rowVersion: string; content: DraftContent; comments: ReviewComment[] };
 export const customerStatusLabel: Record<string, string> = { SENT: "Chờ bạn xem", VIEWED: "Chờ bạn phản hồi", APPROVED: "Đã đồng ý · theo dõi ký", CHANGES_REQUESTED: "Bạn đã yêu cầu sửa",

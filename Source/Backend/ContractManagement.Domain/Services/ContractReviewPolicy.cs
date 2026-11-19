@@ -54,6 +54,9 @@ public static class ContractReviewPolicy
             _ => throw new ArgumentException("Quyết định không hợp lệ.")
         };
         if (decision == "REJECT" && string.IsNullOrWhiteSpace(note)) throw new ArgumentException("Vui lòng nhập lý do từ chối.");
+        // Agreeing and asking for changes exclude each other: comments on this version mean a change request.
+        if (decision == "APPROVE" && hasComments)
+            throw new ArgumentException("Bạn đã góp ý cho phiên bản này. Hãy bấm Gửi yêu cầu sửa để nhân viên chỉnh lại hợp đồng.");
         if (decision == "REQUEST_CHANGES" && string.IsNullOrWhiteSpace(note) && !hasComments)
             throw new ArgumentException("Thêm ít nhất một góp ý theo mục hoặc nhập nội dung cần sửa.");
         return result;
@@ -97,6 +100,12 @@ public static class ReviewLink
     public static string? ContactEmail(IReadOnlyDictionary<string, string> fields, string? customerEmail) =>
         new[] { fields.GetValueOrDefault(EmailField)?.Trim(), customerEmail?.Trim() }.FirstOrDefault(IsEmail);
     private static bool IsEmail(string? value) => System.Net.Mail.MailAddress.TryCreate(value, out var address) && address.Address == value;
+    /// <summary>"an***@gmail.com": enough for staff to recognise the address without showing it in full.</summary>
+    public static string MaskEmail(string email)
+    {
+        var at = email.IndexOf('@');
+        return at <= 0 ? email : email[..Math.Min(2, at)] + "***" + email[at..];
+    }
 }
 
 public static class SnapshotHash

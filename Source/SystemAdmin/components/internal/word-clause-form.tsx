@@ -29,6 +29,78 @@ export function wordCards(blocks:DocumentBlock[]) {
   return cards;
 }
 
+const partyFields: Record<string, string> = {
+  "địa chỉ": "CUSTOMER_ADDRESS",
+  "điện thoại": "CUSTOMER_CONTACT_PHONE",
+  "số điện thoại": "CUSTOMER_CONTACT_PHONE",
+  "fax": "CUSTOMER_FAX",
+  "đại diện": "CUSTOMER_CONTACT_NAME",
+  "người đại diện": "CUSTOMER_CONTACT_NAME",
+  "chức vụ": "CUSTOMER_CONTACT_TITLE",
+  "mã số thuế": "CUSTOMER_TAX_CODE",
+  "email": "CUSTOMER_EMAIL",
+};
+
+export function wordCustomerValues(source: DocumentBlock[], fields: Readonly<Record<string, string>>, partyType: string | undefined, warnings: string[] = []) {
+  const updates = new Map<string, string>();
+  const section = wordCards(source).find(card => card.label === "Thông tin các bên");
+  if (!section) return updates;
+
+  const ids = new Set(section.ids);
+  let inPartyA = false;
+  let pending: { key: string; label: string; table: number | null; row: number | null; cell: number | null } | null = null;
+  for (const block of source) {
+    if (!ids.has(block.id)) continue;
+    const text = block.text.normalize("NFC").replace(/\s+/gu, " ").trim();
+    const heading = text.match(/^(Bên\s+([AB])\s*[:：])\s*/iu);
+    if (heading) {
+      if (heading[2].toUpperCase() === "B") break;
+      inPartyA = true;
+      const name = fields[partyType === "BUSINESS" ? "CUSTOMER_COMPANY" : "CUSTOMER_CONTACT_NAME"];
+      if (name) updates.set(block.id, heading[1] + " " + name);
+      continue;
+    }
+    if (!inPartyA) continue;
+    const table = block.tableId ?? null, row = block.row ?? null, cell = block.cell ?? null;
+    const label = text.match(/^([^:：]+)[:：]\s*(.*)$/u);
+    const key = partyFields[(label?.[1] ?? text).trim().toLowerCase()];
+    if (pending && (key || pending.table !== table || pending.row !== row)) {
+      warnings.push("Kiểm tra ô " + pending.label + " của Bên A.");
+      pending = null;
+    }
+    if (key) {
+      if (/(?:fax|điện thoại|chức vụ)\s*[:：]/iu.test(label?.[2] ?? "")) { warnings.push("Kiểm tra dòng có nhiều trường: " + text); continue; }
+      if (label?.[2]) updates.set(block.id, label[1] + ": " + (fields[key] ?? ""));
+      else pending = table === null ? null : { key, label: label?.[1] ?? text, table, row, cell };
+      continue;
+    }
+    if (pending && pending.table === table && pending.row === row && pending.cell != null && cell === pending.cell + 1) {
+      updates.set(block.id, fields[pending.key] ?? "");
+      pending = null;
+    }
+  }
+  if (pending) warnings.push("Kiểm tra ô " + pending.label + " của Bên A.");
+  return updates;
+}
+
+/** Nearest scrolling ancestor (the editor pane), else the page. */
+function scroller(el:HTMLElement):HTMLElement {
+  for(let p=el.parentElement;p;p=p.parentElement){const y=getComputedStyle(p).overflowY;if((y==="auto"||y==="scroll")&&p.scrollHeight>p.clientHeight)return p;}
+  return document.scrollingElement as HTMLElement;
+}
+/** After a card moves, scroll so it stays where the user was looking and keep focus on the same button. */
+export function keepInView(id:string, button:string) {
+  const el=document.getElementById(id); if(!el) return;
+  const top=el.getBoundingClientRect().top;
+  requestAnimationFrame(()=>{const moved=document.getElementById(id); if(!moved) return;
+    scroller(moved).scrollTop+=moved.getBoundingClientRect().top-top;
+    (moved.querySelector<HTMLButtonElement>(`button[aria-label="${button}"]:not(:disabled)`) ?? moved.querySelector<HTMLElement>("input,textarea"))?.focus({preventScroll:true});});
+}
+/** A new card: bring it into view and put the cursor in it. */
+function reveal(key:string) {
+  requestAnimationFrame(()=>{const el=document.getElementById("word-card-"+key); el?.scrollIntoView({block:"center"}); el?.querySelector<HTMLElement>("textarea,input")?.focus({preventScroll:true});});
+}
+
 type Props = { cards:Card[]; blocks:DocumentBlock[]; busy:boolean; active:string; select:(id:string)=>void;
   update:(cards:Card[], blocks:DocumentBlock[])=>void; after:(b:DocumentBlock)=>ReactNode; anchors:Set<string>;
   table:()=>void; image:()=>void; readOnly?:boolean };
@@ -42,14 +114,14 @@ export default function WordClauseForm({cards,blocks,busy,active,select,update,a
     const label=kind==="Điều khoản"?"Điều "+nextNumber:kind;
     const title=make(label+":"), body=make("");
     const next=cards.slice(); next.splice(index<0?cards.length:index+1,0,{key:title.id,title:title.id,label,ids:[title.id,body.id]});
-    update(next,[...blocks,title,body]); select(body.id);
+    update(next,[...blocks,title,body]); select(body.id); reveal(title.id);
   }
   function split(c:Card) {
     const start=c.ids.indexOf(active), b=byId.get(active);
     if (start<0 || !b || b.tableId!=null || b.bodyUnit!==b.id || c.title===active) return;
     const title=make("Điều "+nextNumber+": Điều khoản bổ sung");
     const next=cards.flatMap(x=>x!==c?[x]:[...(start?[{...c,ids:c.ids.slice(0,start)}]:[]),{key:title.id,title:title.id,label:"Điều khoản",ids:[title.id,...c.ids.slice(start)]}]);
-    update(next,[...blocks,title]);select(active);
+    update(next,[...blocks,title]);select(active);reveal(title.id);
   }
   function changeText(id:string,text:string){update(cards,blocks.map(b=>b.id===id?{...b,text}:b));}
   function textGroup(c:Card, group:DocumentBlock[]) {
@@ -88,8 +160,8 @@ export default function WordClauseForm({cards,blocks,busy,active,select,update,a
           parts.push(<WordDocumentLayout key={b.id} blocks={chunk} afterBlock={after} renderBlock={x=><>{x.images?.map((img,j)=><img key={j} src={`data:${img.mime};base64,${img.base64}`} alt="Ảnh trong hợp đồng" style={{maxWidth:"100%"}}/>)}<textarea data-word-ids={x.id} aria-label={x.tableId!=null?"Nội dung ô bảng":"Nội dung đoạn"} className={ui.field} rows={1} value={x.text} onFocus={()=>select(x.id)} onChange={e=>changeText(x.id,e.target.value)}/></>}/>);
         }else{group.push(b);if(anchors.has(b.id)){flush();parts.push(<div key={"after"+b.id}>{after(b)}</div>);}}
       }flush();
-      const move=(d:number)=>{const next=cards.slice();[next[i],next[i+d]]=[next[i+d],next[i]];update(next,blocks);};
-      return <section className={s.lineItem} style={{minWidth:0,gridTemplateColumns:"minmax(0,1fr)"}} key={c.key}><header><strong>{c.label}</strong>{!c.fixed&&!readOnly&&<div>
+      const move=(d:number)=>{keepInView("word-card-"+c.key,d<0?"Di chuyển lên":"Di chuyển xuống");const next=cards.slice();[next[i],next[i+d]]=[next[i+d],next[i]];update(next,blocks);};
+      return <section id={"word-card-"+c.key} className={s.lineItem} style={{minWidth:0,gridTemplateColumns:"minmax(0,1fr)"}} key={c.key}><header><strong>{c.label}</strong>{!c.fixed&&!readOnly&&<div>
         <button type="button" disabled={!i} aria-label="Di chuyển lên" onClick={()=>move(-1)}><ArrowUp size={16}/></button>
         <button type="button" disabled={i===cards.length-1} aria-label="Di chuyển xuống" onClick={()=>move(1)}><ArrowDown size={16}/></button>
         <button type="button" aria-label="Xóa mục" onClick={()=>update(cards.filter(x=>x!==c),blocks)}><Trash2 size={16}/></button></div>}</header>

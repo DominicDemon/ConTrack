@@ -33,7 +33,9 @@ public static class CustomerPortalEndpoints
             if (long.TryParse(c.Session.GetString(LinkReviewKey), out var linkReview))
             {
                 if (!await portal.LinkActive(linkReview, c.RequestAborted)) { c.Session.Clear(); throw new InternalAppException(410, "Link đã hết hạn. Liên hệ nhân viên phụ trách để nhận link mới.", "LINK_EXPIRED"); }
-                if (!(path is "/auth/me" or "/auth/logout" || path == $"/reviews/{linkReview}" || path.StartsWith($"/reviews/{linkReview}/")))
+                // A prospect has no portal account, so they also sign this one contract through the link (signing still asks its own OTP).
+                if (!(path is "/auth/me" or "/auth/logout" || path == $"/reviews/{linkReview}" || path.StartsWith($"/reviews/{linkReview}/")
+                    || path == $"/signing/{linkReview}" || path.StartsWith($"/signing/{linkReview}/")))
                     throw new InternalAppException(403, "Link này chỉ dùng để xem một hợp đồng.");
             }
             else if (customer.MustChangePassword && !OpenDuringPasswordChange.Contains(path))
@@ -49,9 +51,9 @@ public static class CustomerPortalEndpoints
             var phone = PhoneNumber.Normalize(input.Phone);
             if (phone is null || string.IsNullOrEmpty(input.Password) || input.Password.Length > 200)
                 throw new InternalAppException(401, "Số điện thoại hoặc mật khẩu không đúng.");
-            var failureKey = "customer-login-fail:" + phone;
+            var failureKey = ReviewLinkOtp.LoginFailureKey(phone);
             if (cache.TryGetValue(failureKey, out int failures) && failures >= MaxFailuresPerPhone)
-                throw new InternalAppException(429, "Sai mật khẩu quá nhiều lần. Thử lại sau 15 phút.");
+                throw new InternalAppException(429, "Sai mật khẩu quá nhiều lần. Thử lại sau 15 phút hoặc liên hệ nhân viên phụ trách.");
             var customer = await r.Login(phone, input.Password, ct);
             if (customer is null)
             {
@@ -108,6 +110,8 @@ public static class CustomerPortalEndpoints
             Results.File(await signing.PortalSign(Current(c).Id, reviewId, input, c.Connection.RemoteIpAddress?.ToString(), c.Request.Headers.UserAgent.ToString(), ct),
                 "application/pdf", "signed-contract.pdf"));
         api.MapGet("/reviews", async (HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Reviews(Current(c).Id, ct)));
+        // The portal contract bell: derived from the customer's contracts; the browser keeps which items were read.
+        api.MapGet("/contract-notices", async (HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Notices(Current(c).Id, ct)));
         api.MapGet("/reviews/{id:long}/word", async (long id, bool? pdf, HttpContext c, ICustomerPortalRepository r, InternalWordTemplates word, CancellationToken ct) => {
             await r.Review(Current(c).Id, id, ct);
             var bytes = await word.CustomerWord(id, Current(c).Id, pdf != false, ct);
@@ -116,6 +120,11 @@ public static class CustomerPortalEndpoints
         api.MapGet("/reviews/{id:long}", async (long id, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Review(Current(c).Id, id, ct)));
         api.MapPost("/reviews/{id:long}/comments", async (long id, CommentInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
             Results.Ok(await r.Comment(Current(c).Id, id, input, ct)));
+        // The customer edits or removes their own comment while the review is open and the staff have not replied to it.
+        api.MapPut("/reviews/{id:long}/comments/{commentId:long}", async (long id, long commentId, CommentInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
+            Results.Ok(await r.EditComment(Current(c).Id, id, commentId, input, ct)));
+        api.MapDelete("/reviews/{id:long}/comments/{commentId:long}", async (long id, long commentId, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
+        { await r.DeleteComment(Current(c).Id, id, commentId, ct); return Results.NoContent(); });
         api.MapPost("/reviews/{id:long}/respond", async (long id, CustomerRespondInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
             Results.Ok(await r.Respond(Current(c).Id, id, input, c.Connection.RemoteIpAddress?.ToString(), c.Request.Headers.UserAgent.ToString(), ct)));
 

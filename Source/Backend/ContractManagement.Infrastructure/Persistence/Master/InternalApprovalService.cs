@@ -39,13 +39,14 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
         var history = await (from a in db.AuditLogs.AsNoTracking() join e in db.Employees on a.ActorId equals (long?)e.EmployeeId
             where a.EntityName == Entity && a.EntityId == id.ToString() orderby a.AuditLogId
             select new ApprovalEvent(a.AuditLogId, a.ActionType, e.EmployeeDisplayName, a.CreatedAt, a.NewData)).ToListAsync(ct);
-        var stage = approval?.InternalStage ?? "DRAFT";
+        // Sếp no longer approves before sending (only signs): a request left at the former DIRECTOR turn counts as approved.
+        var stage = approval?.InternalStage is "DIRECTOR" ? "APPROVED" : approval?.InternalStage ?? "DRAFT";
         var reviewStatus = await db.ContractReviewRequests.Where(r => r.ContractDocumentId == id && r.ContractVersionId == version.ContractVersionId)
             .OrderByDescending(r => r.ContractReviewRequestId).Select(r => r.ContractReviewRequestStatus).FirstOrDefaultAsync(ct);
         if (reviewStatus is not null && version.ContractVersionIslocked && stage == "APPROVED") stage = "CUSTOMER_" + reviewStatus;
         return new(stage, approval is null ? null : Convert.ToBase64String(approval.ContractApprovalRequestRowversion),
             actor.CanWrite && !version.ContractVersionIslocked && stage is "DRAFT" or "RETURNED",
-            stage == "OFFICE" && actor.CanCheck || stage == "DIRECTOR" && actor.CanApprove, history);
+            stage == "OFFICE" && actor.CanCheck, history);
     }
 
     public async Task Act(long id, string action, ApprovalAction input, InternalUser actor, CancellationToken ct)
@@ -78,8 +79,9 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
             {
                 if (approval is null) throw new InternalAppException(409, "Hợp đồng chưa trình duyệt.");
                 ReviewData.Expect(approval.ContractApprovalRequestRowversion, input.ApprovalRowVersion);
-                if (!(approval.InternalStage == "OFFICE" && actor.CanCheck || approval.InternalStage == "DIRECTOR" && actor.CanApprove))
-                    throw new InternalAppException(403, "Không đúng quyền hoặc thứ tự duyệt.");
+                // Only Hành chính decides before the contract goes to the customer; Sếp signs later and does not approve.
+                if (!(approval.InternalStage == "OFFICE" && actor.CanCheck))
+                    throw new InternalAppException(403, "Chỉ Hành chính duyệt hợp đồng trước khi gửi khách.");
                 if (approval.InternalContentHash != await ContentHash(id, version.ContractVersionId, ct)) throw new InternalAppException(409, "Nội dung đã thay đổi, cần trình lại.");
                 if (action == "return")
                 {
@@ -91,8 +93,8 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
                 }
                 else if (action == "approve")
                 {
-                    approval.InternalStage = approval.InternalStage == "OFFICE" ? "DIRECTOR" : "APPROVED";
-                    if (approval.InternalStage == "APPROVED") approval.ContractApprovalRequestStatus = 1;
+                    approval.InternalStage = "APPROVED";
+                    approval.ContractApprovalRequestStatus = 1;
                 }
                 else throw new ArgumentException("Thao tác không hợp lệ.");
                 approval.ContractApprovalRequestDecisioncomment = note;
@@ -102,6 +104,16 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
             version.ContractVersionChangenote = "Duyệt nội bộ " + now.ToString("O");
             Audit(id, actor, action.ToUpperInvariant(), new { version = version.ContractVersionVersionNo, stage = approval.InternalStage, note }, now);
             await db.SaveChangesAsync(ct);
+            // Sale submits → Hành chính is told; Hành chính approves or returns → the Sale in charge is told.
+            var name = $"{doc.ContractDocumentCode} · {doc.ContractDocumentName}" + (version.ContractVersionVersionNo > 1 ? $" (phiên bản {version.ContractVersionVersionNo})" : "");
+            var key = $"pre-send:{approval.ContractApprovalRequestId}:{action}:{now.Ticks}";
+            if (action == "submit")
+                await ReviewData.Notify(db, doc, key, "SUBMITTED_TO_OFFICE", "Hợp đồng chờ Hành chính duyệt", $"{actor.Name} trình {name}" + (note.Length > 0 ? $". Ghi chú: {note}" : ""),
+                    await ReviewData.WithPermission(db, "contract.check", ct), now, ct, includeOwner: false, except: actor.Id);
+            else if (action == "approve")
+                await ReviewData.Notify(db, doc, key, "OFFICE_APPROVED", "Hành chính đã duyệt, có thể gửi khách", name + (note.Length > 0 ? $". Ghi chú: {note}" : ""), [], now, ct, except: actor.Id);
+            else if (action == "return")
+                await ReviewData.Notify(db, doc, key, "OFFICE_RETURNED", "Hành chính trả lại hợp đồng", $"{name}. Lý do: {note}", [], now, ct, except: actor.Id);
             return true;
         }, ct);
     }
@@ -109,8 +121,8 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
     public async Task RequireApproved(long id, long version, CancellationToken ct)
     {
         var approval = await Latest(id, version, ct);
-        if (approval?.InternalStage != "APPROVED" || approval.InternalContentHash != await ContentHash(id, version, ct))
-            throw new InternalAppException(409, "Phiên bản cần được Hành chính và Sếp duyệt trước khi gửi khách.");
+        if (approval?.InternalStage is not ("APPROVED" or "DIRECTOR") || approval.InternalContentHash != await ContentHash(id, version, ct))
+            throw new InternalAppException(409, "Phiên bản cần được Hành chính duyệt trước khi gửi khách.");
     }
 
     public async Task Comment(long id, InternalCommentInput input, InternalUser actor, CancellationToken ct)
@@ -121,18 +133,28 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
             var version = await db.ContractVersions.SingleAsync(v => v.ContractVersionId == doc.ContractDocumentCurrentVersionId, ct);
             ReviewData.Expect(doc.RowVersion, input.RowVersion);
             ReviewData.Expect(version.ContractVersionRowversion, input.VersionRowVersion);
+            var now = DateTime.UtcNow;
             if (input.ResolveId is not null)
             {
                 if (!actor.CanCheck) throw new InternalAppException(403, "Chỉ Hành chính được xử lý nhận xét.");
                 if (!await db.AuditLogs.AnyAsync(a => a.AuditLogId == input.ResolveId && a.EntityName == Entity && a.EntityId == id.ToString() && a.ActionType == "COMMENT", ct))
                     throw new InternalAppException(404, "Không tìm thấy nhận xét.");
+                Audit(id, actor, "RESOLVE", new { version = version.ContractVersionVersionNo, termKey = (string?)null, note = "", resolveId = input.ResolveId }, now);
             }
-            else if (string.IsNullOrWhiteSpace(input.Content)) throw new ArgumentException("Nhập nhận xét.");
-            if (input.TermKey is not null && !await db.ContractTerms.AnyAsync(t => t.ContractDocumentId == id && t.ContractVersionId == version.ContractVersionId && t.ContractTermTermcode == input.TermKey, ct))
-                throw new ArgumentException("Điều khoản không thuộc phiên bản hiện tại.");
-            var now = DateTime.UtcNow;
+            else
+            {
+                // Several comments from one form are saved together, so one row version check covers them all.
+                var items = input.Items is { Count: > 0 } ? input.Items : [new InternalCommentItem(input.Content, input.TermKey)];
+                if (items.Count > 20) throw new ArgumentException("Gửi tối đa 20 nhận xét một lần.");
+                foreach (var item in items)
+                {
+                    if (string.IsNullOrWhiteSpace(item.Content)) throw new ArgumentException("Nhập nội dung cho từng nhận xét.");
+                    if (item.TermKey is not null && !await db.ContractTerms.AnyAsync(t => t.ContractDocumentId == id && t.ContractVersionId == version.ContractVersionId && t.ContractTermTermcode == item.TermKey, ct))
+                        throw new ArgumentException("Điều khoản không thuộc phiên bản hiện tại.");
+                    Audit(id, actor, "COMMENT", new { version = version.ContractVersionVersionNo, termKey = item.TermKey, note = InternalDraftPolicy.Text(item.Content, 4000), resolveId = (long?)null }, now);
+                }
+            }
             doc.UpdatedDate = now;
-            Audit(id, actor, input.ResolveId is null ? "COMMENT" : "RESOLVE", new { version = version.ContractVersionVersionNo, termKey = input.TermKey, note = InternalDraftPolicy.Text(input.Content, 4000), resolveId = input.ResolveId }, now);
             await db.SaveChangesAsync(ct);
             return true;
         }, ct);

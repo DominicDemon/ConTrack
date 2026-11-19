@@ -24,31 +24,60 @@ public static class InternalWordDetails
                 names.Add(line);
             }
         var name = names.Count > 0 ? string.Join(" ", names) : fallbackName;
+        var notes = new List<string>();
+        const string labels = @"Địa chỉ|Số điện thoại|Điện thoại|Fax|Đại diện|Người đại diện|Chức vụ|Mã số thuế|Email";
+        var labelPattern = new Regex(@"^(" + labels + @")\s*(?:[:：]\s*(.*))?$", RegexOptions.IgnoreCase);
+        var boundary = new Regex(@"^(?:Bên\s*[AB]\s*[:：]|Điều\s*\d|Hai bên|Sau khi|Căn cứ)", RegexOptions.IgnoreCase);
         var party = "";
-        for (var i = 0; i < lines.Count; i++)
+        for (var i = 0; i < blocks.Count; i++)
         {
-            var match = Regex.Match(lines[i], @"^Bên\s*([AB])\s*[:：]\s*(.*)$", RegexOptions.IgnoreCase);
-            if (match.Success)
+            var block = blocks[i];
+            var text = Clean(block.Text);
+            var heading = Regex.Match(text, @"^Bên\s*([AB])\s*[:：]\s*(.*)$", RegexOptions.IgnoreCase);
+            var label = labelPattern.Match(text);
+            string key, value;
+            if (heading.Success)
             {
-                party = match.Groups[1].Value.ToUpperInvariant() == "A" ? "CUSTOMER" : "PROVIDER";
-                var value = match.Groups[2].Value;
-                if (value.Length == 0 && i + 1 < lines.Count) value = lines[++i];
-                Put(party == "CUSTOMER" ? "CUSTOMER_COMPANY" : "PROVIDER_LEGAL_NAME", value);
+                party = heading.Groups[1].Value.ToUpperInvariant() == "A" ? "CUSTOMER" : "PROVIDER";
+                key = party == "CUSTOMER" ? "CUSTOMER_COMPANY" : "PROVIDER_LEGAL_NAME";
+                value = heading.Groups[2].Value;
+            }
+            else
+            {
+                if (boundary.IsMatch(text)) party = "";
+                if (party.Length == 0 || !label.Success) continue;
+                value = label.Groups[2].Value;
+                key = label.Groups[1].Value.ToLowerInvariant() switch {
+                    "địa chỉ" => party + "_ADDRESS", "mã số thuế" => party + "_TAX_CODE",
+                    "đại diện" or "người đại diện" => party == "CUSTOMER" ? "CUSTOMER_CONTACT_NAME" : "PROVIDER_REPRESENTATIVE_NAME",
+                    "điện thoại" or "số điện thoại" when party == "CUSTOMER" => "CUSTOMER_CONTACT_PHONE",
+                    "fax" when party == "CUSTOMER" => "CUSTOMER_FAX",
+                    "chức vụ" when party == "CUSTOMER" => "CUSTOMER_CONTACT_TITLE",
+                    "email" when party == "CUSTOMER" => "CUSTOMER_EMAIL", _ => "" };
+            }
+            if (key.Length == 0) continue;
+            if (value.Length == 0)
+            {
+                var next = blocks.Skip(i + 1);
+                var candidates = block.TableId is null
+                    ? next.Take(1).Where(b => b.TableId is null)
+                    : next.TakeWhile(b => b.TableId == block.TableId && b.Row == block.Row)
+                        .SkipWhile(b => b.Cell == block.Cell && Clean(b.Text).Length == 0)
+                        .TakeWhile(b => b.Cell == block.Cell + 1);
+                var parts = candidates.Select(b => Clean(b.Text)).ToList();
+                if (parts.Count == 0 || parts.Any(t => labelPattern.IsMatch(t) || boundary.IsMatch(t)))
+                {
+                    notes.Add($"Kiểm tra vị trí điền thông tin sau “{text}”.");
+                    continue;
+                }
+                value = string.Join(" ", parts).Trim();
+            }
+            if (Regex.IsMatch(value, @"(?:^|\s)(?:Fax|Điện thoại|Chức vụ)\s*[:：]", RegexOptions.IgnoreCase))
+            {
+                notes.Add($"Kiểm tra dòng chứa nhiều trường “{text}”.");
                 continue;
             }
-            if (Regex.IsMatch(lines[i], @"^(Điều\s*\d|Hai bên|Sau khi|Căn cứ)", RegexOptions.IgnoreCase)) party = "";
-            if (party.Length == 0) continue;
-            var label = Regex.Match(lines[i], @"^(Địa chỉ|Điện thoại|Đại diện|Người đại diện|Mã số thuế|Email)\s*[:：]?\s*(.*)$", RegexOptions.IgnoreCase);
-            if (!label.Success) continue;
-            var text = label.Groups[2].Value;
-            if (text.Length == 0 && i + 1 < lines.Count) text = lines[++i];
-            text = Regex.Split(text, @"\s+(?:Fax|Chức vụ)\s*:", RegexOptions.IgnoreCase)[0].Trim();
-            var key = label.Groups[1].Value.ToLowerInvariant() switch {
-                "địa chỉ" => party + "_ADDRESS", "mã số thuế" => party + "_TAX_CODE",
-                "đại diện" or "người đại diện" => party == "CUSTOMER" ? "CUSTOMER_CONTACT_NAME" : "PROVIDER_REPRESENTATIVE_NAME",
-                "điện thoại" => party == "CUSTOMER" ? "CUSTOMER_CONTACT_PHONE" : "",
-                "email" => party == "CUSTOMER" ? "CUSTOMER_EMAIL" : "", _ => "" };
-            Put(key, text);
+            Put(key, value);
         }
         var all = string.Join("\n", lines);
         var totals = Regex.Matches(all, @"(?:Tổng giá trị hợp đồng|Tổng giá trị của hợp đồng|Tổng cộng)\s*[:：]?\s*([\d][\d., ]*)", RegexOptions.IgnoreCase)
@@ -73,7 +102,6 @@ public static class InternalWordDetails
                     items.Add(new(null, row[0], quantity, unit, 0, 0));
             }
         }
-        var notes = new List<string>();
         if (total is null || items.Sum(i => i.Quantity * i.UnitPrice) != total) {
             items.Clear(); notes.Add("Chưa đối chiếu được hạng mục với tổng tiền; cần rà soát phần giá trị.");
         }

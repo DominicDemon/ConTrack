@@ -21,6 +21,33 @@ public sealed class WordSampleFactAttribute : FactAttribute
 public class InternalWordSampleTests
 {
     [WordSampleFact]
+    public async Task BasaoBlankPhoneAndFaxStaySeparateThroughPdf()
+    {
+        var root = Environment.GetEnvironmentVariable("CONTRACK_WORD_SAMPLE_ROOT")!;
+        using var file = new FileStream(Path.Combine(root, "20140407-HDKT-DTC-BASAO.doc"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var data = new MemoryStream();
+        await file.CopyToAsync(data);
+        var word = new InternalWordDocument(new ConfigurationBuilder().Build());
+        var source = await word.Normalize(new("BASAO.doc", Convert.ToBase64String(data.ToArray())), default);
+        var blocks = InternalWordDocument.Blocks(source);
+        var label = blocks.First(b => b.Text.Trim() == "Điện thoại");
+        var row = blocks.Where(b => b.TableId == label.TableId && b.Row == label.Row).ToList();
+        var fax = row.Single(b => b.Text.Trim().StartsWith("Fax"));
+        var phoneValue = row.First(b => b.Cell == label.Cell + 1);
+        var faxValue = row.First(b => b.Cell == fax.Cell + 1);
+        var blank = blocks.Select(b => b.Id == phoneValue.Id || b.Id == faxValue.Id ? b with { Text = "   " } : b).ToList();
+        var details = InternalWordDetails.Extract(InternalWordDocument.Edit(source, blank), "BASAO");
+        Assert.False(details.Fields.ContainsKey("CUSTOMER_CONTACT_PHONE"));
+        Assert.False(details.Fields.ContainsKey("CUSTOMER_FAX"));
+        var edited = InternalWordDocument.Edit(source, blank.Select(b => b.Id == phoneValue.Id ? b with { Text = "0901234567" } : b).ToList());
+        var filled = InternalWordDetails.Extract(edited, "BASAO");
+        Assert.Equal("0901234567", filled.Fields["CUSTOMER_CONTACT_PHONE"]);
+        Assert.False(filled.Fields.ContainsKey("CUSTOMER_FAX"));
+        using var pdf = UglyToad.PdfPig.PdfDocument.Open(await word.Pdf(edited, default));
+        Assert.Contains("0901234567", pdf.GetPage(1).Text);
+    }
+
+    [WordSampleFact]
     public async Task InsertedParagraphMatchesSourceFontSizeAndIndentInRenderedPdf()
     {
         var root = Environment.GetEnvironmentVariable("CONTRACK_WORD_SAMPLE_ROOT")!;

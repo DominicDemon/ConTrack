@@ -310,9 +310,7 @@ export default function InternalShell({ children }: { children: ReactNode }) {
                   Quản lý hợp đồng <span className={s.muted}> / Không gian nội bộ</span>
                 </span>
                 <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-                  {user.permissions.some((p) => p.startsWith("ticket.")) && (
-                    <AdminNotificationBell />
-                  )}
+                  <AdminNotificationBell tickets={user.permissions.some((p) => p.startsWith("ticket."))} />
                   <span className={s.muted}>{user.name}</span>
                   <button
                     data-leave-workspace

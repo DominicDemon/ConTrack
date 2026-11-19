@@ -42,7 +42,8 @@ public static class InternalHost
         if (string.IsNullOrWhiteSpace(masterConn))
             throw new InvalidOperationException("Internal mode requires ConnectionStrings:MasterDatabase.");
         builder.Services.AddMasterDatabase(builder.Configuration);
-        builder.Services.AddScoped<IInternalRepository, InternalRepository>();
+        builder.Services.AddScoped<InternalRepository>();
+        builder.Services.AddScoped<IInternalRepository>(services => services.GetRequiredService<InternalRepository>());
         builder.Services.AddScoped<InternalDraftService>();
         builder.Services.AddScoped<InternalSigningDemoService>();
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
@@ -81,6 +82,8 @@ public static class InternalHost
         builder.Services.AddOptions<SmtpEmailOptions>().Bind(builder.Configuration.GetSection(SmtpEmailOptions.SectionName));
         builder.Services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
         builder.Services.AddScoped<ContractExpiryReminders>();
+        builder.Services.AddScoped<ContractNotificationFeed>();
+        builder.Services.AddScoped<CustomerContractMailer>();
         builder.Services.AddHostedService<ContractExpiryReminderWorker>();
         builder.Services.AddScoped<ReviewLinkMailer>();
         builder.Services.AddScoped<ReviewLinkOtp>();
@@ -289,6 +292,15 @@ public static class InternalHost
             RequirePasswordChanged(user);
             return Results.Ok(await reminders.Expiring(ContractExpiryReminders.Today(DateTime.UtcNow), user.CanManageAll ? null : user.Id, ct));
         });
+        secured.MapPatch("/contract-templates/{id:long}/name", async (long id, TemplateNameInput input, HttpContext c, InternalRepository repository, CancellationToken ct) =>
+            Results.Ok(new { name = await repository.RenameTemplate(id, input.Name, Current(c), ct) }));
+        // The contract bell: every signed-in employee sees their own contract notifications; the item opens the contract.
+        api.MapGet("/contract-notifications", async (int? limit, HttpContext c, IInternalRepository r, ContractNotificationFeed feed, CancellationToken ct) =>
+            Results.Ok(await feed.List(await User(c, r, ct), limit ?? 20, ct)));
+        api.MapPost("/contract-notifications/{id:long}/read", async (long id, HttpContext c, IInternalRepository r, ContractNotificationFeed feed, CancellationToken ct) =>
+        { await feed.MarkRead(await User(c, r, ct), id, ct); return Results.NoContent(); });
+        api.MapPost("/contract-notifications/read-all", async (HttpContext c, IInternalRepository r, ContractNotificationFeed feed, CancellationToken ct) =>
+        { await feed.MarkRead(await User(c, r, ct), null, ct); return Results.NoContent(); });
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
         secured.MapGet("/contract-progress", async ([AsParameters] ProgressFilter filter, HttpContext c, ContractProgressService service, CancellationToken ct) => Results.Ok(await service.List(filter, Current(c), ct)));
         secured.MapGet("/checklist-rules", () => Results.Ok(ContractChecklistService.Catalog));
@@ -373,6 +385,11 @@ public static class InternalHost
             Results.Ok(await importer.Save(input, Current(c).Id, ct)));
         secured.MapGet("/contract-templates/{id:long}", async (long id, IInternalRepository r, CancellationToken ct) =>
             (await r.Templates(ct)).FirstOrDefault(t => t.Id == id) is { } t ? Results.Ok(t) : Results.NotFound());
+        // Bên A of a draft refilled from the customer record (the person, or the legal entity chosen in the draft).
+        secured.MapGet("/customers/{id:long}/profile", async (long id, long? businessId, InternalRepository repository, CancellationToken ct) =>
+            await repository.CustomerProfileFor(id, businessId, ct) is { } profile ? Results.Ok(profile) : Results.NotFound());
+        secured.MapGet("/customers/lookup", async (string? search, InternalRepository repository, CancellationToken ct) =>
+            Results.Ok(await repository.LookupCustomers(search, ct)));
         secured.MapGet("/customers", async (string? search, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Customers(search, ct)));
         secured.MapGet("/customers/{id:long}/businesses", async (long id, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Businesses(id, ct)));
         secured.MapPost("/customers/{id:long}/businesses", async (long id, BusinessInput input, HttpContext c, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.CreateBusiness(id, input, Current(c).Id, ct)));
@@ -441,8 +458,21 @@ public static class InternalHost
         { await r.ResolveComment(id, Current(c), ct); return Results.NoContent(); });
         secured.MapPost("/contract-reviews/{id:long}/resend-link", async (long id, ResendLinkRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
             Results.Ok(await r.ResendLink(id, input, Current(c), ct)));
-        secured.MapPost("/customers/{id:long}/reset-temp-password", async (long id, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
-            Results.Ok(await r.ResetTemporaryPassword(id, Current(c), ct)));
+        secured.MapPost("/customers/{id:long}/reset-temp-password", (long id, HttpContext c, IContractReviewRepository r, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct) =>
+            IssueCustomerPassword(id, r.ResetTemporaryPassword(id, Current(c), ct), db, cache, ct));
+        secured.MapPost("/customers/{id:long}/account", (long id, HttpContext c, IContractReviewRepository r, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct) =>
+            IssueCustomerPassword(id, r.CreateCustomerAccount(id, Current(c), ct), db, cache, ct));
+        static async Task<IResult> IssueCustomerPassword(long id, Task<ResetTemporaryPasswordResult> issue, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct)
+        {
+            var result = await issue;
+            // A new password also lifts the wrong-password lock, so the customer can log in right away.
+            if (ContractManagement.Domain.Internal.PhoneNumber.Normalize(await db.Customers.Where(x => x.CustomerId == id).Select(x => x.CustomerPersonalPhone).SingleOrDefaultAsync(ct)) is { } phone)
+                cache.Remove(ReviewLinkOtp.LoginFailureKey(phone));
+            return Results.Ok(result);
+        }
+        // The sale resends the login code: lifts the customer's code / phone / password locks and texts a new code to the contract phone.
+        secured.MapPost("/contract-reviews/{id:long}/resend-otp", async (long id, HttpContext c, ICustomerPortalRepository r, ReviewLinkOtp otp, CancellationToken ct) =>
+        { await otp.ResendByEmployee(await r.ActiveLink(id, Current(c), ct), ct); return Results.NoContent(); });
         ScanEndpoints.Map(api);
         CustomerPortalEndpoints.Map(app);
         await app.RunAsync();
@@ -465,6 +495,7 @@ public static class InternalHost
         if (!long.TryParse(context.Session.GetString(UserKey), out var id)) throw new InternalAppException(401, "Vui lòng đăng nhập.");
         return await repository.GetUser(id, ct) ?? throw new InternalAppException(401, "Phiên đăng nhập hết hạn hoặc tài khoản đã khóa.");
     }
+    public sealed record TemplateNameInput(string? Name);
     public sealed record LoginInput(string Username, string Password);
 }
 

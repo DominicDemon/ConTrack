@@ -15,7 +15,8 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 public sealed class InternalSigningService(
     MasterDbContext db,
     InternalTemplateStorage storage,
-    IElectronicSigningPdfService signatures) : IInternalSigningService
+    IElectronicSigningPdfService signatures,
+    CustomerContractMailer? customerMail = null) : IInternalSigningService
 {
     static InternalSigningService()
     {
@@ -167,38 +168,39 @@ public sealed class InternalSigningService(
         RequireManager(actor);
         var signature = await db.ContractElectronicSignatures.AsNoTracking().SingleOrDefaultAsync(x => x.ContractElectronicSignatureId == signatureId
             && x.ContractElectronicPartytype == CompanyParty && x.ContractElectronicStatus == Pending, ct)
-            ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y yÃªu cáº§u kÃ½ cá»§a cÃ´ng ty.");
+            ?? throw new InternalAppException(404, "Không tìm thấy yêu cầu ký của công ty.");
         var path = await (from document in db.ContractDocuments.AsNoTracking()
             join relation in db.ContractDocumentFiles.AsNoTracking() on document.ContractDocumentId equals relation.ContractDocumentId
             join file in db.FileStorages.AsNoTracking() on relation.FileStorageFileid equals file.FileStorageFileid
             where document.TenantId == null && document.ContractDocumentId == signature.ContractDocumentId
                 && relation.ContractVersionId == signature.ContractVersionId && relation.IsPrimary
             select file)
-            .SingleOrDefaultAsync(ct) ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y PDF há»£p Ä‘á»“ng.");
+            .SingleOrDefaultAsync(ct) ?? throw new InternalAppException(404, "Không tìm thấy PDF hợp đồng.");
         var bytes = await ReadFile(path.FileStorageStoragekey, ct);
         if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(path.FileStorageSha256, StringComparison.OrdinalIgnoreCase))
-            throw new InternalAppException(409, "File PDF khÃ´ng khá»›p mÃ£ kiá»ƒm tra Ä‘Ã£ lÆ°u.");
+            throw new InternalAppException(409, "File PDF không khớp mã kiểm tra đã lưu.");
         return bytes;
     }
 
-    public Task<SigningStartResult> SignCompany(long signatureId, CompanySignatureRequest request, InternalUser actor, CancellationToken ct) =>
-        InTransaction(async () =>
+    public async Task<SigningStartResult> SignCompany(long signatureId, CompanySignatureRequest request, InternalUser actor, CancellationToken ct)
+    {
+        var result = await InTransaction(async () =>
         {
             RequireManager(actor);
-            if (!request.Confirmed) throw new ArgumentException("Cáº§n xÃ¡c nháº­n Ä‘Ã£ kiá»ƒm tra há»£p Ä‘á»“ng trÆ°á»›c khi kÃ½.");
+            if (!request.Confirmed) throw new ArgumentException("Cần xác nhận đã kiểm tra hợp đồng trước khi ký.");
             var company = await db.ContractElectronicSignatures.SingleOrDefaultAsync(x => x.ContractElectronicSignatureId == signatureId
-                && x.ContractElectronicPartytype == CompanyParty, ct) ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y bÃªn kÃ½ cÃ´ng ty.");
-            if (company.ContractElectronicStatus != Pending) throw new InternalAppException(409, "Chá»¯ kÃ½ cÃ´ng ty Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½.");
+                && x.ContractElectronicPartytype == CompanyParty, ct) ?? throw new InternalAppException(404, "Không tìm thấy bên ký công ty.");
+            if (company.ContractElectronicStatus != Pending) throw new InternalAppException(409, "Chữ ký công ty đã được xử lý.");
             var document = await db.ContractDocuments.SingleAsync(x => x.ContractDocumentId == company.ContractDocumentId && x.TenantId == null, ct);
             var version = await db.ContractVersions.SingleAsync(x => x.ContractVersionId == company.ContractVersionId, ct);
             if (document.ContractDocumentCurrentVersionId != version.ContractVersionId
                 || document.ContractDocumentStatus != ContractDocumentStatus.PendingSignature
                 || !version.ContractVersionIslocked
                 || company.ContractElectronicDocumentHashAtSigning != version.ContractVersionSnapshothash)
-                throw new InternalAppException(409, "Há»£p Ä‘á»“ng Ä‘Ã£ thay Ä‘á»•i sau khi phÃª duyá»‡t.");
+                throw new InternalAppException(409, "Hợp đồng đã thay đổi sau khi phê duyệt.");
             var customer = await db.ContractElectronicSignatures.SingleAsync(x => x.ContractDocumentId == company.ContractDocumentId
                 && x.ContractVersionId == company.ContractVersionId && x.ContractElectronicPartytype == CustomerParty, ct);
-            if (customer.ContractElectronicStatus != Pending) throw new InternalAppException(409, "BÃªn khÃ¡ch khÃ´ng á»Ÿ tráº¡ng thÃ¡i chá» kÃ½.");
+            if (customer.ContractElectronicStatus != Pending) throw new InternalAppException(409, "Bên khách không ở trạng thái chờ ký.");
             var fileInfo = await (from relation in db.ContractDocumentFiles join stored in db.FileStorages on relation.FileStorageFileid equals stored.FileStorageFileid
                 where relation.ContractDocumentId == company.ContractDocumentId && relation.ContractVersionId == company.ContractVersionId && relation.IsPrimary
                 select new { Relation = relation, Storage = stored }).SingleAsync(ct);
@@ -277,6 +279,12 @@ public sealed class InternalSigningService(
                 throw;
             }
         }, ct);
+        // After the commit: it is now the customer's turn to sign on the portal.
+        if (customerMail is not null)
+            await customerMail.Send(result.DocumentId, "Công ty đã ký hợp đồng, mời bạn ký",
+                "Đại diện công ty đã ký hợp đồng. Bạn mở hợp đồng trên Cổng khách hàng, xác nhận mã OTP gửi tới số điện thoại và ký để hoàn tất.", ct);
+        return result;
+    }
 
     private async Task<T> InTransaction<T>(Func<Task<T>> action, CancellationToken ct) => await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
     {
@@ -643,7 +651,8 @@ public sealed class InternalSigningService(
         int SignatureY, int SignatureWidth, int SignatureHeight);
 
     private static string? Clean(string? input, int max) => string.IsNullOrWhiteSpace(input) ? null : input.Trim()[..Math.Min(input.Trim().Length, max)];
-    private static void RequireManager(InternalUser actor) { if (!actor.CanManageAll) throw new InternalAppException(403, "Chỉ quản trị viên công ty được quản lý luồng ký."); }
+    // Sếp (contract.approve) signs for the company and opens the signing session; Hành chính and Sale do not.
+    private static void RequireManager(InternalUser actor) { if (!actor.CanApprove) throw new InternalAppException(403, "Chỉ Sếp (người ký cho công ty) được tạo phiên ký và ký."); }
     private static byte[] DecodeSignature(string input)
     {
         if (string.IsNullOrWhiteSpace(input) || input.Length > 1_400_000) throw new ArgumentException("Ảnh chữ ký PNG không hợp lệ.");

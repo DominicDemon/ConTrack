@@ -1,6 +1,6 @@
 # Hướng dẫn test tạo hợp đồng ConTrack
 
-Mục tiêu là tạo một hợp đồng từ mẫu Word có sẵn và kiểm tra luồng **Sale → Hành chính → Sếp → Sale gửi khách** trên môi trường test.
+Mục tiêu là tạo một hợp đồng từ mẫu Word có sẵn và kiểm tra luồng **Sale → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → Sếp ký** trên môi trường test.
 
 ## Chuẩn bị
 
@@ -36,9 +36,9 @@ Nếu gặp lỗi, ghi tên mẫu, loại mẫu, định dạng file, bước đ
 | 4 | Sale | Trong **Duyệt nội bộ**, gửi nhận xét “Đề nghị bổ sung định nghĩa và phụ lục thử”. | Nhận xét hiện trong lịch sử. Hành chính đọc được nội dung, người gửi và thời điểm. |
 | 5 | Hành chính | Khi hợp đồng còn là nháp, mở **Sửa nội dung Word của hợp đồng**. Chọn đoạn làm mốc, dùng **Thêm mục** để chèn **Định nghĩa** và **Phụ lục**, rồi chèn bảng 2×2 và một ảnh. Cập nhật bản xem trước, kiểm tra bố cục, lưu và mở lại. | Các nội dung mới nằm đúng chỗ trong PDF xem trước và còn khi mở lại DOCX. Thay đổi nằm trên hợp đồng thử đang sửa. |
 | 6 | Hành chính | Mở **Rà soát điều khoản**. Để kiểm tra cảnh báo, dùng mẫu thử có checklist **Bảo hành** và chỉ có tiêu đề bảo hành hoặc thiếu mục này. Có thể áp dụng checklist hiện tại của mẫu cho nháp còn sửa được. | Hiện cảnh báo **Chưa tìm thấy nội dung đầy đủ**. Hành chính có thể ghi lý do rồi chọn **Đã rà soát** hoặc **Không áp dụng**. |
-| 7 | Sale, Sếp | Sale bấm **Trình Hành chính**. Mở cùng hợp đồng bằng tài khoản Sếp trước khi Hành chính duyệt. | Hợp đồng ở bước **Chờ Hành chính kiểm tra**. Sếp chưa thể duyệt và Sale chưa thể gửi khách. |
+| 7 | Sale | Trước khi trình, kiểm tra khu gửi khách. Sau đó bấm **Trình Hành chính**. | Chưa có nút **Gửi khách xem**; thay vào đó là dòng "Chưa trình Hành chính" rồi "Đang chờ Hành chính duyệt". |
 | 8 | Hành chính, Sale | Hành chính trả lại kèm lý do. Kiểm tra lịch sử, chỉnh nội dung thử rồi dùng Sale trình lại. | Lý do được lưu. Hợp đồng quay lại Hành chính để kiểm tra. |
-| 9 | Hành chính, Sếp | Hành chính duyệt. Chuyển sang tài khoản Sếp và duyệt cùng phiên bản. | Sau lượt Hành chính, hồ sơ chuyển sang Sếp. Sau lượt Sếp, hồ sơ chuyển sang **Chờ Sale gửi**. |
+| 9 | Hành chính, Sếp | Hành chính bấm **Duyệt cho gửi khách**. Mở cùng hợp đồng bằng tài khoản Sếp. | Hồ sơ chuyển sang **Chờ Sale gửi**, Sale thấy nút **Gửi khách xem**. Sếp không có nút duyệt (Sếp chỉ ký ở bước sau). |
 | 10 | Sale | Đối chiếu PDF và DOCX với phiên bản đã duyệt, rồi chọn **Gửi khách xem** trên môi trường gửi giả lập. | Hồ sơ chuyển sang **Chờ khách phản hồi**. Bản gửi khớp phiên bản đã duyệt. |
 | 11 | Cả ba | Vào **Hợp đồng nháp** sau mỗi bước. Lọc theo bước, **Cần tôi xử lý** và **Có cảnh báo**. So sánh thời điểm vào bước trước và sau khi thêm nhận xét. | Bước, bộ phận và người phụ trách khớp hồ sơ. Nhận xét không đặt lại thời gian chờ. |
 
@@ -47,3 +47,18 @@ Mẫu Word nhập tay giữ chữ đã lưu trong bản Word. Kiểm tra số ti
 Để kiểm tra số thứ tự trong năm, lưu thêm một nháp trong cùng năm và đối chiếu phần số cuối. Việc kiểm tra năm mới cần chạy trên DB thử nghiệm bằng hai năm cấp số thử. Kết quả mong đợi là cấp `1, 2` ở năm đầu và `1` ở năm tiếp theo.
 
 Khi báo lỗi, ghi **số hợp đồng, vai trò, bước trong bảng, kết quả thực tế** và đính kèm ảnh màn hình nếu có.
+
+## Test khách tiềm năng (chưa có tài khoản)
+
+Khách tiềm năng là khách chưa từng được cấp mật khẩu (chưa có tài khoản Cổng khách hàng). Hệ thống tự nhận biết, không cần đánh dấu.
+
+1. Tạo khách mới có SĐT và email, tạo nháp, Trình Hành chính, Hành chính duyệt.
+2. Sale bấm `Gửi khách xem`: hộp thoại ghi "khách tiềm năng", có ô hạn link. Khách nhận email có link riêng.
+3. Khách mở link, nhập SĐT và mã OTP (SMS). Khách xem, góp ý, sửa/xóa góp ý, `Đồng ý` hoặc `Gửi yêu cầu sửa` ngay trên link.
+4. Sale và Hành chính thấy chuông báo "Khách tiềm năng … góp ý hợp đồng" trong vài giây; bấm vào mở hợp đồng.
+5. Sau khi Hành chính duyệt bản chốt và Sếp ký, khách ký luôn trên link đó (xác minh OTP ký). Link hết hạn thì Sale bấm `Gửi lại link` (dùng được cả sau khi khách đã đồng ý).
+6. Khi khách ký xong, chuông báo "Hai bên đã ký · tạo tài khoản cho khách". Mở hợp đồng, bấm `Tạo tài khoản khách`.
+7. Khách nhận email gồm tên đăng nhập (SĐT) và mật khẩu tạm; đăng nhập Cổng khách hàng thì bị yêu cầu đổi mật khẩu ngay.
+8. Hợp đồng sau gửi cho khách này: không còn link, khách nhận email mời đăng nhập Cổng khách hàng. `Gửi lại link` bị chặn; `Cấp lại mật khẩu tạm` gửi mật khẩu mới qua email nếu khách chưa đổi mật khẩu.
+
+Khách doanh nghiệp ký giấy: sau khi bản ký giấy được xác nhận, nút `Tạo tài khoản khách` hiện trên hợp đồng như trên.

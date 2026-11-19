@@ -73,6 +73,7 @@ public static class EmployeeAdminRules
         System.Security.Cryptography.RandomNumberGenerator.GetString("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz", 8)
         + System.Security.Cryptography.RandomNumberGenerator.GetString("23456789", 4);
 }
+public sealed record CustomerLookupResult(CustomerOption Customer, long? BusinessId, string? BusinessName);
 public sealed record CustomerOption(long Id, string Name, string Phone, Dictionary<string, string> Fields);
 public sealed record CustomerInput(string Name, string Phone, string? Email, string? Company, string? TaxCode, string? Address);
 public sealed record BusinessInput(string Name, string TaxCode, string Address, string Representative);
@@ -96,7 +97,7 @@ public sealed record SigningSignerProgress(long Id, long VersionNo, string Party
 public sealed record SigningArtifactInfo(string FileName, string ContentType, long Size, string Sha256, int Role, bool Primary, DateTime AddedAt);
 public sealed record DraftRecord(long Id, string Code, long EmployeeId, string EmployeeName, string RowVersion, string VersionRowVersion, DateTime UpdatedAt, DraftContent Content,
     int Status, long VersionNo, bool Locked, bool CanEdit, string CustomerName, string CustomerPhoneMasked, string? LatestReviewStatus, string? SendBlockedReason,
-    List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null);
+    List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null, bool CustomerHasAccount = false);
 public sealed record CarriedDraftComment(long Id, string? TermKey, string Content, long? SourceCommentId, long? SourceVersionId, bool Resolved);
 public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion, string? WordPreviewToken = null);
 public sealed record SigningDemoDraftResult(DraftRecord Draft, string CustomerPortalPhone, string CustomerPortalPassword);
@@ -174,6 +175,7 @@ public sealed class InternalDraftService(IInternalRepository repository)
         template = DraftCompletionPolicy.UpgradeTemplate(template);
         if (template.WordStorageKey is null)
             template = template with { Terms = content.Terms.Select(t => t with { Editable = true }).ToList() };
+        DraftValidation.RequireContractDates(content);
         DraftValidation.Prepare(content, template);
         if (content.CustomerBusinessId.HasValue && !(await repository.Businesses(content.CustomerId, ct)).Any(b => b.Id == content.CustomerBusinessId))
             throw new ArgumentException("Pháp nhân không thuộc khách hàng đã chọn.");

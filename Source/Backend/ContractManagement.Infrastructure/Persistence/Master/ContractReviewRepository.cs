@@ -25,11 +25,13 @@ public sealed class ContractReviewRepository(
 
     public async Task<ReviewSummary> SendReview(long documentId, SendReviewRequest request, InternalUser actor, CancellationToken ct)
     {
-        var mail = await ReviewData.InTransaction(db, async () =>
+        var mail = await ReviewData.InTransaction<LinkMail?>(db, async () =>
     {
         if (!actor.CanWrite) throw new InternalAppException(403, "Chỉ kinh doanh được gửi khách.");
-        var expires = ReviewLink.Expiry(request.LinkExpiresAt, DateTime.UtcNow) ?? throw new ArgumentException("Chọn thời gian hết hạn link sau thời điểm hiện tại.");
         var doc = await OwnedDocument(documentId, actor, ct);
+        // A customer with a portal account logs in to read it; a prospect gets a one-contract link opened by SMS OTP.
+        var hasAccount = await ReviewData.HasAccount(db, doc.CustomerId, ct);
+        var expires = hasAccount ? DateTime.MaxValue : ReviewLink.Expiry(request.LinkExpiresAt, DateTime.UtcNow) ?? throw new ArgumentException("Chọn thời gian hết hạn link sau thời điểm hiện tại.");
         ReviewData.Expect(doc.RowVersion, request.RowVersion);
         var version = await db.ContractVersions.SingleAsync(v => v.ContractVersionId == doc.ContractDocumentCurrentVersionId, ct);
         ReviewData.Expect(version.ContractVersionRowversion, request.VersionRowVersion);
@@ -69,11 +71,15 @@ public sealed class ContractReviewRepository(
         foreach (var comment in await db.ContractNegotiationComments.Where(c => c.ContractDocumentId == documentId && c.ContractVersionId == version.ContractVersionId && c.ContractReviewRequestId == null).ToListAsync(ct))
             comment.ContractReviewRequestId = review.ContractReviewRequestId;
         ReviewData.Audit(db, "SEND_REVIEW", "CONTRACT_REVIEW_REQUEST", review.ContractReviewRequestId, "EMPLOYEE", actor.Id, now);
+        if (hasAccount) { await db.SaveChangesAsync(ct); return null; }
         var token = await NewLink(documentId, version.ContractVersionId, phone, actor.Id, expires, now, ct);
         await db.SaveChangesAsync(ct);
         return new LinkMail(review.ContractReviewRequestId, email, customer.CustomerDisplayName, doc.ContractDocumentName, token, expires, review.ContractReviewRequestMessage);
     }, ct);
-        var sent = await mailer.Send(mail, PortalUrl, ct);
+        var sent = mail is not null ? await mailer.Send(mail, PortalUrl, ct)
+            : customerMail is not null && await customerMail.Send(documentId, "Có hợp đồng mới chờ bạn xem",
+                "Công ty đã gửi hợp đồng để bạn xem và phản hồi. Đăng nhập Cổng khách hàng bằng số điện thoại và mật khẩu của bạn để xem, góp ý hoặc đồng ý."
+                + (string.IsNullOrWhiteSpace(request.Message) ? "" : $"\nLời nhắn của nhân viên: {InternalDraftPolicy.Text(request.Message, 1000)}"), ct);
         return (await Summaries(documentId, ct)).First() with { LinkEmailSent = sent };
     }
 
@@ -89,7 +95,8 @@ public sealed class ContractReviewRepository(
             var doc = await OwnedDocument(review.ContractDocumentId, actor, ct);
             await approval.RequireApproved(doc.ContractDocumentId, review.ContractVersionId, ct);
             ReviewData.Expect(review.Rowversion, request.RowVersion);
-            if (ContractReviewPolicy.CanRespond(review.ContractReviewRequestStatus) is { } error) throw new InternalAppException(409, error);
+            if (ReviewData.CanReissueLink(review.ContractReviewRequestStatus) is { } error) throw new InternalAppException(409, error);
+            if (await ReviewData.HasAccount(db, review.CustomerId, ct)) throw new InternalAppException(409, "Khách đã có tài khoản: khách đăng nhập Cổng khách hàng để xem, không dùng link.");
             var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleAsync(x => x.ContractDocumentId == doc.ContractDocumentId
                 && x.ContractVersionId == review.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
             var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
@@ -322,32 +329,47 @@ public sealed class ContractReviewRepository(
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<ResetTemporaryPasswordResult> ResetTemporaryPassword(long customerId, InternalUser actor, CancellationToken ct)
+    /// <summary>A prospect gets a portal account only after both sides signed: login is the phone, the temporary password goes by email.</summary>
+    public Task<ResetTemporaryPasswordResult> CreateCustomerAccount(long customerId, InternalUser actor, CancellationToken ct) => IssuePassword(customerId, actor, true, ct);
+
+    public Task<ResetTemporaryPasswordResult> ResetTemporaryPassword(long customerId, InternalUser actor, CancellationToken ct) => IssuePassword(customerId, actor, false, ct);
+
+    private async Task<ResetTemporaryPasswordResult> IssuePassword(long customerId, InternalUser actor, bool create, CancellationToken ct)
     {
-        if (!actor.CanManageAll && !await db.ContractDocuments.AnyAsync(d => d.CustomerId == customerId && d.EmployeeId == actor.Id && d.TenantId == null, ct))
+        if (!actor.CanManageAll && !actor.CanCheck && !await db.ContractDocuments.AnyAsync(d => d.CustomerId == customerId && d.EmployeeId == actor.Id && d.TenantId == null, ct))
             throw new InternalAppException(403, "Bạn không phụ trách khách hàng này.");
         var customer = await db.Customers.SingleOrDefaultAsync(c => c.CustomerId == customerId && c.CustomerStatus == 1, ct) ?? throw new InternalAppException(404, "Không tìm thấy khách hàng.");
+        var hasAccount = await ReviewData.HasAccount(db, customerId, ct);
+        if (create && hasAccount) throw new InternalAppException(409, "Khách đã có tài khoản. Dùng “Cấp lại mật khẩu tạm” nếu khách chưa đăng nhập được.");
+        if (!create && !hasAccount) throw new InternalAppException(409, "Khách chưa có tài khoản. Tạo tài khoản sau khi hai bên đã ký hợp đồng.");
         if (customer.CustomerPersonalPhoneVerifiedAt is not null) throw new InternalAppException(409, "Khách đã đổi mật khẩu tạm; không cấp lại.");
+        var docs = db.ContractDocuments.AsNoTracking().Where(d => d.CustomerId == customerId && d.TenantId == null);
+        var signed = docs.Where(d => d.ContractDocumentStatus == ContractDocumentStatus.Signed || d.ContractDocumentStatus == ContractDocumentStatus.Completed);
+        if (create && !await signed.AnyAsync(ct)) throw new InternalAppException(409, "Chỉ tạo tài khoản sau khi hai bên đã ký hợp đồng.");
         var phone = PhoneNumber.Normalize(customer.CustomerPersonalPhone) ?? throw new InternalAppException(409, "Khách hàng chưa có số điện thoại hợp lệ.");
+        // Same address the contract emails went to: the latest (signed first) contract's customer email, else the customer's own.
+        var latest = await (await signed.AnyAsync(ct) ? signed : docs).OrderByDescending(d => d.UpdatedDate ?? d.CreatedDate)
+            .Select(d => new { d.ContractDocumentId, d.ContractDocumentCurrentVersionId }).FirstOrDefaultAsync(ct);
+        var snapshot = latest is null ? null : await db.ContractDynamicValues.AsNoTracking().Where(v => v.ContractDocumentId == latest.ContractDocumentId
+            && v.ContractVersionId == latest.ContractDocumentCurrentVersionId && v.FieldKey == InternalRepository.SnapshotKey).Select(v => v.FieldValue).FirstOrDefaultAsync(ct);
+        var fields = snapshot is null ? [] : JsonSerializer.Deserialize<DraftContent>(snapshot, InternalRepository.Json)?.Fields ?? [];
+        var email = ReviewLink.ContactEmail(fields, customer.CustomerEmail) ?? throw new InternalAppException(409, "Khách chưa có email hợp lệ để nhận tài khoản. Cập nhật email khách hàng trước.");
         var now = DateTime.UtcNow;
         var since = now.AddHours(-1);
-        if (await db.SmsOutboxes.CountAsync(s => s.CustomerId == customerId && s.SmsOutboxPurpose == SmsPurpose.TemporaryPassword && s.CreatedAt > since, ct) >= 3)
-            throw new InternalAppException(429, "Đã cấp lại mật khẩu tạm 3 lần trong 1 giờ. Thử lại sau.");
-        var password = IssueTemporaryPassword(customer, phone, null, actor.Id, now);
-        ReviewData.Audit(db, "RESET_TEMP_PASSWORD", "CUSTOMER", customerId, "EMPLOYEE", actor.Id, now);
-        await db.SaveChangesAsync(ct);
-        var simulated = smsOptions?.Value.Enabled != true || smsOptions.Value.Sandbox;
-        var discloseForDevelopment = environment?.IsDevelopment() == true && simulated;
-        return new(simulated, discloseForDevelopment ? phone : null, discloseForDevelopment ? password : null);
-    }
-
-    private string IssueTemporaryPassword(Customer customer, string phone, long? documentId, long actor, DateTime now)
-    {
-        var password = TemporaryPassword.Generate(); // never returned or logged
+        var key = customerId.ToString();
+        if (await db.AuditLogs.CountAsync(a => a.EntityName == "CUSTOMER" && a.EntityId == key && a.CreatedAt > since
+            && (a.ActionType == ReviewData.AccountCreatedAction || a.ActionType == ReviewData.PasswordResetAction), ct) >= 3)
+            throw new InternalAppException(429, "Đã cấp mật khẩu tạm 3 lần trong 1 giờ. Thử lại sau.");
+        var password = TemporaryPassword.Generate(); // never logged; only in the email (and shown in Development when the email fails)
         customer.CustomerPasswordHash = new PasswordHasher<Customer>().HashPassword(customer, password);
-        customer.UpdatedAt = now; customer.UpdatedBy = actor;
-        sms.Enqueue(db, SmsPurpose.TemporaryPassword, customer.CustomerId, documentId, phone, sms.TemporaryPasswordMessage(PortalUrl, phone, password), now);
-        return password;
+        customer.UpdatedAt = now; customer.UpdatedBy = actor.Id;
+        ReviewData.Audit(db, create ? ReviewData.AccountCreatedAction : ReviewData.PasswordResetAction, "CUSTOMER", customerId, "EMPLOYEE", actor.Id, now);
+        await db.SaveChangesAsync(ct);
+        // After the save on purpose: a failed email leaves the account in place and staff use “Cấp lại mật khẩu tạm”.
+        var sent = customerMail is not null && await customerMail.SendAccount(email, customer.CustomerDisplayName, phone, password,
+            smsOptions?.Value.TemporaryPasswordHours ?? 24, create, ct);
+        var disclose = environment?.IsDevelopment() == true && !sent;
+        return new(sent, ReviewLink.MaskEmail(email), disclose ? phone : null, disclose ? password : null);
     }
 
     private async Task<ContractDocument> OwnedDocument(long id, InternalUser actor, CancellationToken ct)
@@ -391,8 +413,7 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
         var now = DateTime.UtcNow;
         if (customer.CustomerPersonalPhoneVerifiedAt is null)
         {
-            var issued = await db.SmsOutboxes.Where(s => s.CustomerId == customer.CustomerId && s.SmsOutboxPurpose == SmsPurpose.TemporaryPassword)
-                .OrderByDescending(s => s.CreatedAt).Select(s => (DateTime?)s.CreatedAt).FirstOrDefaultAsync(ct);
+            var issued = await ReviewData.PasswordIssuedAt(db, customer.CustomerId, ct);
             if (issued is null || issued < now.AddHours(-options.Value.TemporaryPasswordHours))
                 throw new InternalAppException(403, "Mật khẩu tạm đã hết hạn, liên hệ nhân viên phụ trách.", "TEMP_PASSWORD_EXPIRED");
         }
@@ -423,7 +444,7 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
         var owner = await db.ContractDocuments.AsNoTracking().Where(d => d.ContractDocumentId == review.ContractDocumentId && d.TenantId == null)
             .Select(d => (long?)d.EmployeeId).SingleOrDefaultAsync(ct) ?? throw new InternalAppException(404, "Không tìm thấy hồ sơ.");
         InternalDraftService.RequireAccess(actor, owner);
-        if (ContractReviewPolicy.CanRespond(review.ContractReviewRequestStatus) is { } error) throw new InternalAppException(409, error);
+        if (ReviewData.CanReissueLink(review.ContractReviewRequestStatus) is { } error) throw new InternalAppException(409, error);
         var link = await (from l in db.ContractAccessLinks.AsNoTracking()
             join p in db.ContractPhoneVerifies on l.ContractAccessLinkVerificationPhoneId equals p.ContractPhoneVerifyId
             where l.ContractDocumentId == review.ContractDocumentId && l.ContractVersionId == review.ContractVersionId && l.RevokedAt == null
@@ -552,7 +573,7 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
         var result = (await ReviewData.Comments(db, [reviewId], ct))[reviewId].Single(c => c.Id == comment.ContractNegotiationCommentId);
         // The Sale in charge and Hành chính see the customer's comment straight away (both may revise the contract).
         var doc = await db.ContractDocuments.AsNoTracking().SingleAsync(d => d.ContractDocumentId == review.ContractDocumentId, ct);
-        await ReviewData.Notify(db, doc, $"comment:{comment.ContractNegotiationCommentId}", "CUSTOMER_COMMENT", "Khách góp ý hợp đồng",
+        await ReviewData.Notify(db, doc, $"comment:{comment.ContractNegotiationCommentId}", "CUSTOMER_COMMENT", $"{await ReviewData.CustomerLabel(db, customerId, ct)} góp ý hợp đồng",
             $"{doc.ContractDocumentCode}{(result.TermTitle is { } part ? " · " + part : "")}: {(result.Content.Length > 300 ? result.Content[..300] + "…" : result.Content)}",
             await ReviewData.WithPermission(db, "contract.check", ct), DateTime.UtcNow, ct);
         return result;
@@ -630,8 +651,9 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             }
             // The Sale in charge and Hành chính both hear of every customer answer: an agreed version is Hành chính's turn,
             // a change request may be revised by either of them.
-            var title = next.Review switch { ContractReviewStatus.Approved => "Khách đã đồng ý hợp đồng — chờ Hành chính duyệt bản chốt",
-                ContractReviewStatus.ChangesRequested => "Khách yêu cầu sửa hợp đồng", _ => "Khách từ chối hợp đồng" };
+            var who = await ReviewData.CustomerLabel(db, customerId, ct);
+            var title = next.Review switch { ContractReviewStatus.Approved => $"{who} đã đồng ý hợp đồng — chờ Hành chính duyệt bản chốt",
+                ContractReviewStatus.ChangesRequested => $"{who} yêu cầu sửa hợp đồng", _ => $"{who} từ chối hợp đồng" };
             await ReviewData.Notify(db, doc, $"review:{reviewId}:{next.Review}", "REVIEW_" + next.Review, title,
                 $"{doc.ContractDocumentCode} · {doc.ContractDocumentName}" + (note is { Length: > 0 } ? $". Ghi chú của khách: {note}" : ""),
                 await ReviewData.WithPermission(db, "contract.check", ct), now, ct);
@@ -665,6 +687,37 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
 
 internal static class ReviewData
 {
+    public const string AccountCreatedAction = "CREATE_CUSTOMER_ACCOUNT", PasswordResetAction = "RESET_TEMP_PASSWORD";
+
+    /// <summary>
+    /// A customer has a portal account once staff issued a temporary password (by SMS before, by email now) or they set their own.
+    /// Before that they are a prospect: they read and sign through the emailed link only.
+    /// </summary>
+    public static async Task<bool> HasAccount(MasterDbContext db, long customerId, CancellationToken ct)
+    {
+        return await db.Customers.AnyAsync(c => c.CustomerId == customerId && c.CustomerPersonalPhoneVerifiedAt != null, ct)
+            || await PasswordIssuedAt(db, customerId, ct) is not null;
+    }
+
+    /// <summary>When the latest temporary password was issued, or null if never.</summary>
+    public static async Task<DateTime?> PasswordIssuedAt(MasterDbContext db, long customerId, CancellationToken ct)
+    {
+        var key = customerId.ToString();
+        var byEmail = await db.AuditLogs.Where(a => a.EntityName == "CUSTOMER" && a.EntityId == key && (a.ActionType == AccountCreatedAction || a.ActionType == PasswordResetAction))
+            .MaxAsync(a => (DateTime?)a.CreatedAt, ct);
+        var bySms = await db.SmsOutboxes.Where(s => s.CustomerId == customerId && s.SmsOutboxPurpose == SmsPurpose.TemporaryPassword).MaxAsync(s => (DateTime?)s.CreatedAt, ct);
+        return byEmail > bySms || bySms is null ? byEmail : bySms;
+    }
+
+    /// <summary>"Khách tiềm năng An" or "Khách An", for staff notifications.</summary>
+    public static async Task<string> CustomerLabel(MasterDbContext db, long customerId, CancellationToken ct) =>
+        (await HasAccount(db, customerId, ct) ? "Khách " : "Khách tiềm năng ")
+        + await db.Customers.Where(c => c.CustomerId == customerId).Select(c => c.CustomerDisplayName).SingleAsync(ct);
+
+    /// <summary>A prospect also signs through the link, so it can be reissued after they agree, not only while the review is open.</summary>
+    public static string? CanReissueLink(string reviewStatus) =>
+        reviewStatus == ContractReviewStatus.Approved ? null : ContractReviewPolicy.CanRespond(reviewStatus);
+
     /// <summary>Active employees whose role grants the permission (e.g. contract.check = Hành chính, contract.approve = Sếp).</summary>
     public static Task<List<long>> WithPermission(MasterDbContext db, string permission, CancellationToken ct) =>
         (from er in db.EmployeeRoles join r in db.SystemRoles on er.SystemRoleId equals r.SystemRoleId

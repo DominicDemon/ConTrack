@@ -65,6 +65,16 @@ public sealed class CustomerContractNoticeTests
         var mailbox = new Mailbox();
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["CustomerPortal:BaseUrl"] = "https://portal.test/portal" }).Build();
         var mailer = new CustomerContractMailer(db, mailbox, config, NullLogger<CustomerContractMailer>.Instance);
+        // A prospect has no portal login: the email points back to the link email instead of the portal.
+        Assert.True(await mailer.Send(1, "Công ty đã ký hợp đồng, mời bạn ký", "Mời bạn ký.", default, "Mời bạn ký trên link."));
+        var prospect = Assert.Single(mailbox.Sent);
+        Assert.Contains("Mời bạn ký trên link.", prospect.TextBody);
+        Assert.DoesNotContain("https://portal.test", prospect.TextBody);
+        mailbox.Sent.Clear();
+
+        var customerId = await db.ContractDocuments.Where(d => d.ContractDocumentId == 1).Select(d => d.CustomerId).SingleAsync();
+        (await db.Customers.SingleAsync(c => c.CustomerId == customerId)).CustomerPersonalPhoneVerifiedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
         Assert.True(await mailer.Send(1, "Công ty đã ký hợp đồng, mời bạn ký", "Mời bạn ký.", default));
         var message = Assert.Single(mailbox.Sent);
         Assert.Equal("khach@x.vn", message.Recipient);

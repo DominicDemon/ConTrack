@@ -449,14 +449,18 @@ public static class InternalHost
         { await r.ResolveComment(id, Current(c), ct); return Results.NoContent(); });
         secured.MapPost("/contract-reviews/{id:long}/resend-link", async (long id, ResendLinkRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
             Results.Ok(await r.ResendLink(id, input, Current(c), ct)));
-        secured.MapPost("/customers/{id:long}/reset-temp-password", async (long id, HttpContext c, IContractReviewRepository r, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct) =>
+        secured.MapPost("/customers/{id:long}/reset-temp-password", (long id, HttpContext c, IContractReviewRepository r, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct) =>
+            IssueCustomerPassword(id, r.ResetTemporaryPassword(id, Current(c), ct), db, cache, ct));
+        secured.MapPost("/customers/{id:long}/account", (long id, HttpContext c, IContractReviewRepository r, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct) =>
+            IssueCustomerPassword(id, r.CreateCustomerAccount(id, Current(c), ct), db, cache, ct));
+        static async Task<IResult> IssueCustomerPassword(long id, Task<ResetTemporaryPasswordResult> issue, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct)
         {
-            var result = await r.ResetTemporaryPassword(id, Current(c), ct);
+            var result = await issue;
             // A new password also lifts the wrong-password lock, so the customer can log in right away.
             if (ContractManagement.Domain.Internal.PhoneNumber.Normalize(await db.Customers.Where(x => x.CustomerId == id).Select(x => x.CustomerPersonalPhone).SingleOrDefaultAsync(ct)) is { } phone)
                 cache.Remove(ReviewLinkOtp.LoginFailureKey(phone));
             return Results.Ok(result);
-        });
+        }
         // The sale resends the login code: lifts the customer's code / phone / password locks and texts a new code to the contract phone.
         secured.MapPost("/contract-reviews/{id:long}/resend-otp", async (long id, HttpContext c, ICustomerPortalRepository r, ReviewLinkOtp otp, CancellationToken ct) =>
         { await otp.ResendByEmployee(await r.ActiveLink(id, Current(c), ct), ct); return Results.NoContent(); });

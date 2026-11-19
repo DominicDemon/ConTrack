@@ -100,6 +100,12 @@ public static class ReviewLink
     public static string? ContactEmail(IReadOnlyDictionary<string, string> fields, string? customerEmail) =>
         new[] { fields.GetValueOrDefault(EmailField)?.Trim(), customerEmail?.Trim() }.FirstOrDefault(IsEmail);
     private static bool IsEmail(string? value) => System.Net.Mail.MailAddress.TryCreate(value, out var address) && address.Address == value;
+    /// <summary>"an***@gmail.com": enough for staff to recognise the address without showing it in full.</summary>
+    public static string MaskEmail(string email)
+    {
+        var at = email.IndexOf('@');
+        return at <= 0 ? email : email[..Math.Min(2, at)] + "***" + email[at..];
+    }
 }
 
 public static class SnapshotHash

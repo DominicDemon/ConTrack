@@ -4,7 +4,7 @@ import DraftPreview from "./draft-preview";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, CopyPlus, KeyRound, Mail, MessageSquare, Send, XCircle, Handshake, RefreshCw, Printer, Upload } from "lucide-react";
+import { Check, CopyPlus, KeyRound, Mail, MessageSquare, Send, XCircle, Handshake, RefreshCw, Printer, Upload, UserPlus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -84,6 +84,9 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
   const canPrint = business && record.status === 3 && approval?.status === 1;
   const customerApproved = latest?.status === "APPROVED";
   const signingComplete = record.status === 4 || record.status === 5;
+  /** A prospect has no portal account: they read, comment and sign through the emailed link; the account comes after both sides signed. */
+  const prospect = !record.customerHasAccount;
+  const linkUsable = prospect && !!latest && (["SENT", "VIEWED"].includes(latest.status) || (latest.status === "APPROVED" && !signingComplete));
   const companySigned = signingProgress?.signers.some(signer => signer.party === "Công ty" && signer.status === 1) ?? false;
   const customerSigned = signingProgress?.signers.some(signer => signer.party === "Khách hàng" && signer.status === 1) ?? signingComplete;
   const workflowSteps = [
@@ -95,7 +98,8 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
       { title: "In, ký và đóng dấu đỏ", detail: signingComplete ? "Hai bên đã ký giấy." : approval?.status === 1 ? "In hợp đồng; đại diện hai bên ký, doanh nghiệp đóng dấu đỏ." : "Sau khi Hành chính duyệt bản chốt, in hợp đồng để Sếp ký và khách đóng dấu.", done: signingComplete, current: record.status === 3 },
       { title: "Lưu bản ký giấy", detail: signingComplete ? "Bản scan đã được xác nhận, hồ sơ đã ký." : "Scan bản đã đóng dấu, tải lên màn Bản ký giấy và xác nhận.", done: signingComplete, current: false },
     ] : [{ title: "Sếp ký cho công ty", detail: companySigned ? "Sếp đã ký." : approval?.signingStarted ? "Đang chờ Sếp ký trong hàng đợi Ký phía công ty." : "Sau khi Hành chính duyệt bản chốt, Sếp tạo phiên ký và ký.", done: companySigned, current: record.status === 3 && !companySigned },
-    { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned }],
+    { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? (prospect ? "Công ty đã ký. Khách mở link trong email, xác minh OTP rồi ký." : "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký.") : prospect ? "Sau khi công ty ký, khách ký ngay trên link đã nhận qua email." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned }],
+    ...prospect ? [{ title: "Tạo tài khoản cho khách", detail: signingComplete ? "Hai bên đã ký. Bấm “Tạo tài khoản khách” để gửi email đăng nhập lần đầu (SĐT + mật khẩu tạm)." : "Khách tiềm năng chưa có tài khoản; tạo sau khi hai bên đã ký.", done: false, current: signingComplete }] : [],
   ];
 
   function ask(c: Confirm) { setConfirmed(false); setConfirm(c); setNote(""); setExpiry(inSevenDays()); setError(""); setNotice(""); }
@@ -108,13 +112,17 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
     setBusy(true); setError(""); setNotice("");
     try { const result = await action(); if (done) setNotice(typeof done === "string" ? done : done(result)); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
-  async function resetCustomerPassword() {
-    await act(() => internalApi<{ smsSimulated: boolean; developmentPhone: string | null; developmentPassword: string | null }>(
-      `/customers/${record.content.customerId}/reset-temp-password`, "POST"), result => result.developmentPhone && result.developmentPassword
-        ? `SMS không gửi thật trong môi trường Development. Đăng nhập Portal tại ${customerPortalLoginUrl} bằng SĐT ${result.developmentPhone} và mật khẩu tạm ${result.developmentPassword}.`
-        : result.smsSimulated
-          ? "SMS đang ở chế độ giả lập nên khách không nhận được tin. Cấu hình eSMS thật để gửi mật khẩu."
-          : "Đã xếp yêu cầu gửi mật khẩu tạm. Trạng thái này chưa xác nhận SMS đã được giao.");
+  /** Creates the prospect's portal account, or reissues the temporary password; both go to the customer by email. */
+  async function issueCustomerPassword(create: boolean) {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await internalApi<{ emailSent: boolean; emailMasked: string | null; developmentPhone: string | null; developmentPassword: string | null }>(
+        `/customers/${record.content.customerId}/${create ? "account" : "reset-temp-password"}`, "POST");
+      if (result.emailSent) setNotice(`${create ? "Đã tạo tài khoản và gửi" : "Đã gửi"} email đăng nhập lần đầu tới ${result.emailMasked}: tên đăng nhập là SĐT của khách, kèm mật khẩu tạm.`);
+      else setError(`${create ? "Đã tạo tài khoản nhưng chưa" : "Chưa"} gửi được email tới ${result.emailMasked}. Kiểm tra cấu hình SMTP rồi bấm “Cấp lại mật khẩu tạm”.`
+        + (result.developmentPhone && result.developmentPassword ? ` (Development) Đăng nhập tại ${customerPortalLoginUrl} bằng SĐT ${result.developmentPhone}, mật khẩu tạm ${result.developmentPassword}.` : ""));
+      onChanged();
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   async function refreshWorkflow() {
     setBusy(true); setError("");
@@ -122,11 +130,13 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
     finally { setBusy(false); }
   }
 
-  const mailed = (r: ReviewSummary) => { if (r.linkEmailSent) setNotice("Đã gửi email có link cho khách."); else setError("Chưa gửi được email cho khách. Kiểm tra email trong hợp đồng hoặc cấu hình SMTP rồi bấm Gửi lại link."); };
+  const mailed = (r: ReviewSummary) => { if (r.linkEmailSent) setNotice(prospect ? "Đã gửi email có link xem hợp đồng cho khách." : "Đã gửi email mời khách đăng nhập Cổng khách hàng để xem."); else setError(prospect ? "Chưa gửi được email cho khách. Kiểm tra email trong hợp đồng hoặc cấu hình SMTP rồi bấm Gửi lại link." : "Đã gửi hợp đồng lên Cổng khách hàng nhưng chưa gửi được email báo khách. Kiểm tra email hoặc cấu hình SMTP."); };
   const send = () => ask({ title: "Gửi khách xem", action: "Gửi khách xem",
-    description: `Gửi phiên bản ${record.versionNo} cho ${record.customerName} (${record.customerPhoneMasked}). Phiên bản sẽ bị khóa; khách nhận email có link, xác nhận số điện thoại trong hợp đồng bằng mã OTP rồi xem và phản hồi.`,
-    note: { label: "Lời nhắn cho khách (tùy chọn)", max: 1000 }, expiry: true,
-    run: (n, linkExpiresAt) => internalApi<ReviewSummary>(`/contract-drafts/${record.id}/send-review`, "POST", { message: n || null, rowVersion: record.rowVersion, versionRowVersion: record.versionRowVersion, contentConfirmed: true, linkExpiresAt }).then(mailed) });
+    description: prospect
+      ? `Gửi phiên bản ${record.versionNo} cho khách tiềm năng ${record.customerName} (${record.customerPhoneMasked}). Phiên bản sẽ bị khóa; khách không cần tài khoản: nhận email có link, xác minh số điện thoại bằng mã OTP rồi xem, góp ý và ký ngay trên link.`
+      : `Gửi phiên bản ${record.versionNo} cho ${record.customerName} (${record.customerPhoneMasked}). Phiên bản sẽ bị khóa; khách đã có tài khoản nên nhận email mời đăng nhập Cổng khách hàng để xem và phản hồi.`,
+    note: { label: "Lời nhắn cho khách (tùy chọn)", max: 1000 }, expiry: prospect,
+    run: (n, linkExpiresAt) => internalApi<ReviewSummary>(`/contract-drafts/${record.id}/send-review`, "POST", { message: n || null, rowVersion: record.rowVersion, versionRowVersion: record.versionRowVersion, contentConfirmed: true, linkExpiresAt: linkExpiresAt || null }).then(mailed) });
   const resendLink = () => latest && ask({ title: "Gửi lại link", action: "Gửi lại link", description: "Gửi link mới qua email cho khách. Link cũ sẽ không dùng được nữa.", expiry: true,
     run: (_, linkExpiresAt) => internalApi<ReviewSummary>(`/contract-reviews/${latest.id}/resend-link`, "POST", { linkExpiresAt, rowVersion: latest.rowVersion }).then(mailed) });
   const newVersion = () => ask({ title: "Tạo phiên bản mới", action: "Tạo phiên bản", description: `Tạo phiên bản ${Number(record.versionNo) + 1} từ nội dung hiện tại. Phiên bản ${record.versionNo} vẫn được giữ trong lịch sử.`,
@@ -191,8 +201,8 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
         {(user.canWrite || user.canCheck) && canCreateVersion && <button className={latest?.status === "CHANGES_REQUESTED" ? ui.primaryButton : ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới để chỉnh sửa</button>}
         {user.canWrite && awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
           <button className={ui.secondaryButton} disabled={busy} onClick={() => followup("CLOSE")}><XCircle size={16}/>Đóng draft</button></>}
-        {user.canWrite && (latest?.status === "SENT" || latest?.status === "VIEWED") && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
-        {user.canWrite && (latest?.status === "SENT" || latest?.status === "VIEWED") && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách không kịp nhập mã, nhập sai quá nhiều lần hoặc bị khóa đăng nhập"
+        {user.canWrite && linkUsable && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
+        {user.canWrite && linkUsable && latest && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách không kịp nhập mã, nhập sai quá nhiều lần hoặc bị khóa đăng nhập"
           onClick={() => void act(() => internalApi(`/contract-reviews/${latest.id}/resend-otp`, "POST"), `Đã gửi mã OTP mới tới ${record.customerPhoneMasked} và mở khóa cho khách. Khách mở link trong email, chọn “Đã có mã” và nhập mã (hiệu lực 5 phút).`)}><KeyRound size={16}/>Gửi lại mã OTP</button>}
         {canDecideFinal && <>
           <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>Duyệt, chuyển Sếp ký</button>
@@ -203,8 +213,11 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
         </button>}
         {canPrint && <><button className={ui.primaryButton} disabled={busy} onClick={() => void printContract()}><Printer size={16}/>In hợp đồng (PDF)</button>
           <Link className={ui.secondaryButton} href={`/workspace/signed-contracts/${encodeURIComponent(record.id)}`}><Upload size={16}/>Tải bản ký giấy</Link></>}
-        {latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất tin nhắn"
-          onClick={() => void resetCustomerPassword()}><KeyRound size={16}/>Cấp lại mật khẩu tạm</button>}
+        {(user.canWrite || user.canCheck) && prospect && signingComplete && <button className={ui.primaryButton} disabled={busy}
+          title="Gửi email cho khách: tên đăng nhập là SĐT, kèm mật khẩu tạm; khách đổi mật khẩu ở lần đăng nhập đầu"
+          onClick={() => void issueCustomerPassword(true)}><UserPlus size={16}/>Tạo tài khoản khách</button>}
+        {(user.canWrite || user.canCheck) && !prospect && latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất email"
+          onClick={() => void issueCustomerPassword(false)}><KeyRound size={16}/>Cấp lại mật khẩu tạm</button>}
       </div>
     </div>
     {user.canWrite && canSendToCustomer && <div id="review-send-guidance" className={s.muted} style={{ marginTop: 8 }} aria-live="polite">
@@ -217,8 +230,10 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
     {(record.issues ?? []).some(i => i.path.startsWith("milestones")) && <button type="button" className={ui.secondaryButton} onClick={() => focusIssue("milestones")}>Đi tới lịch thanh toán</button>}
     {(record.carriedComments?.length ?? 0) > 0 && <section className={ui.notice}><strong>Góp ý chuyển tiếp sang phiên bản này</strong>{record.carriedComments?.map(c => <div key={c.id}><p>{c.content} · chuyển từ bản trước · {c.resolved ? "Đã xử lý" : "Chưa xử lý"}</p>{!c.resolved && <button type="button" disabled={busy} className={ui.secondaryButton} onClick={() => void act(async () => { await internalApi(`/contract-comments/${c.id}/resolve`,"POST"); onChanged(); })}>Đánh dấu đã xử lý</button>}</div>)}</section>}
     {latest && <div className={s.customerPortalAccess}>
-      <div><strong>Cách khách mở hợp đồng</strong><p>Khách mở Portal, đăng nhập bằng số điện thoại và mật khẩu, rồi chọn hợp đồng trong mục “Hợp đồng của bạn”. Link này mở trang đăng nhập, không phải link công khai riêng cho hợp đồng.</p><p className={s.muted}>Trạng thái “đang chờ khách” xác nhận yêu cầu đã được tạo, không xác nhận SMS đã giao thành công.</p></div>
-      <a href={customerPortalLoginUrl} target="_blank" rel="noreferrer">Mở Portal khách hàng</a>
+      {prospect
+        ? <div><strong>Cách khách mở hợp đồng</strong><p>Khách tiềm năng chưa có tài khoản: khách mở link riêng trong email, xác minh số điện thoại bằng mã OTP rồi xem, góp ý, đồng ý và ký ngay trên link đó. Link chỉ mở được hợp đồng này.</p><p className={s.muted}>Sau khi hai bên ký, bấm “Tạo tài khoản khách” để gửi email đăng nhập lần đầu.</p></div>
+        : <div><strong>Cách khách mở hợp đồng</strong><p>Khách đã có tài khoản: khách đăng nhập Cổng khách hàng bằng số điện thoại và mật khẩu, rồi chọn hợp đồng trong mục “Hợp đồng của bạn”. Khách nhận email báo có hợp đồng mới.</p></div>}
+      {!prospect && <a href={customerPortalLoginUrl} target="_blank" rel="noreferrer">Mở Portal khách hàng</a>}
     </div>}
     {record.canEdit && <p className={s.muted} style={{ marginTop: 8 }}>Khi bạn lưu nội dung đã thay đổi, hệ thống tự tạo phiên bản kế tiếp và giữ phiên bản trước trong lịch sử.</p>}
     {error && <p role="alert" className={ui.error} style={{ marginTop: 10 }}>{error}</p>}

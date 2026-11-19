@@ -33,7 +33,9 @@ public static class CustomerPortalEndpoints
             if (long.TryParse(c.Session.GetString(LinkReviewKey), out var linkReview))
             {
                 if (!await portal.LinkActive(linkReview, c.RequestAborted)) { c.Session.Clear(); throw new InternalAppException(410, "Link đã hết hạn. Liên hệ nhân viên phụ trách để nhận link mới.", "LINK_EXPIRED"); }
-                if (!(path is "/auth/me" or "/auth/logout" || path == $"/reviews/{linkReview}" || path.StartsWith($"/reviews/{linkReview}/")))
+                // A prospect has no portal account, so they also sign this one contract through the link (signing still asks its own OTP).
+                if (!(path is "/auth/me" or "/auth/logout" || path == $"/reviews/{linkReview}" || path.StartsWith($"/reviews/{linkReview}/")
+                    || path == $"/signing/{linkReview}" || path.StartsWith($"/signing/{linkReview}/")))
                     throw new InternalAppException(403, "Link này chỉ dùng để xem một hợp đồng.");
             }
             else if (customer.MustChangePassword && !OpenDuringPasswordChange.Contains(path))

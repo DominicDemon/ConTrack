@@ -64,6 +64,8 @@ export const requiredPartyFields = [
 export function sendIssues(c: DraftContent): DraftIssue[] {
   const issues = draftIssues(c);
   for (const f of [...requiredPartyFields, ...(c.templateSnapshot?.fields ?? [])]) {
+    // Word templates carry Bên B in the file itself.
+    if (c.templateSnapshot?.wordStorageKey && f.key.startsWith("PROVIDER_")) continue;
     if (f.required && !c.fields[f.key]?.trim() && !issues.some(i => i.path === "fields."+f.key))
       issues.push({code:"required",path:"fields."+f.key,message:f.label});
   }

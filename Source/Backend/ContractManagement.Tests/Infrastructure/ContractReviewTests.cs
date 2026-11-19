@@ -250,8 +250,13 @@ public class ContractReviewTests
             await Assert.ThrowsAsync<InternalAppException>(() => drafts.Save(draft.Id, new(locked.Content, locked.RowVersion, locked.VersionRowVersion), sale, default));
             Assert.Equal(1, (await repo.Drafts(saleId, null, 1, default)).Count(d => d.Id == draft.Id && d.LatestReviewStatus == ContractReviewStatus.Sent));
 
-            // 2. SMS worker (kept for the password portal) sends, clears ciphertext; callback marks delivered idempotently.
-            await reviews.ResetTemporaryPassword(customerA.Id, sale, default);
+            // 2. SMS worker sends, clears ciphertext; callback marks delivered idempotently. Passwords now go by email after signing
+            // (CustomerAccountTests); an account from the older SMS temporary password still logs in, so that row is written here directly.
+            var legacy = await db.Customers.SingleAsync(c => c.CustomerId == customerA.Id);
+            var legacyPassword = TemporaryPassword.Generate();
+            legacy.CustomerPasswordHash = new Microsoft.AspNetCore.Identity.PasswordHasher<Customer>().HashPassword(legacy, legacyPassword);
+            writer.Enqueue(db, SmsPurpose.TemporaryPassword, customerA.Id, null, phoneA, writer.TemporaryPasswordMessage("http://localhost/portal", phoneA, legacyPassword), DateTime.UtcNow);
+            await db.SaveChangesAsync();
             var tempSms = await db.SmsOutboxes.AsNoTracking().SingleAsync(s => s.CustomerId == customerA.Id);
             Assert.Equal(SmsPurpose.TemporaryPassword, tempSms.SmsOutboxPurpose);
             Assert.Equal(PhoneNumber.Mask(phoneA), tempSms.SmsOutboxPhoneMasked);

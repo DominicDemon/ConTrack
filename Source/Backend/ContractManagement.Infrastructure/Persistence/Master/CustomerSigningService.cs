@@ -174,9 +174,12 @@ public sealed class CustomerSigningService(
                 };
                 db.FileStorages.Add(companySignedLayout);
                 await db.SaveChangesAsync(ct);
-                // The customer finished signing on the portal: the Sale in charge and Hành chính are told at once.
+                // The customer signs last, so both sides have now signed: the Sale in charge and Hành chính are told at once,
+                // and a prospect (no portal account yet) is flagged so they create the account.
+                var prospect = !await ReviewData.HasAccount(db, customerId, ct);
                 await ReviewData.Notify(db, document, $"customer-signed:{document.ContractDocumentId}:{version.ContractVersionId}", "CUSTOMER_SIGNED",
-                    "Khách đã ký hợp đồng", $"{document.ContractDocumentCode} · {document.ContractDocumentName}",
+                    prospect ? "Hai bên đã ký · tạo tài khoản cho khách" : "Hai bên đã ký hợp đồng",
+                    $"{document.ContractDocumentCode} · {document.ContractDocumentName}" + (prospect ? " · Khách tiềm năng chưa có tài khoản: mở hợp đồng và bấm “Tạo tài khoản khách”." : ""),
                     await ReviewData.WithPermission(db, "contract.check", ct), now, ct);
                 db.ContractDocumentFiles.Add(new ContractDocumentFile { ContractDocumentId = document.ContractDocumentId, ContractVersionId = version.ContractVersionId,
                     FileStorageFileid = companySignedLayout.FileStorageFileid, ContractDocumentFileRole = 1, IsPrimary = false, CreatedDate = now, CreatedEmployeeId = document.EmployeeId });
@@ -204,7 +207,8 @@ public sealed class CustomerSigningService(
             // After the commit: confirm by email that the contract is signed by both sides (the portal shows the final PDF).
             if (customerMail is not null)
                 await customerMail.Send(link.ContractDocumentId, "Hợp đồng đã ký xong",
-                    "Bạn và công ty đã ký đủ hợp đồng. Bạn có thể tải bản PDF đã ký trên Cổng khách hàng.", ct);
+                    "Bạn và công ty đã ký đủ hợp đồng. Bạn có thể tải bản PDF đã ký trên Cổng khách hàng.", ct,
+                    "Bạn và công ty đã ký đủ hợp đồng. Nhân viên phụ trách sẽ gửi tài khoản Cổng khách hàng qua email để bạn xem và tải bản đã ký.");
             return result;
         }
         catch

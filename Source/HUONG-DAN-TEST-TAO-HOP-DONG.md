@@ -47,3 +47,18 @@ Mẫu Word nhập tay giữ chữ đã lưu trong bản Word. Kiểm tra số ti
 Để kiểm tra số thứ tự trong năm, lưu thêm một nháp trong cùng năm và đối chiếu phần số cuối. Việc kiểm tra năm mới cần chạy trên DB thử nghiệm bằng hai năm cấp số thử. Kết quả mong đợi là cấp `1, 2` ở năm đầu và `1` ở năm tiếp theo.
 
 Khi báo lỗi, ghi **số hợp đồng, vai trò, bước trong bảng, kết quả thực tế** và đính kèm ảnh màn hình nếu có.
+
+## Test khách tiềm năng (chưa có tài khoản)
+
+Khách tiềm năng là khách chưa từng được cấp mật khẩu (chưa có tài khoản Cổng khách hàng). Hệ thống tự nhận biết, không cần đánh dấu.
+
+1. Tạo khách mới có SĐT và email, tạo nháp, Trình Hành chính, Hành chính duyệt.
+2. Sale bấm `Gửi khách xem`: hộp thoại ghi "khách tiềm năng", có ô hạn link. Khách nhận email có link riêng.
+3. Khách mở link, nhập SĐT và mã OTP (SMS). Khách xem, góp ý, sửa/xóa góp ý, `Đồng ý` hoặc `Gửi yêu cầu sửa` ngay trên link.
+4. Sale và Hành chính thấy chuông báo "Khách tiềm năng … góp ý hợp đồng" trong vài giây; bấm vào mở hợp đồng.
+5. Sau khi Hành chính duyệt bản chốt và Sếp ký, khách ký luôn trên link đó (xác minh OTP ký). Link hết hạn thì Sale bấm `Gửi lại link` (dùng được cả sau khi khách đã đồng ý).
+6. Khi khách ký xong, chuông báo "Hai bên đã ký · tạo tài khoản cho khách". Mở hợp đồng, bấm `Tạo tài khoản khách`.
+7. Khách nhận email gồm tên đăng nhập (SĐT) và mật khẩu tạm; đăng nhập Cổng khách hàng thì bị yêu cầu đổi mật khẩu ngay.
+8. Hợp đồng sau gửi cho khách này: không còn link, khách nhận email mời đăng nhập Cổng khách hàng. `Gửi lại link` bị chặn; `Cấp lại mật khẩu tạm` gửi mật khẩu mới qua email nếu khách chưa đổi mật khẩu.
+
+Khách doanh nghiệp ký giấy: sau khi bản ký giấy được xác nhận, nút `Tạo tài khoản khách` hiện trên hợp đồng như trên.

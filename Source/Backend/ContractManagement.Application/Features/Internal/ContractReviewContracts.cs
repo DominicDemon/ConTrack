@@ -23,7 +23,8 @@ public static class ContractVersionNotes
 public sealed record FollowupRequest(string? Decision, string? Note, string? RowVersion);
 public sealed record InternalApprovalDecisionRequest(bool Approve, string? Comment);
 public sealed record InternalApprovalState(long Id, int Status, DateTime SubmittedAt, string WorkflowName, string? Comment, bool SigningStarted);
-public sealed record ResetTemporaryPasswordResult(bool SmsSimulated, string? DevelopmentPhone, string? DevelopmentPassword);
+/// <summary>Result of creating a customer account or reissuing its temporary password; the password itself only appears in Development when the email failed.</summary>
+public sealed record ResetTemporaryPasswordResult(bool EmailSent, string? EmailMasked, string? DevelopmentPhone, string? DevelopmentPassword);
 public sealed record SigningStartResult(long CompanySignatureId, long DocumentId, long VersionId, string FileName, DateTime StartedAt,
     string? CustomerSigningUrl = null, DateTime? CustomerLinkExpiresAt = null);
 public sealed record CompanySigningQueueItem(long SignatureId, long DocumentId, long VersionId, string Code, string ContractName, string CustomerName, string SignerName, DateTime CreatedAt);
@@ -52,6 +53,7 @@ public interface IContractReviewRepository
     Task<ReviewComment> EmployeeComment(long reviewId, CommentInput input, InternalUser actor, CancellationToken ct);
     Task ResolveComment(long commentId, InternalUser actor, CancellationToken ct);
     Task<ResetTemporaryPasswordResult> ResetTemporaryPassword(long customerId, InternalUser actor, CancellationToken ct);
+    Task<ResetTemporaryPasswordResult> CreateCustomerAccount(long customerId, InternalUser actor, CancellationToken ct);
 }
 
 public interface IInternalSigningService

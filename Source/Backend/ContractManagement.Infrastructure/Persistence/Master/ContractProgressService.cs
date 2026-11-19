@@ -6,7 +6,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
-public sealed record ProgressFilter(string? Search = null, long? OwnerId = null, string? Stage = null, int? WaitingDays = null, bool Mine = false, bool Warnings = false, int Page = 1);
+/// <param name="From">First day (Vietnam time) the contract was created, inclusive.</param>
+/// <param name="To">Last day (Vietnam time) the contract was created, inclusive.</param>
+public sealed record ProgressFilter(string? Search = null, long? OwnerId = null, string? Stage = null, int? WaitingDays = null, bool Mine = false, bool Warnings = false, int Page = 1,
+    DateOnly? From = null, DateOnly? To = null);
 public sealed record ProgressRow(long Id, string Code, string Name, string Customer, long OwnerId, string Owner, string Stage, string Department, DateTime? EnteredAt, string? LastActor, int WarningCount, bool Configured, bool NeedsMe, string? InspectionError = null);
 public sealed record ProgressPage(List<ProgressRow> Items, int Total, int Page, int PageSize, Dictionary<string, int> Counts, DateTime ServerTime);
 
@@ -16,6 +19,7 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
     {
         InternalDraftService.RequireAccess(actor, actor.Id);
         if (filter.Page < 1 || filter.Page > 1000000 || filter.WaitingDays < 0 || filter.WaitingDays > 36500) throw new ArgumentException("Bộ lọc không hợp lệ.");
+        if (filter.From > filter.To) throw new ArgumentException("“Từ ngày” phải trước hoặc bằng “Đến ngày”.");
         var query = from doc in db.ContractDocuments.AsNoTracking()
                     join version in db.ContractVersions on doc.ContractDocumentCurrentVersionId equals version.ContractVersionId
                     join employee in db.Employees on doc.EmployeeId equals employee.EmployeeId
@@ -24,7 +28,16 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
                     && db.ContractDynamicValues.Any(v => v.ContractDocumentId == doc.ContractDocumentId && v.ContractVersionId == doc.ContractDocumentCurrentVersionId && v.FieldKey == InternalRepository.SnapshotKey)
                     select new { doc, version, employee.EmployeeDisplayName, customer.CustomerDisplayName };
         if (filter.OwnerId.HasValue) query = query.Where(x => x.doc.EmployeeId == filter.OwnerId);
-        if (!string.IsNullOrWhiteSpace(filter.Search)) query = query.Where(x => x.doc.ContractDocumentName.Contains(filter.Search) || x.doc.ContractDocumentCode!.Contains(filter.Search) || x.CustomerDisplayName.Contains(filter.Search));
+        if (!string.IsNullOrWhiteSpace(filter.Search))
+        {
+            var search = filter.Search.Trim();
+            // Also the customer's legal entities: their names and tax codes.
+            query = query.Where(x => x.doc.ContractDocumentName.Contains(search) || x.doc.ContractDocumentCode!.Contains(search) || x.CustomerDisplayName.Contains(search)
+                || db.CustomerBusinesses.Any(b => b.CustomerId == x.doc.CustomerId && (b.CustomerBusinessCompanyTaxIdentifier.Contains(search) || b.CustomerBusinessLegalName.Contains(search))));
+        }
+        // Dates are stored in UTC; the filter is in Vietnam days (UTC+7).
+        if (filter.From is { } from) { var start = from.ToDateTime(TimeOnly.MinValue).AddHours(-7); query = query.Where(x => x.doc.CreatedDate >= start); }
+        if (filter.To is { } to) { var end = to.AddDays(1).ToDateTime(TimeOnly.MinValue).AddHours(-7); query = query.Where(x => x.doc.CreatedDate < end); }
         var source = await query.ToListAsync(ct);
         var ids = source.Select(x => x.doc.ContractDocumentId).ToArray();
         var versions = source.Select(x => x.version.ContractVersionId).ToArray();

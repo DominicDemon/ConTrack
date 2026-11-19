@@ -18,8 +18,10 @@ public static class DraftValidation
     public static List<DraftIssue> SendIssues(DraftContent content)
     {
         var issues = Missing(content);
+        var word = content.TemplateSnapshot?.WordStorageKey is not null;
         var fields = DraftCompletionPolicy.PartyFields.Concat(content.TemplateSnapshot?.Fields ?? []);
-        foreach (var field in fields.Where(f => f.Required))
+        // Word templates carry Bên B in the file itself (same rule as InternalDraftPolicy.Prepare).
+        foreach (var field in fields.Where(f => f.Required && !(word && f.Key.StartsWith("PROVIDER_", StringComparison.Ordinal))))
         {
             var path = "fields." + field.Key;
             if (string.IsNullOrWhiteSpace(content.Fields.GetValueOrDefault(field.Key)) && issues.All(i => i.Path != path))

@@ -446,6 +446,8 @@ public sealed class FileProtectionService(
         }
 
         await GrantAsync(fileId, fileKey, eligible, cancellationToken);
+        // The customers the scan belongs to who set a key get it too (017), so they can open it on the portal.
+        await CustomerScans.GrantToCustomersAsync(db, fileId, fileKey, cancellationToken);
         db.AuditLogs.Add(Audit("EncryptedFileOpened", FileEntity, fileId, null));
         await db.SaveChangesAsync(cancellationToken);
         CryptographicOperations.ZeroMemory(fileKey);

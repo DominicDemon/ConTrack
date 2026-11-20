@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { FileText, Files, KeyRound, LifeBuoy, LogOut, UserRound } from "lucide-react";
+import { FileScan, FileText, Files, KeyRound, LifeBuoy, LogOut, UserRound } from "lucide-react";
 import { APP_NAME } from "@/lib/application-branding";
 import s from "@/components/internal/workspace.module.css";
 import { customerApi } from "@/services/customer-api";
@@ -16,7 +16,8 @@ export default function PortalHeader({ name, onLogout }: { name?: string; onLogo
     {onLogout ? <span className={s.brand} style={{ fontSize: 15 }}><span className={s.brandMark}><FileText size={18}/></span>{APP_NAME}</span>
       : <><Link href="/portal/contracts" className={s.brand} style={{ fontSize: 15 }}><span className={s.brandMark}><FileText size={18}/></span>{APP_NAME}</Link>
         <nav className={s.portalNav} aria-label="Cổng khách hàng"><Link href="/portal/contracts" className={nav("/portal/contracts")} aria-current={path.startsWith("/portal/contracts") ? "page" : undefined}><Files size={17}/>Hợp đồng của tôi</Link>
-          <Link href="/portal/support" className={nav("/portal/support")} aria-current={path.startsWith("/portal/support") ? "page" : undefined}><LifeBuoy size={17}/>Hỗ trợ</Link></nav></>}
+          <Link href="/portal/support" className={nav("/portal/support")} aria-current={path.startsWith("/portal/support") ? "page" : undefined}><LifeBuoy size={17}/>Hỗ trợ</Link>
+          <Link href="/portal/scans" className={nav("/portal/scans")} aria-current={path.startsWith("/portal/scans") ? "page" : undefined}><FileScan size={17}/>Bản scan</Link></nav></>}
     <div style={{ display: "flex", gap: 10, alignItems: "center" }}>{!onLogout && <CustomerNotificationBell/>}{name && (onLogout ? <span className={s.muted}>{name}</span>
         : <Link href="/portal/profile" className={s.muted} title="Hồ sơ của tôi" style={{ display: "flex", alignItems: "center", gap: 6 }}><UserRound size={16}/>{name}</Link>)}
       {!onLogout && <Link href="/portal/change-password" className={s.iconButton} title="Đổi mật khẩu" aria-label="Đổi mật khẩu"><KeyRound size={18}/></Link>}

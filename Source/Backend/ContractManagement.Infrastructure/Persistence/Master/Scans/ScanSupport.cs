@@ -238,6 +238,8 @@ public static class ScanRegistration
         services.AddScoped<FileProtectionService>();
         services.AddSingleton<FileKeyCodeStore>();
         services.AddScoped<FileKeyOwnerService>();
+        services.AddSingleton<CustomerKeyGuards>();
+        services.AddScoped<CustomerScanService>();
 
         services.AddOptions<ScanOcrOptions>().Bind(configuration.GetSection(ScanOcrOptions.SectionName));
         services.AddSingleton<IScanOcrEngine, TesseractScanOcrEngine>();

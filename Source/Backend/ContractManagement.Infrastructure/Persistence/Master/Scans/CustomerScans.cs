@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 
 /// <summary>A scan a customer may see, and why it is theirs.</summary>
-public sealed record CustomerScanMatch(long FileId, string Kind, long TargetId, string MatchedBy);
+public sealed record CustomerScanMatch(long FileId, string Kind, long TargetId, string MatchedBy, string Status = "Ready");
 
 /// <summary>
 /// Which stored scans belong to a customer (017-customer-file-keys.sql):
@@ -39,7 +39,18 @@ public static class CustomerScans
                 join file in db.ContractDocumentFiles on evidence.ContractDocumentFileId equals file.ContractDocumentFileId
                 join document in db.ContractDocuments on file.ContractDocumentId equals document.ContractDocumentId
                 where document.CustomerId == customerId && evidence.ContractSignedEvidenceStatus == ValidEvidence
-                select new CustomerScanMatch(file.FileStorageFileid, EvidenceKind, evidence.ContractSignedEvidenceId, "Hợp đồng của bạn"))
+                select new CustomerScanMatch(file.FileStorageFileid, EvidenceKind, evidence.ContractSignedEvidenceId, "Hợp đồng của bạn",
+                    "Accepted"))
+            .ToListAsync(cancellationToken);
+
+        // Direct customer uploads are ordinary contract files. They are not signed-evidence records and never enter review.
+        var customerUploads = await (
+                from documentFile in db.ContractDocumentFiles.AsNoTracking()
+                join file in db.FileStorages.AsNoTracking() on documentFile.FileStorageFileid equals file.FileStorageFileid
+                join document in db.ContractDocuments.AsNoTracking() on documentFile.ContractDocumentId equals document.ContractDocumentId
+                where document.CustomerId == customerId && file.FileStorageUploadedbycustomerid == customerId
+                select new CustomerScanMatch(file.FileStorageFileid, "customer-upload", documentFile.ContractDocumentFileId,
+                    "Bạn đã tải lên", "Ready"))
             .ToListAsync(cancellationToken);
 
         var jobs = db.OcrJobs.AsNoTracking().Where(job => job.ContractDocumentId == null && job.OcrJobProcessingStatus == "SUCCESS");
@@ -63,9 +74,9 @@ public static class CustomerScans
             .Select(group => new CustomerScanMatch(group.Key.FileStorageFileid, ScanKind, group.Key.OcrJobId,
                 "Trùng " + string.Join(", ", group.Select(row => row.ContractScanKeywordType).Distinct().Order().Select(Label))));
 
-        return evidences.Concat(confirmed).Concat(byKeyword)
+        return evidences.Concat(customerUploads).Concat(confirmed).Concat(byKeyword)
             .GroupBy(match => match.FileId)
-            .Select(group => group.First())
+            .Select(group => group.FirstOrDefault(match => match.Kind == EvidenceKind && match.Status == "Accepted") ?? group.First())
             .ToList();
     }
 
@@ -136,6 +147,23 @@ public static class CustomerScans
                 GrantedAt = DateTime.UtcNow,
             });
         }
+    }
+
+    public static async Task GrantToCustomerAsync(MasterDbContext db, long fileId, long customerId, byte[] fileKey, CancellationToken cancellationToken)
+    {
+        var key = await db.CustomerEncryptionKeys.AsNoTracking()
+            .Where(candidate => candidate.CustomerId == customerId && candidate.CustomerEncryptionKeyStatus == FileProtectionService.ActiveStatus)
+            .Select(candidate => new { candidate.CustomerEncryptionKeyId, candidate.CustomerEncryptionKeyPublickey })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (key is null || await db.CustomerFileKeys.AnyAsync(row => row.FileStorageFileid == fileId && row.CustomerEncryptionKeyId == key.CustomerEncryptionKeyId, cancellationToken))
+            return;
+        db.CustomerFileKeys.Add(new CustomerFileKey
+        {
+            FileStorageFileid = fileId,
+            CustomerEncryptionKeyId = key.CustomerEncryptionKeyId,
+            CustomerFileKeyWrappedkey = FileCrypto.Wrap(fileKey, key.CustomerEncryptionKeyPublickey),
+            GrantedAt = DateTime.UtcNow,
+        });
     }
 
     private static async Task<Identity?> IdentityAsync(MasterDbContext db, long customerId, CancellationToken cancellationToken)

@@ -17,9 +17,10 @@ public sealed record CustomerFileKeyStatusDto(bool HasKey, DateTime? SetAt, stri
 
 /// <summary>A scan on the portal. <see cref="Ready"/>: the customer's key can open it now.</summary>
 public sealed record CustomerScanDto(
-    string FileId, string Kind, string FileName, string? ContractCode, string? ContractName, DateTime UploadedAt, string MatchedBy, bool Ready);
+    string FileId, string Kind, string FileName, string? ContractCode, string? ContractName, DateTime UploadedAt, string MatchedBy, bool Ready, string Status);
 
 public sealed record CustomerScanFile(string FileName, string ContentType, byte[] Content);
+public sealed record CustomerScanUploadResult(string FileId, string FileName, DateTime UploadedAt);
 
 /// <summary>Wrong keys and key codes of customers, apart from the employees' (the ids of the two tables overlap).</summary>
 public sealed class CustomerKeyGuards
@@ -196,10 +197,61 @@ public sealed class CustomerScanService(
                     document?.ContractDocumentCode ?? contract?.ContractCode ?? codes.FirstOrDefault(c => c.FileStorageFileid == m.FileId)?.ContractScanKeywordValue,
                     document?.ContractDocumentName ?? contract?.ContractName,
                     DateTime.SpecifyKind(file.FileStorageUploadeddate, DateTimeKind.Utc), m.MatchedBy,
-                    key is not null && (granted.Contains(m.FileId) || protection.ServerKeepsRecoveryKey));
+                    key is not null && (granted.Contains(m.FileId) || protection.ServerKeepsRecoveryKey), m.Status);
             })
             .OrderByDescending(scan => scan.UploadedAt)
             .ToList();
+    }
+
+    /// <summary>Stores a customer's own scan as a contract file. This deliberately creates no signed-evidence/review record.</summary>
+    public async Task<CustomerScanUploadResult> UploadAsync(long customerId, long documentId, string fileName, byte[] content, CancellationToken cancellationToken)
+    {
+        var document = await db.ContractDocuments.AsNoTracking()
+            .Where(row => row.ContractDocumentId == documentId && row.CustomerId == customerId)
+            .Select(row => new { row.ContractDocumentId, row.ContractDocumentCurrentVersionId, row.EmployeeId })
+            .SingleOrDefaultAsync(cancellationToken)
+            ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng của bạn.");
+        if (content.Length == 0 || content.Length > 20 * 1024 * 1024)
+            throw new ArgumentException("Chọn tệp có nội dung, tối đa 20 MB.");
+        var (extension, contentType) = ScanFileKinds.Detect(content) is { } kind
+            ? kind switch { ScanFileKind.Pdf => (".pdf", "application/pdf"), ScanFileKind.Jpeg => (".jpg", "image/jpeg"), _ => (".png", "image/png") }
+            : throw new ArgumentException("Chỉ hỗ trợ tệp PDF, JPG hoặc PNG.");
+        var safeName = Path.GetFileName(fileName);
+        var sha = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant();
+        var (storedBytes, fileKey) = protection.Protect(content);
+        var now = DateTime.UtcNow;
+        var storageKey = $"customer-contract-scans/{customerId}/{documentId}/{Guid.NewGuid():N}{extension}{(fileKey is null ? "" : ".enc")}";
+        await files.SaveAsync(storageKey, storedBytes, cancellationToken);
+        try
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            var file = new FileStorage
+            {
+                FileStorageObjectid = documentId, FileStorageObjecttype = "CONTRACT_DOCUMENT", FileStorageFiletype = extension[1..].ToUpperInvariant(),
+                FileStorageFilename = safeName, FileStorageFilepath = storageKey, FileStorageStoragekey = storageKey,
+                FileStorageContenttype = contentType, FileStorageFilesize = content.LongLength, FileStorageSha256 = sha,
+                FileStorageUploadedbycustomerid = customerId, FileStorageUploadeddate = now,
+            };
+            db.FileStorages.Add(file);
+            await db.SaveChangesAsync(cancellationToken);
+            await protection.GrantForCustomerUploadAsync(file.FileStorageFileid, fileKey, [document.EmployeeId], cancellationToken);
+            if (fileKey is not null) await CustomerScans.GrantToCustomerAsync(db, file.FileStorageFileid, customerId, fileKey, cancellationToken);
+            db.ContractDocumentFiles.Add(new ContractDocumentFile
+            {
+                ContractDocumentId = documentId, ContractVersionId = document.ContractDocumentCurrentVersionId,
+                FileStorageFileid = file.FileStorageFileid, ContractDocumentFileRole = ContractDocumentFileRoles.SignedPaper,
+                IsPrimary = false, CreatedDate = now, CreatedEmployeeId = null,
+            });
+            ReviewData.Audit(db, "CUSTOMER_CONTRACT_SCAN_UPLOADED", "FILE_STORAGE", file.FileStorageFileid, "CUSTOMER", customerId, now);
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new CustomerScanUploadResult(file.FileStorageFileid.ToString(), safeName, now);
+        }
+        catch
+        {
+            await files.DeleteAsync(storageKey, CancellationToken.None);
+            throw;
+        }
     }
 
     /// <summary>The plain file for the customer: theirs (CustomerScans) and opened with their key. Logged.</summary>

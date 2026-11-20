@@ -4,6 +4,7 @@ using ContractManagement.Application.Features.Internal;
 using ContractManagement.Domain.Internal;
 using ContractManagement.Infrastructure.Sms;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using ContractManagement.Infrastructure.Persistence.Master;
@@ -111,6 +112,17 @@ public static class CustomerPortalEndpoints
         });
         // Scans of the customer's contracts, opened with a key of their own (017-customer-file-keys.sql).
         api.MapGet("/scans", async (HttpContext c, CustomerScanService scans, CancellationToken ct) => Results.Ok(await scans.ListAsync(Current(c).Id, ct)));
+        api.MapGet("/scans/contracts", async (HttpContext c, SignedEvidenceService scans, CancellationToken ct) =>
+            Results.Ok(await scans.ListContractsForCustomerAsync(Current(c).Id, ct)));
+        api.MapPost("/scans/contracts/{documentId:long}/scans", async (
+            long documentId, IFormFile? file, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+        {
+            if (file is null || file.Length == 0 || file.Length > 21 * 1024 * 1024)
+                throw new ArgumentException("Chọn tệp bản scan có nội dung, tối đa 20 MB.");
+            await using var stream = new MemoryStream();
+            await file.CopyToAsync(stream, ct);
+            return Results.Ok(await scans.UploadAsync(Current(c).Id, documentId, file.FileName, stream.ToArray(), ct));
+        }).WithMetadata(new RequestSizeLimitAttribute(21 * 1024 * 1024)).DisableAntiforgery();
         api.MapGet("/scans/{fileId:long}/file", async (long fileId, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
         {
             var file = await scans.OpenAsync(Current(c).Id, fileId, c.Request.Headers["X-File-Key"].FirstOrDefault(), ct);

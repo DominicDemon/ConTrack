@@ -35,7 +35,7 @@ export function CustomerFormDialog({ customer, onClose, onSaved }: { customer: C
   useEffect(() => { if (customer) void internalApi<BusinessOption[]>(`/crm/customers/${customer.id}/businesses`).then(setBusinesses).catch(() => setBusinesses([])); }, [customer]);
   const ready = !!name.trim() && !!phone.trim() && (!company.trim() || !!companyTax.trim());
   return <FormDialog title={creating ? "Thêm khách hàng" : `Sửa ${customer.name}`} busy={busy} error={error} ready={ready} submit={creating ? "Thêm khách hàng" : "Lưu thay đổi"} onClose={onClose}
-    description={creating ? "Khách dùng số điện thoại này để đăng nhập cổng khách hàng." : "Đổi số điện thoại hoặc email thì khách phải xác minh lại ở lần đăng nhập kế tiếp."}
+    description={creating ? "Khách dùng số điện thoại này để đăng nhập cổng khách hàng. Có email thì khách nhận thư mời kèm nút đặt mật khẩu." : "Đổi số điện thoại hoặc email thì khách phải xác minh lại ở lần đăng nhập kế tiếp."}
     onSubmit={() => void save(() => creating
       ? internalApi<CustomerRow>("/crm/customers", "POST", { name, phone, email, address, company, taxCode: companyTax })
       : internalApi<CustomerRow>(`/crm/customers/${customer.id}`, "PUT", { name, phone, email, address, taxIdentifier: tax }))}>

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/signed-scans/date-input";
 import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Eye, Loader2, Mail, ScanLine, Search } from "lucide-react";
@@ -215,11 +216,11 @@ export function ScanSearch() {
         <div className="flex flex-wrap items-end gap-3 text-sm">
           <label className="space-y-1">
             <span className="block text-xs text-muted-foreground">Từ ngày</span>
-            <Input type="date" value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} className="w-40" />
+            <DateInput aria-label="Từ ngày" value={from} max={to || undefined} onChange={setFrom} className="w-36" />
           </label>
           <label className="space-y-1">
             <span className="block text-xs text-muted-foreground">Đến ngày</span>
-            <Input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} className="w-40" />
+            <DateInput aria-label="Đến ngày" value={to} min={from || undefined} onChange={setTo} className="w-36" />
           </label>
           {(from || to) && (
             <Button type="button" variant="ghost" size="sm" onClick={() => { setFrom(""); setTo(""); }}>

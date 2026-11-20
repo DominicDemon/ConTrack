@@ -25,7 +25,7 @@ public static class CustomerPortalEndpoints
         {
             var c = invocation.HttpContext;
             var path = c.Request.Path.Value!["/api/customer".Length..];
-            if (path is "/auth/csrf" or "/auth/login" || path.StartsWith("/link/")) return await next(invocation);
+            if (path is "/auth/csrf" or "/auth/login" or "/auth/forgot-password" or "/auth/reset-password" || path.StartsWith("/link/")) return await next(invocation);
             if (!long.TryParse(c.Session.GetString(CustomerKey), out var id)) throw new InternalAppException(401, "Vui lòng đăng nhập.");
             var portal = c.RequestServices.GetRequiredService<ICustomerPortalRepository>();
             var customer = await portal.Get(id, c.RequestAborted);
@@ -62,6 +62,20 @@ public static class CustomerPortalEndpoints
             c.Session.Clear(); c.Session.SetString(CustomerKey, customer.Id.ToString());
             return Results.Ok(customer);
         }).RequireRateLimiting("customer-login");
+        // Forgotten password: a code to the email of the account, then a new password; signs the customer in.
+        api.MapPost("/auth/forgot-password", async (CustomerForgotInput input, HttpContext c, IAntiforgery csrf, CustomerProfileService profile, CancellationToken ct) =>
+        {
+            await csrf.ValidateRequestAsync(c);
+            await profile.ForgotPasswordAsync(input.Phone, ct);
+            return Results.Ok(new { message = CustomerProfileService.ForgotAnswer });
+        }).RequireRateLimiting("customer-login");
+        api.MapPost("/auth/reset-password", async (CustomerResetInput input, HttpContext c, IAntiforgery csrf, CustomerProfileService profile, ICustomerPortalRepository r, CancellationToken ct) =>
+        {
+            await csrf.ValidateRequestAsync(c);
+            var id = await profile.ResetPasswordAsync(input.Phone, input.Code, input.NewPassword, ct);
+            c.Session.Clear(); c.Session.SetString(CustomerKey, id.ToString());
+            return Results.Ok(await r.Get(id, ct));
+        }).RequireRateLimiting("customer-login");
         // The token travels in the body, not the URL, so it stays out of API request logs.
         api.MapPost("/link/status", async (ReviewLinkInput input, HttpContext c, IAntiforgery csrf, ICustomerPortalRepository r, CancellationToken ct) =>
         {
@@ -94,6 +108,13 @@ public static class CustomerPortalEndpoints
             c.Session.Clear(); c.Session.SetString(CustomerKey, id.ToString());
             return Results.Ok(await r.Get(id, ct));
         });
+        // "Hồ sơ của tôi": a session from an emailed link opens one contract only, so the filter above keeps it out.
+        api.MapGet("/profile", async (HttpContext c, CustomerProfileService profile, CancellationToken ct) =>
+            Results.Ok(await profile.GetAsync(Current(c).Id, ct)));
+        api.MapPost("/profile/email/code", async (CustomerEmailCodeInput input, HttpContext c, CustomerProfileService profile, CancellationToken ct) =>
+            Results.Ok(new { sentTo = await profile.SendEmailCodeAsync(Current(c).Id, input.Password, input.NewEmail, ct) }));
+        api.MapPost("/profile/email", async (CustomerEmailConfirmInput input, HttpContext c, CustomerProfileService profile, CancellationToken ct) =>
+            Results.Ok(await profile.ConfirmEmailAsync(Current(c).Id, input.Code, ct)));
         api.MapGet("/signing/{reviewId:long}", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
             Results.Ok(await signing.PortalState(Current(c).Id, reviewId, ct)));
         api.MapPost("/signing/{reviewId:long}/otp/request", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
@@ -162,6 +183,10 @@ public static class CustomerPortalEndpoints
     }
 
     private static CustomerSession Current(HttpContext c) => (CustomerSession)c.Items[CustomerKey]!;
+    public sealed record CustomerEmailCodeInput(string? Password, string? NewEmail);
+    public sealed record CustomerForgotInput(string? Phone);
+    public sealed record CustomerResetInput(string? Phone, string? Code, string? NewPassword);
+    public sealed record CustomerEmailConfirmInput(string? Code);
     /// <summary>The ticket service (from main) keys people by int.</summary>
     internal static int TicketId(long id) => checked((int)id);
 }

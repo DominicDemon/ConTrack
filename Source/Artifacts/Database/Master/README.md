@@ -90,6 +90,13 @@ CONTRACT_CUSTOMER_OTP_CHALLENGE, the OTP a customer confirms when signing a cont
 request is about one term (`..._termid`, as before) or one other section (PARTIES, DATES, ITEMS, PAYMENT); neither is a general comment.
 `013-scan-hardening.sql` clears the full OCR text kept in OCR_JOB.ocr_text (only search keywords are kept) and allows
 keyword type 5 (Email) in CONTRACT_SCAN_KEYWORD. Run it after 006-009.
+`014-self-service-file-keys.sql` renames the file-key permission: employees now set, change and reset their own key
+("Key của tôi": login password and an emailed code), and `system.encryption_key.manage` only lists, reopens old files
+for and revokes keys. No schema change. Run it after 007 and 008.
+`015-seed-employee-roles.sql` gives the seeded accounts their roles (EMPLOYEE_ROLE): `seed-masterdb.sql` only places
+them in departments, so on a new database nobody, not even sysadmin, has a permission or can open "Nhân viên & phân quyền".
+Managers (sysadmin, test.manager, head.*) get their department's manager role, the others its staff role; employees
+who already have a role are left alone. Run it after the seed and 005.
 Two optional helpers, not part of the schema: `demo-scan-contracts.sql` adds 4 demo customers and contracts (1001-1004)
 to try the paper-signing scan flow, on a test database only (it stops if those ids hold other data);
 `report-scan-duplicates.sql` lists scans stored more than once before 013 refused duplicates (read only).

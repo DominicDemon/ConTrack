@@ -56,6 +56,26 @@ public static class FileCrypto
         return new UserKeyPair(rsa.ExportSubjectPublicKeyInfo(), Seal(rsa.ExportPkcs8PrivateKey(), kek), salt, Pbkdf2Iterations);
     }
 
+    /// <summary>
+    /// The same RSA private key sealed again under a new key: the public key stays, so every file the old key opened
+    /// still opens with the new one and nothing has to be granted again.
+    /// </summary>
+    public static UserKeyPair Reseal(RSA privateKey, string newUserKey)
+    {
+        var salt = RandomNumberGenerator.GetBytes(32);
+        var kek = DeriveKey(newUserKey, salt, Pbkdf2Iterations);
+        var pkcs8 = privateKey.ExportPkcs8PrivateKey();
+        try
+        {
+            return new UserKeyPair(privateKey.ExportSubjectPublicKeyInfo(), Seal(pkcs8, kek), salt, Pbkdf2Iterations);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(pkcs8);
+            CryptographicOperations.ZeroMemory(kek);
+        }
+    }
+
     /// <summary>Null when the key is wrong.</summary>
     public static RSA? UnlockPrivateKey(byte[] encryptedPrivateKey, byte[] salt, int iterations, string userKey)
     {

@@ -308,7 +308,8 @@ public sealed class ContractReviewRepository(
         if (!actor.CanManageAll && !await db.ContractDocuments.AnyAsync(d => d.CustomerId == customerId && d.EmployeeId == actor.Id && d.TenantId == null, ct))
             throw new InternalAppException(403, "Bạn không phụ trách khách hàng này.");
         var customer = await db.Customers.SingleOrDefaultAsync(c => c.CustomerId == customerId && c.CustomerStatus == 1, ct) ?? throw new InternalAppException(404, "Không tìm thấy khách hàng.");
-        if (customer.CustomerPersonalPhoneVerifiedAt is not null) throw new InternalAppException(409, "Khách đã đổi mật khẩu tạm; không cấp lại.");
+        // Also for a customer who set a password of their own and forgot it: they must change the new temporary one.
+        customer.CustomerPersonalPhoneVerifiedAt = null;
         var phone = PhoneNumber.Normalize(customer.CustomerPersonalPhone) ?? throw new InternalAppException(409, "Khách hàng chưa có số điện thoại hợp lệ.");
         var now = DateTime.UtcNow;
         var since = now.AddHours(-1);

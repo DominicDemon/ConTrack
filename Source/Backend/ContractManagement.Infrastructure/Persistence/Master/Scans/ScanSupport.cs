@@ -77,12 +77,18 @@ public sealed class PemRecoveryPublicKey : IRecoveryPublicKey
             UsesDevelopmentKey = true;
         }
 
+        // PublicationOnly: a missing file is not remembered, so the key is found once an administrator puts it in place.
         _key = new Lazy<(byte[], string)>(() =>
         {
             if (UsesDevelopmentKey) EnsureDevelopmentPair(publicPath, privatePath);
             return Load(publicPath, environment.ContentRootPath);
-        });
-        _privateKeyPem = new Lazy<string?>(() => LoadPrivate(privatePath, environment.ContentRootPath));
+        }, LazyThreadSafetyMode.PublicationOnly);
+        // The public key first: it makes the developer pair, and the private key is checked against it.
+        _privateKeyPem = new Lazy<string?>(() =>
+        {
+            _ = _key.Value;
+            return LoadPrivate(privatePath, environment.ContentRootPath);
+        }, LazyThreadSafetyMode.PublicationOnly);
     }
 
     /// <summary>The pair was generated for this developer machine (no FileEncryption:RecoveryPublicKeyPath, Development).</summary>
@@ -230,6 +236,8 @@ public static class ScanRegistration
         services.AddSingleton<IRecoveryPublicKey, PemRecoveryPublicKey>();
         services.AddSingleton<FileKeyAttemptTracker>();
         services.AddScoped<FileProtectionService>();
+        services.AddSingleton<FileKeyCodeStore>();
+        services.AddScoped<FileKeyOwnerService>();
 
         services.AddOptions<ScanOcrOptions>().Bind(configuration.GetSection(ScanOcrOptions.SectionName));
         services.AddSingleton<IScanOcrEngine, TesseractScanOcrEngine>();

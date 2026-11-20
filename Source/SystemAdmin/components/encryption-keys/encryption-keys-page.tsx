@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, FileKey2, KeyRound, Loader2 } from "lucide-react";
+import { FileKey2, KeyRound, Loader2 } from "lucide-react";
 import { formatDateTime } from "@/components/signed-scans/format";
 import { StatusBadge } from "@/components/signed-scans/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -21,69 +21,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "@/components/ui/sonner";
-import { encryptionKeysApi, type EmployeeKeyStatus, type IssuedKey } from "@/services/scans/encryption-keys";
+import { encryptionKeysApi, type EmployeeKeyStatus } from "@/services/scans/encryption-keys";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getScanErrorMessage } from "@/services/scans/http";
 
-/** The key is shown once; the administrator gives it to the employee in person or by a safe channel. */
-function IssuedKeyDialog({ issued, onClose }: { issued: IssuedKey | null; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    if (!issued) return;
-    try {
-      await navigator.clipboard.writeText(issued.key);
-      setCopied(true);
-    } catch {
-      toast.error("Không sao chép được. Hãy chép tay key.");
-    }
-  };
-
-  return (
-    <Dialog
-      open={issued !== null}
-      onOpenChange={(open) => {
-        if (!open) {
-          setCopied(false);
-          onClose();
-        }
-      }}
-    >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Key của {issued?.displayName}</DialogTitle>
-          <DialogDescription>
-            Key chỉ hiện một lần. Đưa trực tiếp cho nhân viên; hệ thống không lưu key nên không xem lại được.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/40 px-4 py-3">
-          <code className="font-mono text-xl tracking-widest break-all select-all">{issued?.key}</code>
-          <Button variant="outline" size="icon" aria-label="Sao chép key" onClick={() => void copy()}>
-            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-          </Button>
-        </div>
-        {issued?.recoveredFiles != null ? (
-          <p className="text-sm text-emerald-700 dark:text-emerald-400">
-            {issued.recoveredFiles > 0
-              ? `Key mới đã mở được ${issued.recoveredFiles} tệp cũ của nhân viên.`
-              : "Key mới đã mở được mọi tệp cũ của nhân viên."}
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            Mất key thì cấp key mới, rồi bấm “Mở lại tệp cũ” để key mới mở được các tệp cũ.
-          </p>
-        )}
-        <DialogFooter>
-          <Button onClick={onClose}>Đã đưa key</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 /**
- * After a key is reissued, the administrator gives the company recovery private key (recovery-private.pem) so the
+ * After an employee sets a new key (they forgot the old one), the administrator gives the company recovery private key (recovery-private.pem) so the
  * employee's new key opens the files their old key opened. The file goes with this one request and is not kept.
  */
 function RecoverFilesDialog({
@@ -172,13 +116,15 @@ function RecoverFilesDialog({
   );
 }
 
-/** Administrators issue each employee the 12-character key that opens encrypted scans. */
+/**
+ * Each employee sets their own key on "Key của tôi"; the administrator sees who has one, reopens old files for a new
+ * key when the server does not keep the recovery key, and revokes a key (an employee who leaves, a key someone else knows).
+ */
 export function EncryptionKeysPage() {
   const [rows, setRows] = useState<EmployeeKeyStatus[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<EmployeeKeyStatus | null>(null);
-  const [issuingId, setIssuingId] = useState<string | null>(null);
-  const [issued, setIssued] = useState<IssuedKey | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
   const [recovering, setRecovering] = useState<EmployeeKeyStatus | null>(null);
   const [recoveringId, setRecoveringId] = useState<string | null>(null);
   const [serverKeepsRecoveryKey, setServerKeepsRecoveryKey] = useState(false);
@@ -220,16 +166,17 @@ export function EncryptionKeysPage() {
     }
   };
 
-  const issue = async (row: EmployeeKeyStatus) => {
+  const revoke = async (row: EmployeeKeyStatus) => {
     setConfirming(null);
-    setIssuingId(row.employeeId);
+    setRevokingId(row.employeeId);
     try {
-      setIssued(await encryptionKeysApi.issue(row.employeeId));
+      await encryptionKeysApi.revoke(row.employeeId);
+      toast.success(`Đã thu hồi key của ${row.displayName}.`);
       void load();
-    } catch (issueError) {
-      toast.error(getScanErrorMessage(issueError, "Không cấp được key."));
+    } catch (revokeError) {
+      toast.error(getScanErrorMessage(revokeError, "Không thu hồi được key."));
     } finally {
-      setIssuingId(null);
+      setRevokingId(null);
     }
   };
 
@@ -241,8 +188,9 @@ export function EncryptionKeysPage() {
           Key mở tệp
         </h1>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Bản scan được mã hóa khi lưu. Mỗi nhân viên cần một key 12 ký tự để mở tệp mình được phép xem. Cấp lại key thì key
-          cũ thôi dùng được.
+          Bản scan được mã hóa khi lưu. Mỗi nhân viên được xem bản scan tự tạo key của mình ở mục “Key của tôi” (xác nhận
+          bằng mật khẩu đăng nhập và mã gửi qua email); quản trị không biết key của ai. Thu hồi key khi nhân viên nghỉ việc
+          hoặc key có thể đã lộ.
         </p>
       </div>
 
@@ -256,7 +204,7 @@ export function EncryptionKeysPage() {
       <Card>
         <CardHeader>
           <CardTitle>Nhân viên</CardTitle>
-          <CardDescription>Nhân viên đang hoạt động và tình trạng key của họ.</CardDescription>
+          <CardDescription>Nhân viên được xem bản scan, hoặc đang giữ key, và tình trạng key của họ.</CardDescription>
         </CardHeader>
         <CardContent>
           {!rows ? (
@@ -267,7 +215,7 @@ export function EncryptionKeysPage() {
                 <TableRow>
                   <TableHead>Nhân viên</TableHead>
                   <TableHead>Key</TableHead>
-                  <TableHead className="hidden sm:table-cell">Cấp lúc</TableHead>
+                  <TableHead className="hidden sm:table-cell">Đặt lúc</TableHead>
                   <TableHead className="pr-4 text-right">Thao tác</TableHead>
                 </TableRow>
               </TableHeader>
@@ -279,7 +227,10 @@ export function EncryptionKeysPage() {
                       <span className="block text-xs text-muted-foreground">{row.username}</span>
                     </TableCell>
                     <TableCell>
-                      {row.hasKey ? <StatusBadge tone="success">Đã cấp</StatusBadge> : <StatusBadge tone="neutral">Chưa cấp</StatusBadge>}
+                      {row.hasKey ? <StatusBadge tone="success">Đã tạo</StatusBadge> : <StatusBadge tone="neutral">Chưa tạo</StatusBadge>}
+                      {row.hasKey && !row.mayHoldKey && (
+                        <span className="mt-1 block text-xs text-amber-600 dark:text-amber-400">Không còn quyền xem bản scan</span>
+                      )}
                       {row.filesToRecover > 0 && (
                         <span className="mt-1 block text-xs text-amber-600 dark:text-amber-400">
                           {row.filesToRecover} tệp cũ chưa mở được
@@ -287,29 +238,31 @@ export function EncryptionKeysPage() {
                       )}
                     </TableCell>
                     <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
-                      {row.issuedAt ? `${formatDateTime(row.issuedAt)}${row.issuedBy ? ` · ${row.issuedBy}` : ""}` : "—"}
+                      {row.setAt ? formatDateTime(row.setAt) : "—"}
                     </TableCell>
                     <TableCell className="space-x-2 pr-4 text-right whitespace-nowrap">
                       {row.filesToRecover > 0 && (
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={issuingId !== null || recoveringId !== null}
+                          disabled={revokingId !== null || recoveringId !== null}
                           onClick={() => void recover(row)}
                         >
                           {recoveringId === row.employeeId ? <Loader2 className="size-4 animate-spin" /> : <FileKey2 className="size-4" />}
                           Mở lại tệp cũ
                         </Button>
                       )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={issuingId !== null}
-                        onClick={() => (row.hasKey ? setConfirming(row) : void issue(row))}
-                      >
-                        {issuingId === row.employeeId && <Loader2 className="size-4 animate-spin" />}
-                        {row.hasKey ? "Cấp lại" : "Cấp key"}
-                      </Button>
+                      {row.hasKey && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={revokingId !== null}
+                          onClick={() => setConfirming(row)}
+                        >
+                          {revokingId === row.employeeId && <Loader2 className="size-4 animate-spin" />}
+                          Thu hồi
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -322,21 +275,19 @@ export function EncryptionKeysPage() {
       <AlertDialog open={confirming !== null} onOpenChange={(open) => !open && setConfirming(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Cấp lại key cho {confirming?.displayName}?</AlertDialogTitle>
+            <AlertDialogTitle>Thu hồi key của {confirming?.displayName}?</AlertDialogTitle>
             <AlertDialogDescription>
-              {serverKeepsRecoveryKey
-                ? "Key cũ thôi dùng được ngay. Key mới tự mở được các tệp mà key cũ đã mở."
-                : "Key cũ thôi dùng được ngay. Sau khi cấp, bấm “Mở lại tệp cũ” và chọn khóa dự phòng của công ty để key mới mở được các tệp key cũ đã mở."}
+              Key thôi mở được tệp ngay. Tệp vẫn còn nguyên: người khác vẫn mở được, và nếu nhân viên còn quyền xem bản scan,
+              họ có thể tự tạo key mới ở mục “Key của tôi”.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Hủy</AlertDialogCancel>
-            <AlertDialogAction onClick={() => confirming && void issue(confirming)}>Cấp lại</AlertDialogAction>
+            <AlertDialogAction onClick={() => confirming && void revoke(confirming)}>Thu hồi</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
-      <IssuedKeyDialog issued={issued} onClose={() => setIssued(null)} />
       <RecoverFilesDialog employee={recovering} onClose={() => setRecovering(null)} onDone={() => void load()} />
     </>
   );

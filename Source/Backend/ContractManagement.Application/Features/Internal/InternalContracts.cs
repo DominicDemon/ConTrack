@@ -111,7 +111,7 @@ public interface IInternalRepository
     Task<InternalUser?> Authenticate(string username, string password, CancellationToken ct);
     Task<InternalUser?> GetUser(long id, CancellationToken ct);
     Task<List<TemplateDefinition>> Templates(CancellationToken ct);
-    Task<List<CustomerOption>> Customers(string? search, CancellationToken ct);
+    Task<List<CustomerOption>> Customers(string? search, CancellationToken ct, long? owner = null);
     Task<CustomerOption?> Customer(long id, CancellationToken ct);
     Task<CustomerOption> CreateCustomer(CustomerInput input, long actor, CancellationToken ct);
     Task<List<BusinessOption>> Businesses(long customerId, CancellationToken ct);

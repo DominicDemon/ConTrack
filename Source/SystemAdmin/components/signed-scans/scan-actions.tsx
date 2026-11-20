@@ -29,7 +29,7 @@ export interface ScanTarget {
   href: string;
 }
 
-const MAX_NOTE = 1000;
+const MAX_NOTE = 2000;
 
 /** Each opened result starts its dialog afresh. */
 const keyOf = (target: ScanTarget) => `${target.kind}-${target.id}`;
@@ -341,13 +341,17 @@ function EmailForm({
           <Label htmlFor={noteId}>Lời nhắn (không bắt buộc)</Label>
           <Textarea
             id={noteId}
-            rows={3}
+            rows={5}
             maxLength={MAX_NOTE}
+            className="max-h-60 overflow-y-auto [overflow-wrap:anywhere]"
             value={note}
             disabled={sending}
             onChange={(event) => setNote(event.target.value)}
             placeholder="VD: Gửi anh/chị bản hợp đồng đã ký để đối chiếu."
           />
+          <p className="text-right text-xs text-muted-foreground">
+            {note.length}/{MAX_NOTE} ký tự
+          </p>
         </div>
         {problem && (
           <p role="alert" className="text-sm text-destructive">

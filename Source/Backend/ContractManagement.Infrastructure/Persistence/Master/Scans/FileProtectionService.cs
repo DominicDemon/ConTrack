@@ -340,6 +340,13 @@ public sealed class FileProtectionService(
     /// context; the caller saves them with the file's other rows. Employees without a key yet are granted later.
     /// </summary>
     public async Task GrantAsync(long fileId, byte[]? fileKey, IEnumerable<long> employeeIds, CancellationToken cancellationToken)
+        => await GrantCoreAsync(fileId, fileKey, employeeIds, currentEmployee.EmployeeId, cancellationToken);
+
+    /// <summary>Grants employee readers without attributing their key grants to an employee request.</summary>
+    public Task GrantForCustomerUploadAsync(long fileId, byte[]? fileKey, IEnumerable<long> employeeIds, CancellationToken cancellationToken)
+        => GrantCoreAsync(fileId, fileKey, employeeIds, null, cancellationToken);
+
+    private async Task GrantCoreAsync(long fileId, byte[]? fileKey, IEnumerable<long> employeeIds, long? grantorEmployeeId, CancellationToken cancellationToken)
     {
         if (fileKey is null)
         {
@@ -378,7 +385,7 @@ public sealed class FileProtectionService(
                 FileStorageFileid = fileId,
                 EmployeeEncryptionKeyId = key.EmployeeEncryptionKeyId,
                 FileEncryptionKeyWrappedkey = FileCrypto.Wrap(fileKey, key.EmployeeEncryptionKeyPublickey),
-                GrantedByEmployeeId = currentEmployee.EmployeeId,
+                GrantedByEmployeeId = grantorEmployeeId,
                 GrantedAt = now,
             });
         }
@@ -446,6 +453,8 @@ public sealed class FileProtectionService(
         }
 
         await GrantAsync(fileId, fileKey, eligible, cancellationToken);
+        // The customers the scan belongs to who set a key get it too (017), so they can open it on the portal.
+        await CustomerScans.GrantToCustomersAsync(db, fileId, fileKey, cancellationToken);
         db.AuditLogs.Add(Audit("EncryptedFileOpened", FileEntity, fileId, null));
         await db.SaveChangesAsync(cancellationToken);
         CryptographicOperations.ZeroMemory(fileKey);

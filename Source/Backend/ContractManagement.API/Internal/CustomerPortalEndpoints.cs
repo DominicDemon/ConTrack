@@ -4,9 +4,11 @@ using ContractManagement.Application.Features.Internal;
 using ContractManagement.Domain.Internal;
 using ContractManagement.Infrastructure.Sms;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using ContractManagement.Infrastructure.Persistence.Master;
+using ContractManagement.Infrastructure.Persistence.Master.Scans;
 
 namespace ContractManagement.API.Internal;
 
@@ -110,6 +112,32 @@ public static class CustomerPortalEndpoints
             c.Session.Clear(); c.Session.SetString(CustomerKey, id.ToString());
             return Results.Ok(await r.Get(id, ct));
         });
+        // Scans of the customer's contracts, opened with a key of their own (017-customer-file-keys.sql).
+        api.MapGet("/scans", async (HttpContext c, CustomerScanService scans, CancellationToken ct) => Results.Ok(await scans.ListAsync(Current(c).Id, ct)));
+        api.MapGet("/scans/contracts", async (HttpContext c, SignedEvidenceService scans, CancellationToken ct) =>
+            Results.Ok(await scans.ListContractsForCustomerAsync(Current(c).Id, ct)));
+        api.MapPost("/scans/contracts/{documentId:long}/scans", async (
+            long documentId, IFormFile? file, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+        {
+            if (file is null || file.Length == 0 || file.Length > 21 * 1024 * 1024)
+                throw new ArgumentException("Chọn tệp bản scan có nội dung, tối đa 20 MB.");
+            await using var stream = new MemoryStream();
+            await file.CopyToAsync(stream, ct);
+            return Results.Ok(await scans.UploadAsync(Current(c).Id, documentId, file.FileName, stream.ToArray(), ct));
+        }).WithMetadata(new RequestSizeLimitAttribute(21 * 1024 * 1024)).DisableAntiforgery();
+        api.MapGet("/scans/{fileId:long}/file", async (long fileId, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+        {
+            var file = await scans.OpenAsync(Current(c).Id, fileId, c.Request.Headers["X-File-Key"].FirstOrDefault(), ct);
+            c.Response.Headers.CacheControl = "no-store";
+            return Results.File(file.Content, file.ContentType, file.FileName);
+        });
+        api.MapGet("/file-key", async (HttpContext c, CustomerScanService scans, CancellationToken ct) => Results.Ok(await scans.KeyStatusAsync(Current(c).Id, ct)));
+        api.MapPost("/file-key/code", async (CustomerKeyCodeInput input, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+            Results.Ok(new { sentTo = await scans.SendKeyCodeAsync(Current(c).Id, input.Password, ct) }));
+        api.MapPost("/file-key", async (CustomerSetKeyInput input, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+            Results.Ok(new { recoveredFiles = await scans.SetKeyAsync(Current(c).Id, input.Password, input.Code, input.NewKey, ct) }));
+        api.MapPost("/file-key/change", async (CustomerChangeKeyInput input, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+        { await scans.ChangeKeyAsync(Current(c).Id, input.CurrentKey, input.NewKey, ct); return Results.NoContent(); });
         // "Hồ sơ của tôi": a session from an emailed link opens one contract only, so the filter above keeps it out.
         api.MapGet("/profile", async (HttpContext c, CustomerProfileService profile, CancellationToken ct) =>
             Results.Ok(await profile.GetAsync(Current(c).Id, ct)));
@@ -194,6 +222,9 @@ public static class CustomerPortalEndpoints
     private static CustomerSession Current(HttpContext c) => (CustomerSession)c.Items[CustomerKey]!;
     public sealed record CustomerEmailCodeInput(string? Password, string? NewEmail);
     public sealed record CustomerForgotInput(string? Phone);
+    public sealed record CustomerKeyCodeInput(string? Password);
+    public sealed record CustomerSetKeyInput(string? Password, string? Code, string? NewKey);
+    public sealed record CustomerChangeKeyInput(string? CurrentKey, string? NewKey);
     public sealed record CustomerResetInput(string? Phone, string? Code, string? NewPassword);
     public sealed record CustomerEmailConfirmInput(string? Code);
     /// <summary>The ticket service (from main) keys people by int.</summary>

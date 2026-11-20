@@ -2,7 +2,7 @@ import { scanApi } from "../http";
 import type {
   AddScanKeywordInput,
   ScanEmailInput,
-  ScanEmailResult,
+  ScanEmailJob,
   ScanKeyword,
   ScanKeywordJobStatus,
   ScanKeywordState,
@@ -20,6 +20,14 @@ export interface ScannedJobSummary {
   jobStatus: OcrJobStatus;
   contractId: string | null;
   contractCode: string | null;
+}
+
+/** One page of a list; total counts every row the employee may see. */
+export interface ScanPage<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 export interface ScannedBatch {
@@ -117,8 +125,8 @@ export const scannedContractsApi = {
     return data;
   },
 
-  async listBatches(): Promise<ScannedBatch[]> {
-    const { data } = await scanApi.get<ScannedBatch[]>("/scanned-contracts/batches");
+  async listBatches(page = 1, pageSize = 10): Promise<ScanPage<ScannedBatch>> {
+    const { data } = await scanApi.get<ScanPage<ScannedBatch>>("/scanned-contracts/batches", { params: { page, pageSize } });
     return data;
   },
 
@@ -128,8 +136,8 @@ export const scannedContractsApi = {
   },
 
   /** Sends the scan as a PDF attachment; the server opens it with the sender's key, like "View". */
-  async emailJob(jobId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailResult> {
-    const { data } = await scanApi.post<ScanEmailResult>(`/scanned-contracts/jobs/${jobId}/email`, input, {
+  async emailJob(jobId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailJob> {
+    const { data } = await scanApi.post<ScanEmailJob>(`/scanned-contracts/jobs/${jobId}/email`, input, {
       headers: keyHeader(fileKey),
     });
     return data;
@@ -165,8 +173,8 @@ export const scannedContractsApi = {
     return data;
   },
 
-  async listContracts(): Promise<ScannedContract[]> {
-    const { data } = await scanApi.get<ScannedContract[]>("/scanned-contracts");
+  async listContracts(page = 1, pageSize = 20): Promise<ScanPage<ScannedContract>> {
+    const { data } = await scanApi.get<ScanPage<ScannedContract>>("/scanned-contracts", { params: { page, pageSize } });
     return data;
   },
 

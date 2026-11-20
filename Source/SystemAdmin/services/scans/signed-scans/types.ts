@@ -8,7 +8,7 @@
  * once the team settles them, so nothing here depends on those numbers.
  */
 
-export type ScanKeywordType = "ContractCode" | "TaxCode" | "PhoneNumber" | "CustomerName";
+export type ScanKeywordType = "ContractCode" | "TaxCode" | "PhoneNumber" | "CustomerName" | "Email";
 
 export type ScanKeywordSource = "Ocr" | "Manual";
 
@@ -176,6 +176,21 @@ export type ScanSearchType = ScanKeywordType | "All";
 export interface ScanSearchQuery {
   q: string;
   type: ScanSearchType;
+  /** yyyy-MM-dd, inclusive: upload date of scans, signing date of evidence. */
+  from?: string;
+  to?: string;
+}
+
+/** One finished sending of a scan by email (from the audit log). */
+export interface ScanEmailHistoryItem {
+  sentAt: string;
+  sender: string;
+  kind: "evidence" | "scan";
+  targetId: string;
+  fileName: string;
+  sent: string[];
+  failed: string[];
+  withNote: boolean;
 }
 
 export interface ScanSearchMatch {
@@ -195,6 +210,8 @@ export interface ScanSearchResult {
   evidenceStatus: SignedEvidenceStatus;
   signDate: string;
   matches: ScanSearchMatch[];
+  /** Email addresses on the scan, offered as recipients when sending it. */
+  emails: string[];
 }
 
 /** A scan of an old paper contract; contractId is set only when a contract was also made from it (optional). */
@@ -209,17 +226,20 @@ export interface ScannedSearchResult {
   contractName: string | null;
   customerName: string | null;
   matches: ScanSearchMatch[];
+  /** Email addresses on the scan, offered as recipients when sending it. */
+  emails: string[];
 }
 
-/** Sending a scan by email: one email per address; an address that failed can be tried again. */
+/** Sending a scan by email: one email per address, sent in the background after the request answers. */
 export interface ScanEmailInput {
   recipients: string[];
   note?: string;
 }
 
-export interface ScanEmailResult {
-  sent: string[];
-  failed: { email: string; reason: string }[];
+export interface ScanEmailJob {
+  jobId: string;
+  done: boolean;
+  recipients: { email: string; status: "Waiting" | "Sent" | "Failed"; reason: string | null }[];
 }
 
 export interface ScanSearchResponse {
@@ -247,6 +267,8 @@ export interface SignedEvidenceApi {
   retryKeywords(evidenceId: string, fileKey?: string): Promise<ScanKeywordState>;
   addKeyword(evidenceId: string, input: AddScanKeywordInput): Promise<ScanKeyword>;
   removeKeyword(evidenceId: string, keywordId: string): Promise<void>;
-  emailFile(evidenceId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailResult>;
+  emailFile(evidenceId: string, input: ScanEmailInput, fileKey?: string): Promise<ScanEmailJob>;
+  emailProgress(jobId: string): Promise<ScanEmailJob>;
+  emailHistory(): Promise<ScanEmailHistoryItem[]>;
   search(query: ScanSearchQuery): Promise<ScanSearchResponse>;
 }

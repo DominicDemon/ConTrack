@@ -1,14 +1,16 @@
 "use client";
 
 import axios from "axios";
+import Link from "next/link";
 import { createContext, useCallback, useContext, useId, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Eye, EyeOff, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FILE_KEY_MAX, FILE_KEY_MIN } from "@/lib/file-key-policy";
 
-/** The header the API reads the employee's 12-character key from (FileKeyHeader). */
+/** The header the API reads the employee's key from (FileKeyHeader). */
 export const FILE_KEY_HEADER = "X-File-Key";
 
 /** Thrown when the person closes the key dialog. */
@@ -131,9 +133,10 @@ export function FileKeyProvider({ children }: { children: ReactNode }) {
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // Keys issued before employees set their own are 12 characters; set ones are 12 to 64 with no spaces.
     const key = value.trim();
-    if (key.length !== 12) {
-      setProblem("Key gồm đúng 12 ký tự.");
+    if (key.length < FILE_KEY_MIN || key.length > FILE_KEY_MAX) {
+      setProblem(`Key gồm từ ${FILE_KEY_MIN} đến ${FILE_KEY_MAX} ký tự.`);
       return;
     }
     remembered.current = key;
@@ -163,18 +166,18 @@ export function FileKeyProvider({ children }: { children: ReactNode }) {
                 Nhập key mở tệp
               </DialogTitle>
               <DialogDescription>
-                Bản scan được mã hóa. Nhập key 12 ký tự quản trị đã cấp cho bạn. Key chỉ được giữ trong tab này.
+                Bản scan được mã hóa. Nhập key của bạn; key chỉ được giữ trong tab này.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-2">
-              <Label htmlFor={inputId}>Key 12 ký tự</Label>
+              <Label htmlFor={inputId}>Key</Label>
               <div className="flex gap-2">
                 <Input
                   id={inputId}
                   type={visible ? "text" : "password"}
                   autoComplete="off"
                   spellCheck={false}
-                  maxLength={32}
+                  maxLength={FILE_KEY_MAX}
                   value={value}
                   onChange={(event) => {
                     setValue(event.target.value);
@@ -200,6 +203,12 @@ export function FileKeyProvider({ children }: { children: ReactNode }) {
                 </p>
               )}
             </div>
+            <p className="text-sm text-muted-foreground">
+              Chưa có key hoặc quên key?{" "}
+              <Link href="/workspace/my-key" className="text-primary hover:underline" onClick={() => close(false)}>
+                Vào Key của tôi
+              </Link>
+            </p>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => close(false)}>
                 Hủy

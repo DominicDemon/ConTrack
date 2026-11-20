@@ -119,9 +119,9 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         return name;
     }
 
-    public async Task<List<CustomerOption>> Customers(string? search, CancellationToken ct)
+    public async Task<List<CustomerOption>> Customers(string? search, CancellationToken ct, long? owner = null)
     {
-        var query = db.Customers.AsNoTracking().Where(c => c.CustomerStatus == 1);
+        var query = db.Customers.AsNoTracking().Where(c => c.CustomerStatus == 1 && (owner == null || c.CustomerOwnerEmployeeId == owner));
         if (!string.IsNullOrWhiteSpace(search)) query = query.Where(c => c.CustomerDisplayName.Contains(search) || c.CustomerPersonalPhone.Contains(search));
         var ids = await query.OrderBy(c => c.CustomerDisplayName).Select(c => c.CustomerId).Take(100).ToListAsync(ct);
         var results = new List<CustomerOption>();
@@ -207,13 +207,14 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var tax = InternalDraftPolicy.Text(input.TaxCode, 20);
         if (company.Length > 0 && tax.Length == 0) throw new ArgumentException("Thông tin doanh nghiệp cần mã số thuế.");
         if (await db.Customers.AnyAsync(c => c.CustomerPersonalPhone == phone || c.CustomerDisplayName == name || (email != "" && c.CustomerEmail == email), ct))
-            throw new InternalAppException(409, "Tên hiển thị, SĐT hoặc email đã tồn tại. Hãy tìm và chọn khách có sẵn.");
+            throw new InternalAppException(409, "Khách hàng đã có trong hệ thống (trùng tên, SĐT hoặc email). Không thấy trong danh sách của bạn thì liên hệ Phòng Hành Chính - Pháp Chế để được chuyển khách.");
         return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
             db.ChangeTracker.Clear();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             var customer = new Customer { CustomerDisplayName = name, CustomerPersonalPhone = phone, CustomerEmail = email.Length == 0 ? null : email,
-                CustomerAddress = InternalDraftPolicy.Text(input.Address, 1000), CustomerStatus = 1, CreatedAt = DateTime.UtcNow, CreatedBy = actor };
+                CustomerAddress = InternalDraftPolicy.Text(input.Address, 1000), CustomerStatus = 1, CreatedAt = DateTime.UtcNow, CreatedBy = actor,
+                CustomerOwnerEmployeeId = actor };
             customer.CustomerPasswordHash = new PasswordHasher<Customer>().HashPassword(customer, Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)));
             db.Customers.Add(customer);
             await db.SaveChangesAsync(ct);

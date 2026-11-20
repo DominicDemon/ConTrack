@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CheckCircle2, ChevronDown, Clock, FileText, ListFilter, LogOut, MessageSquare, ShieldCheck, UserPlus } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, FileText, ListFilter, LogOut, MessageSquare, ShieldCheck, UserPlus, UserRound } from "lucide-react";
 import { screensFor, type NavItem } from "./internal-nav";
 import { APP_NAME } from "@/lib/application-branding";
 import { internalApi, InternalApiError, type InternalUser } from "@/services/internal-api";
@@ -311,7 +311,10 @@ export default function InternalShell({ children }: { children: ReactNode }) {
                 </span>
                 <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
                   <AdminNotificationBell tickets={user.permissions.some((p) => p.startsWith("ticket."))} />
-                  <span className={s.muted}>{user.name}</span>
+                  <Link href="/workspace/profile" className={s.muted} title="Hồ sơ của tôi" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <UserRound size={16} />
+                    {user.name}
+                  </Link>
                   <button
                     data-leave-workspace
                     className={s.iconButton}

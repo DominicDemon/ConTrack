@@ -2143,12 +2143,7 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         var defaultServices = new List<SupportServiceItemDto>
         {
-            new() { ServiceId = 1, ServiceName = "Triển khai & Chuẩn hóa Mẫu hợp đồng", Description = "Thiết lập biểu mẫu và trường dữ liệu động" },
-            new() { ServiceId = 2, ServiceName = "Gói Hỗ trợ Kỹ thuật Ưu tiên 24/7", Description = "Hỗ trợ kỹ thuật và bảo trì SLA 24/7" },
-            new() { ServiceId = 3, ServiceName = "Phần mềm Quản lý Hợp đồng ConTrack Pro (SaaS)", Description = "Quản trị vòng đời hợp đồng điện tử" },
-            new() { ServiceId = 4, ServiceName = "Dịch vụ Chữ ký số & Xác thực OTP (eSign CA)", Description = "Ký số hợp đồng và xác thực khách hàng" },
-            new() { ServiceId = 5, ServiceName = "Server VPS / Hạ tầng Lưu trữ Hợp đồng Riêng", Description = "Máy chủ lưu trữ tài liệu và cơ sở dữ liệu riêng" },
-            new() { ServiceId = 6, ServiceName = "Module Quét & Bóc tách Hợp đồng AI OCR", Description = "Nhận diện và số hóa văn bản hợp đồng PDF/Scan" }
+            new() { ServiceId = 1, ServiceName = "Phần mềm quản lý hợp đồng", Description = "Phần mềm quản lý hợp đồng toàn diện" }
         };
 
         try

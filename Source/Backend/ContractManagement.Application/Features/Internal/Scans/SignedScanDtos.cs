@@ -91,7 +91,8 @@ public sealed record ScanSearchResultDto(
     long EvidenceId,
     string EvidenceStatus,
     string SignDate,
-    IReadOnlyList<ScanSearchMatchDto> Matches);
+    IReadOnlyList<ScanSearchMatchDto> Matches,
+    IReadOnlyList<string> Emails);
 
 /// <summary>
 /// A scan of an old paper contract (Hợp đồng giấy scan) whose keywords match. Found as soon as OCR has read it;
@@ -107,7 +108,8 @@ public sealed record ScannedSearchResultDto(
     string? ContractCode,
     string? ContractName,
     string? CustomerName,
-    IReadOnlyList<ScanSearchMatchDto> Matches);
+    IReadOnlyList<ScanSearchMatchDto> Matches,
+    IReadOnlyList<string> Emails);
 
 /// <summary><see cref="Items"/>: paper-signing evidence of contracts in the system; <see cref="Scans"/>: scanned old contracts.</summary>
 public sealed record ScanSearchResponseDto(

@@ -106,7 +106,8 @@ export function completePartyFields(template: TemplateDefinition): TemplateDefin
 
   return {...template,fields:[...template.fields,...requiredPartyFields.filter(f => !template.fields.some(x => x.key === f.key))]};
 }
-export type CustomerRow = { id: string; name: string; phone: string; email: string | null; address: string | null; taxIdentifier: string | null; active: boolean; businessCount: number; createdAt: string; lastLoginAt: string | null };
+export type CustomerRow = { id: string; name: string; phone: string; email: string | null; address: string | null; taxIdentifier: string | null; active: boolean; businessCount: number; createdAt: string; lastLoginAt: string | null; ownerId: string | null; ownerName: string | null };
+export type CustomerOwnerOption = { id: string; name: string };
 export type ProductRow = { id: string; code: string | null; name: string; unit: string | null; categoryId: number | null; categoryName: string | null; price: number | null; description: string | null };
 export type CategoryOption = { id: number; name: string };
 export type ServiceRow = { id: string; name: string; unit: string | null; price: number | null; typeName: string | null; active: boolean };

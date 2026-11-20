@@ -50,14 +50,28 @@ public static class ContractScanKeywordExtractor
         + @"[\s:.\-()]{0,8}(?<run>[+\d][\d \-.()+/,;]{8,40})",
         RegexOptions.Compiled);
 
+    // What OCR makes of the colon after a party label on a photographed page.
+    private static readonly char[] LabelSeparators = [':', '_', '\'', '‘', '’', '*', '|'];
+
     // The label of a party line, before its colon: "BÊN A", "Bên B (Bên bán)", "Khách hàng", "Tên công ty".
     private static readonly Regex PartyLabel = new(
-        @"^\s*(?:BEN\s*[AB]|BEN\s*(?:MUA|BAN|THUE|CHO\s*THUE|CUNG\s*CAP|SU\s*DUNG|DICH\s*VU)"
+        @"^\s*(?:BEN\s*[AB]|PARTY\s*[AB]|BEN\s*(?:MUA|BAN|THUE|CHO\s*THUE|CUNG\s*CAP|SU\s*DUNG|DICH\s*VU)"
         + @"|KHACH\s*HANG|TEN\s*(?:KHACH\s*HANG|CONG\s*TY|DOANH\s*NGHIEP|DON\s*VI|TO\s*CHUC))"
         + @"\s*(?:\([^)]*\))?\s*$",
         RegexOptions.Compiled);
 
     private static readonly Regex Spaces = new(@"\s+", RegexOptions.Compiled);
+
+    private static readonly Regex EmailAddress = new(
+        @"(?<![A-Z0-9._%+\-])[A-Z0-9][A-Z0-9._%+\-]*@[A-Z0-9](?:[A-Z0-9\-]*[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9\-]*[A-Z0-9])?)*\.[A-Z]{2,}(?![A-Z0-9\-])",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// What a contract is expected to carry: a scan missing one of these goes to the checker. An email address
+    /// is a bonus, never expected.
+    /// </summary>
+    public static readonly IReadOnlyList<ScanKeywordType> ExpectedTypes =
+        [ScanKeywordType.ContractCode, ScanKeywordType.TaxCode, ScanKeywordType.PhoneNumber, ScanKeywordType.CustomerName];
 
     public static IReadOnlyList<ScanKeyword> Extract(string? pageText, int page = 1)
     {
@@ -72,6 +86,7 @@ public static class ContractScanKeywordExtractor
         AddTaxCodes(keywords, text, page);
         AddPhoneNumbers(keywords, text, page);
         AddPartyNames(keywords, pageText, page);
+        AddEmails(keywords, pageText, page);
 
         return keywords
             .Where(keyword => keyword.Value.Length <= (keyword.Type == ScanKeywordType.CustomerName
@@ -133,6 +148,12 @@ public static class ContractScanKeywordExtractor
         {
             case ScanKeywordType.CustomerName:
                 return NormaliseName(typed);
+            case ScanKeywordType.Email:
+                var email = typed.Trim();
+                var whole = EmailAddress.Match(email);
+                return whole.Success && whole.Length == email.Length && email.Length <= MaximumValueLength
+                    ? email.ToLowerInvariant()
+                    : null;
             case ScanKeywordType.ContractCode:
                 var code = NormaliseCode(SpacedHyphen.Replace(plain, "-").Replace(" ", string.Empty));
                 return code is { Length: <= MaximumValueLength } ? code : null;
@@ -156,13 +177,13 @@ public static class ContractScanKeywordExtractor
 
     /// <summary>
     /// Party names, taken from the original text so the accents stay: the part after the colon of a
-    /// line whose label (compared without accents) names a party.
+    /// line whose label (compared without accents) names a party. OCR often reads that colon as _ ' * or |.
     /// </summary>
     private static void AddPartyNames(List<ScanKeyword> keywords, string pageText, int page)
     {
         foreach (var line in pageText.Split('\n'))
         {
-            var colon = line.IndexOf(':');
+            var colon = line.IndexOfAny(LabelSeparators);
             if (colon <= 0)
             {
                 continue;
@@ -185,10 +206,18 @@ public static class ContractScanKeywordExtractor
     /// <summary>Spaces collapsed and stray punctuation trimmed; null when no name is left.</summary>
     private static string? NormaliseName(string raw)
     {
-        var name = Spaces.Replace(raw, " ").Trim().Trim('.', ',', ';', ':', '-', '_', '|', '"', '\'');
+        var name = Spaces.Replace(raw, " ").Trim().Trim('.', ',', ';', ':', '-', '_', '|', '"', '\'').Trim();
         return name.Length is >= MinimumNameLength and <= MaximumNameLength && name.Any(char.IsLetter)
             ? name
             : null;
+    }
+
+    private static void AddEmails(List<ScanKeyword> keywords, string pageText, int page)
+    {
+        foreach (Match match in EmailAddress.Matches(pageText))
+        {
+            keywords.Add(new ScanKeyword(ScanKeywordType.Email, match.Value.ToLowerInvariant(), page));
+        }
     }
 
     private static void AddCodes(List<ScanKeyword> keywords, string text, int page)

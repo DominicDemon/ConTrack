@@ -342,7 +342,8 @@ public sealed class ContractReviewRepository(
         var hasAccount = await ReviewData.HasAccount(db, customerId, ct);
         if (create && hasAccount) throw new InternalAppException(409, "Khách đã có tài khoản. Dùng “Cấp lại mật khẩu tạm” nếu khách chưa đăng nhập được.");
         if (!create && !hasAccount) throw new InternalAppException(409, "Khách chưa có tài khoản. Tạo tài khoản sau khi hai bên đã ký hợp đồng.");
-        if (customer.CustomerPersonalPhoneVerifiedAt is not null) throw new InternalAppException(409, "Khách đã đổi mật khẩu tạm; không cấp lại.");
+        // Also for a customer who set a password of their own and forgot it: they must change the new temporary one.
+        customer.CustomerPersonalPhoneVerifiedAt = null;
         var docs = db.ContractDocuments.AsNoTracking().Where(d => d.CustomerId == customerId && d.TenantId == null);
         var signed = docs.Where(d => d.ContractDocumentStatus == ContractDocumentStatus.Signed || d.ContractDocumentStatus == ContractDocumentStatus.Completed);
         if (create && !await signed.AnyAsync(ct)) throw new InternalAppException(409, "Chỉ tạo tài khoản sau khi hai bên đã ký hợp đồng.");

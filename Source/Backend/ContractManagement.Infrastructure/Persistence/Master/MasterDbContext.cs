@@ -901,6 +901,7 @@ public partial class MasterDbContext : DbContext
                 .IsUnicode(false)
                 .HasColumnName("customer_gender");
             entity.Property(e => e.CustomerLastLoginAt).HasColumnName("customer_last_login_at");
+            entity.Property(e => e.CustomerOwnerEmployeeId).HasColumnName("customer_owner_employee_id");
             entity.Property(e => e.CustomerLastname)
                 .HasMaxLength(100)
                 .HasColumnName("customer_lastname");

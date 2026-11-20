@@ -19,6 +19,20 @@ public sealed class ScanOcrOptions
 
     public int PageTimeoutSeconds { get; set; } = 30;
 
+    /// <summary>
+    /// Tesseract page segmentation mode (--psm). 4 reads the page as one column of lines, which keeps a label and
+    /// its value on the same line ("Tax code / MST : 0312345678"); the automatic mode 3 splits a two-column
+    /// party block into a column of labels and a column of values, and the keywords cannot be paired again.
+    /// </summary>
+    public int PageSegMode { get; set; } = 4;
+
+    /// <summary>
+    /// Tesseract thresholding_method: null keeps Tesseract's own (Otsu); 2 = Sauvola, adaptive, for photos with
+    /// shadows or uneven light. Measured on the sample photos it changed nothing (Tesseract read every value already),
+    /// so it stays off unless a batch of poor photos needs it.
+    /// </summary>
+    public int? ThresholdingMethod { get; set; }
+
     /// <summary>Pages read when taking search keywords from a scan.</summary>
     public int KeywordMaxPages { get; set; } = 30;
 

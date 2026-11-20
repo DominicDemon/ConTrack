@@ -486,10 +486,10 @@ public static class InternalHost
         secured.MapGet("/contract-signing-demo/availability", (IHostEnvironment environment) => Results.Ok(new { available = environment.IsDevelopment() }));
         secured.MapPost("/contract-signing-demo", async (HttpContext c, InternalSigningDemoService demo, CancellationToken ct) =>
             Results.Ok(await demo.Create(Current(c), ct)));
-        secured.MapGet("/contract-archive", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+        secured.MapGet("/contract-archive", async (string? search, int? status, string? partyType, DateTime? createdFrom, DateTime? createdTo, int? limit, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
             if (!Current(c).CanManageAll) throw new InternalAppException(403, "Kho hợp đồng chỉ dành cho quản trị viên công ty.");
-            return Results.Ok(await r.ContractArchive(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType));
+            return Results.Ok(await r.ContractArchive(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType, createdFrom, createdTo, limit ?? 200));
         });
         secured.MapGet("/contract-signing-monitor", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {

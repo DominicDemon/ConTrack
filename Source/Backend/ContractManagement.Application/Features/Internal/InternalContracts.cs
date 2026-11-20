@@ -83,7 +83,8 @@ public sealed record EmployeeOption(long Id, string Name);
 public sealed record DraftSummary(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName, DateTime UpdatedAt, int MissingCount,
     int Status, string? LatestReviewStatus);
 public sealed record ContractArchiveEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
-    DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, int SignatureCount, DateTime? LastSignedAt);
+    DateTime CreatedAt, DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, int SignatureCount, DateTime? LastSignedAt,
+    decimal TotalAmount, string CurrencyCode, DateTime? EffectiveDate, DateTime? ExpireDate);
 public sealed record SigningMonitorEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
     DateTime UpdatedAt, int Status, long VersionNo, int SignatureCount, int SignedCount, bool CompanySigned, bool CustomerSigned,
     string? LatestReviewStatus, DateTime? LastSignedAt, bool Paper = false);
@@ -122,7 +123,8 @@ public interface IInternalRepository
     Task<List<EmployeeOption>> Employees(CancellationToken ct);
     /// <param name="partyType">PERSON or BUSINESS (the contract's party in its current version); null for both.</param>
     Task<List<DraftSummary>> Drafts(long? owner, string? search, int? status, CancellationToken ct, string? partyType = null);
-    Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct, string? partyType = null);
+    Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct, string? partyType = null,
+        DateTime? createdFrom = null, DateTime? createdTo = null, int limit = 200);
     Task<List<SigningMonitorEntry>> SigningMonitor(string? search, int? status, CancellationToken ct, string? partyType = null);
     Task<SigningMonitorDetail?> SigningMonitorDetail(long id, CancellationToken ct);
     Task<DraftRecord?> Draft(long id, CancellationToken ct);

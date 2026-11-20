@@ -17,7 +17,7 @@ import { CustomerApiError, customerApi, customerStatusLabel, handleAuthError, is
 
 type Decision = "APPROVE" | "REQUEST_CHANGES" | "REJECT";
 const decisions: Record<Decision, { title: string; description: string; note: string; required: boolean }> = {
-  APPROVE: { title: "Đồng ý hợp đồng", description: "Bạn xác nhận đồng ý với nội dung phiên bản này. Nhân viên sẽ kiểm tra nội bộ trước bước ký.", note: "Ghi chú (tùy chọn)", required: false },
+  APPROVE: { title: "Đồng ý hợp đồng", description: "Bạn xác nhận đồng ý với nội dung phiên bản này. Nếu đây là lần đầu bạn đồng ý hợp đồng, hệ thống sẽ gửi hướng dẫn đăng nhập Cổng khách hàng qua email. Nhân viên sẽ kiểm tra bản chốt trước bước ký.", note: "Ghi chú (tùy chọn)", required: false },
   REQUEST_CHANGES: { title: "Gửi yêu cầu sửa", description: "Các góp ý theo mục của bạn được gửi cho nhân viên. Nhân viên sẽ sửa và gửi lại phiên bản mới.", note: "Ghi chú thêm (tùy chọn)", required: false },
   REJECT: { title: "Từ chối hợp đồng", description: "Bạn không đồng ý với hợp đồng này. Người phụ trách sẽ quyết định thương lượng tiếp hoặc đóng hồ sơ.", note: "Lý do từ chối *", required: true },
 };
@@ -72,6 +72,9 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
   const mine = review.comments.filter(c => c.fromCustomer && !c.carried).length;
   // Agreeing and asking for changes exclude each other: once agreed, no more comments; once commented, no "Đồng ý".
   const approved = review.status === "APPROVED";
+  const electronicReview = approved && review.content.partyType !== "BUSINESS";
+  const preview = review.content.templateSnapshot?.wordStorageKey
+    ? <ReviewWord key={review.id} id={review.id}/> : <DraftPreview content={review.content}/>;
   /** Same rule as the API: own comment on this version, review open, not handled or answered by the staff yet. */
   const canChange = (c: ReviewComment) => open && c.fromCustomer && !c.carried && !c.resolved && !review.comments.some(x => x.parentId === c.id);
   return <><PortalHeader onLogout={onAuthLost}/><div className={s.page}>
@@ -83,7 +86,7 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
     {!open && <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>{review.respondedAt ? `Bạn đã phản hồi lúc ${dateTime(review.respondedAt)}.` : "Lần gửi này không còn nhận phản hồi."}{review.customerNote ? ` Ghi chú: ${review.customerNote}` : ""}</p>}
     {review.status === "APPROVED" && (review.content.partyType === "BUSINESS"
       ? <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>Hợp đồng doanh nghiệp được ký trên giấy: sau khi công ty duyệt, nhân viên sẽ gửi bản in để đại diện doanh nghiệp ký và đóng dấu đỏ. Bạn không cần ký điện tử trên Portal.</p>
-      : <PortalSigningPanel reviewId={id}/>)}
+      : <PortalSigningPanel key={id} reviewId={id}>{preview}</PortalSigningPanel>)}
     {open && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
       {mine === 0 && <button className={ui.primaryButton} disabled={busy} onClick={() => { setDecision("APPROVE"); setNote(""); }}><Check size={16}/>Đồng ý</button>}
       <button className={ui.secondaryButton} disabled={busy || mine === 0} title={mine === 0 ? "Thêm góp ý cho mục cần sửa trước" : undefined}
@@ -91,7 +94,7 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
       {mine > 0 && <p className={s.muted} style={{ flexBasis: "100%" }}>Bạn đã góp ý cho phiên bản này nên không chọn Đồng ý. Bấm Gửi yêu cầu sửa để nhân viên chỉnh lại hợp đồng.</p>}
       <button className={ui.secondaryButton} disabled={busy} onClick={() => { setDecision("REJECT"); setNote(""); }}><XCircle size={16}/>Từ chối</button></div>}
     <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", alignItems: "start" }}>
-      {review.content.templateSnapshot?.wordStorageKey ? <ReviewWord key={review.id} id={review.id}/> : <DraftPreview content={review.content}/> }
+      {!electronicReview && preview}
       {!approved && <section className={ui.card} aria-label="Góp ý và yêu cầu sửa theo mục"><h2 style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 16 }}><MessageSquare size={18}/>Góp ý / yêu cầu sửa theo mục</h2>
         {open && <p className={s.muted} style={{ marginTop: 4 }}>Chọn mục cần sửa (thông tin các bên, hạng mục, thanh toán, từng điều khoản…), ghi nội dung rồi bấm Thêm góp ý. Khi xong, bấm Gửi yêu cầu sửa.</p>}
         {targets.map(group => {

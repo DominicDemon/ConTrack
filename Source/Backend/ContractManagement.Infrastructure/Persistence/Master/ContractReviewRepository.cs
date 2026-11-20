@@ -345,7 +345,7 @@ public sealed class ContractReviewRepository(
         if (customer.CustomerPersonalPhoneVerifiedAt is not null) throw new InternalAppException(409, "Khách đã đổi mật khẩu tạm; không cấp lại.");
         var docs = db.ContractDocuments.AsNoTracking().Where(d => d.CustomerId == customerId && d.TenantId == null);
         var signed = docs.Where(d => d.ContractDocumentStatus == ContractDocumentStatus.Signed || d.ContractDocumentStatus == ContractDocumentStatus.Completed);
-        if (create && !await signed.AnyAsync(ct)) throw new InternalAppException(409, "Chỉ tạo tài khoản sau khi hai bên đã ký hợp đồng.");
+        if (create && !await signed.AnyAsync(ct) && !await db.ContractReviewRequests.AnyAsync(r => r.CustomerId == customerId && r.ContractReviewRequestStatus == ContractReviewStatus.Approved, ct)) throw new InternalAppException(409, "Khách cần đồng ý hợp đồng trước khi tạo tài khoản.");
         var phone = PhoneNumber.Normalize(customer.CustomerPersonalPhone) ?? throw new InternalAppException(409, "Khách hàng chưa có số điện thoại hợp lệ.");
         // Same address the contract emails went to: the latest (signed first) contract's customer email, else the customer's own.
         var latest = await (await signed.AnyAsync(ct) ? signed : docs).OrderByDescending(d => d.UpdatedDate ?? d.CreatedDate)
@@ -398,7 +398,7 @@ public sealed class ContractReviewRepository(
     }
 }
 
-public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOptions> options) : ICustomerPortalRepository
+public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOptions> options, CustomerContractMailer? accountMail = null) : ICustomerPortalRepository
 {
     private static readonly PasswordHasher<Customer> Hasher = new();
     private static readonly Customer Dummy = new();
@@ -618,7 +618,7 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
 
     public async Task<CustomerReviewDetail> Respond(long customerId, long reviewId, CustomerRespondInput input, string? ip, string? userAgent, CancellationToken ct)
     {
-        await ReviewData.InTransaction(db, async () =>
+        var account = await ReviewData.InTransaction(db, async () =>
         {
             var review = await Own(customerId, reviewId, ct);
             ReviewData.Expect(review.Rowversion, input.RowVersion);
@@ -642,8 +642,20 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             review.RespondedIpAddress = ip is { Length: > 45 } ? ip[..45] : ip; review.RespondedUserAgent = userAgent is { Length: > 1000 } ? userAgent[..1000] : userAgent;
             doc.ContractDocumentStatus = next.Document; doc.UpdatedDate = now;
             var approved = next.Review == ContractReviewStatus.Approved;
+            (string Email, string Name, string Phone, string Password)? credentials = null;
             if (approved)
             {
+                // Serialize first-time account issuance across simultaneous approvals for one customer.
+                var customer = await db.Customers.FromSqlInterpolated($"SELECT * FROM CUSTOMER WITH (UPDLOCK, ROWLOCK) WHERE customer_id = {customerId}")
+                    .SingleAsync(ct);
+                if (!await ReviewData.HasAccount(db, customerId, ct))
+                {
+                    var password = TemporaryPassword.Generate();
+                    customer.CustomerPasswordHash = new PasswordHasher<Customer>().HashPassword(customer, password);
+                    customer.UpdatedAt = now;
+                    ReviewData.Audit(db, ReviewData.AccountCreatedAction, "CUSTOMER", customerId, "CUSTOMER", customerId, now);
+                    credentials = (customer.CustomerEmail ?? "", customer.CustomerDisplayName, customer.CustomerPersonalPhone, password);
+                }
                 var workflow = await db.ApprovalWorkflows.Where(w => w.ApprovalWorkflowCode == ContractReviewRepository.InternalCheckWorkflow && w.ApprovalWorkflowIsactive)
                     .Select(w => (long?)w.ApprovalWorkflowId).FirstOrDefaultAsync(ct) ?? throw new InvalidOperationException("Missing CONTRACT_INTERNAL_CHECK workflow; seed it in the MASTER database script.");
                 db.ContractApprovalRequests.Add(new ContractApprovalRequest { ContractDocumentId = doc.ContractDocumentId, ContractVersionId = review.ContractVersionId,
@@ -659,8 +671,21 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
                 await ReviewData.WithPermission(db, "contract.check", ct), now, ct);
             ReviewData.Audit(db, "REVIEW_" + next.Review, "CONTRACT_REVIEW_REQUEST", reviewId, "CUSTOMER", customerId, now);
             await db.SaveChangesAsync(ct);
-            return 0;
+            return credentials;
         }, ct);
+        if (account is { } issued && accountMail is not null)
+        {
+            var delivered = !string.IsNullOrWhiteSpace(issued.Email) &&
+                await accountMail.SendAccount(issued.Email, issued.Name, issued.Phone, issued.Password, options.Value.TemporaryPasswordHours, true, ct);
+            if (!delivered)
+            {
+                var doc = await db.ContractDocuments.SingleAsync(d => db.ContractReviewRequests.Any(r =>
+                    r.ContractReviewRequestId == reviewId && r.ContractDocumentId == d.ContractDocumentId), ct);
+                await ReviewData.Notify(db, doc, $"review:{reviewId}:account-email", "ACCOUNT_EMAIL_FAILED",
+                    "Chưa gửi được email tài khoản khách", "Kiểm tra email khách hàng và dùng Cấp lại mật khẩu tạm.", [], DateTime.UtcNow, ct);
+                await db.SaveChangesAsync(ct);
+            }
+        }
         db.ChangeTracker.Clear();
         return await Detail(await Own(customerId, reviewId, ct), ct);
     }

@@ -72,7 +72,7 @@ public sealed class CustomerContractMailer(MasterDbContext db, IEmailTransport e
         {
             var subject = created ? "Tài khoản Cổng khách hàng của bạn" : "Mật khẩu tạm mới cho Cổng khách hàng";
             var login = $"{PortalUrl}/login";
-            var intro = created ? "Hợp đồng giữa bạn và công ty đã được hai bên ký. Công ty đã tạo tài khoản Cổng khách hàng để bạn xem lại hợp đồng, tải bản đã ký và nhận các hợp đồng sau."
+            var intro = created ? "Bạn đã đồng ý nội dung hợp đồng. Công ty đã tạo tài khoản Cổng khách hàng để bạn theo dõi tiến độ, ký khi đến lượt và tải bản hoàn tất."
                 : "Công ty đã cấp lại mật khẩu tạm cho tài khoản Cổng khách hàng của bạn.";
             var rules = $"Mật khẩu tạm hết hạn sau {hours} giờ. Lần đăng nhập đầu tiên bạn cần đổi sang mật khẩu mới của riêng bạn.";
             static string e(string value) => WebUtility.HtmlEncode(value);

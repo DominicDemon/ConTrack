@@ -1,4 +1,5 @@
 "use client";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { FileText, ArrowRight, Eye, EyeOff, Check } from "lucide-react";
@@ -22,6 +23,7 @@ export default function InternalLogin() {
     try { await internalApi<InternalUser>("/auth/login", "POST", { username, password }); router.replace(nextWorkspacePath()); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   return <InternalTheme><div className={s.login}>
+    <div style={{ position: "absolute", top: 16, right: 20 }}><ThemeToggle /></div>
     <section className={s.loginIntro}>
       <div className={s.brand}><span className={s.brandMark}><FileText size={23}/></span>{APP_NAME}</div>
       <div><span className={s.eyebrow}>Không gian làm việc nội bộ</span><h1>Từ bản nháp đầu tiên,<br/>đến một thỏa thuận rõ ràng.</h1><p>Soạn hợp đồng theo mẫu, kiểm tra nội dung và cùng hoàn thiện từng điều khoản trong một không gian thống nhất.</p>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { Check, FileSignature, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +22,7 @@ const phaseMessage: Record<SigningPhase, string> = {
   SIGNED: "Bạn đã ký hợp đồng.",
 };
 
-export default function PortalSigningPanel({ reviewId }: { reviewId: string }) {
+export default function PortalSigningPanel({ reviewId, children }: { reviewId: string; children: ReactNode }) {
   const router = useRouter();
   const [state, setState] = useState<SigningState | null>(null);
   const [challengeId, setChallengeId] = useState("");
@@ -133,12 +133,12 @@ export default function PortalSigningPanel({ reviewId }: { reviewId: string }) {
       });
       setPdfUrl(URL.createObjectURL(signedPdf));
       setState(current => current && ({ ...current, phase: "SIGNED", customerSignedAt: new Date().toISOString() }));
-      setNotice("Chữ ký đã được lưu trên bản PDF hoàn tất. Bạn có thể xem hoặc tải bản đã ký bên dưới.");
+      setNotice("Đã lưu chữ ký của bạn.");
     } catch (e) { if (handleAuthError(e, router.replace)) setError((e as Error).message); }
     finally { setBusy(false); }
   }
 
-  return <section className={ui.card} aria-label="Ký hợp đồng trong cổng khách hàng" style={{ marginTop: 18 }}>
+  return <><section className={ui.card} aria-label="Ký hợp đồng trong cổng khách hàng" style={{ marginTop: 18 }}>
     <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 17 }}><FileSignature size={18}/>Ký hợp đồng</h2>
     <p className={s.muted} style={{ marginTop: 6 }}>{state ? phaseMessage[state.phase] : "Đang kiểm tra trạng thái ký…"}</p>
     {state?.phase === "WAITING_COMPANY" && <Button type="button" variant="outline" style={{ marginTop: 10 }} onClick={() => void refreshState()}><RefreshCw size={15}/>Kiểm tra lại trạng thái</Button>}
@@ -167,5 +167,5 @@ export default function PortalSigningPanel({ reviewId }: { reviewId: string }) {
     </div>}
     {error && <p role="alert" className={ui.error} style={{ marginTop: 12 }}>{error}</p>}
     {notice && <p role="status" className={ui.notice} style={{ marginTop: 12 }}>{notice}</p>}
-  </section>;
+  </section>{state && state.phase !== "SIGNED" && !pdfUrl && children}</>;
 }

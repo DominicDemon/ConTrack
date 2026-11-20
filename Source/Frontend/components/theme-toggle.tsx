@@ -6,10 +6,10 @@ import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
 
 export function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
 
   const toggleTheme = (event: React.MouseEvent) => {
-    const isDark = theme === "dark";
+    const isDark = resolvedTheme === "dark";
     const nextTheme = isDark ? "light" : "dark";
 
     if (!document.startViewTransition) {
@@ -48,6 +48,8 @@ export function ThemeToggle() {
 
   return (
     <Button
+      type="button"
+      title="Đổi giao diện sáng/tối"
       variant="outline"
       size="icon"
       onClick={toggleTheme}

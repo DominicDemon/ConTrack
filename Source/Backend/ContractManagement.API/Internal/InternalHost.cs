@@ -19,6 +19,7 @@ namespace ContractManagement.API.Internal;
 public static class InternalHost
 {
     internal const string UserKey = "Internal.EmployeeId.v1";
+    private sealed class CompanySigningAction { }
     public static async Task Run(WebApplicationBuilder builder, string[] args)
     {
         if (builder.Environment.IsDevelopment() && OperatingSystem.IsWindows())
@@ -264,7 +265,9 @@ public static class InternalHost
             RequirePasswordChanged(user);
             if (!user.CanWrite && !user.CanCheck && !user.CanApprove && !user.CanManageTemplates) throw new InternalAppException(403, "Bạn không có quyền sử dụng chức năng hợp đồng.");
             var path = c.Request.Path.Value ?? "";
+            var canSign = user.CanApprove && c.GetEndpoint()?.Metadata.GetMetadata<CompanySigningAction>() is not null;
             if (!HttpMethods.IsGet(c.Request.Method) && !user.CanWrite && !user.CanCheck && !user.CanManageTemplates
+                && !canSign
                 && !path.Contains("/approval/") && !path.EndsWith("/internal-approval") && !path.EndsWith("/internal-comments") && !path.EndsWith("/word-preview"))
                 throw new InternalAppException(403, "Bạn chỉ có quyền xem và duyệt hồ sơ.");
             if (path.StartsWith("/api/internal/contract-templates/") && (path.EndsWith("/extract") || path.EndsWith("/preview") || path.EndsWith("/activate") || path.EndsWith("/import")) && !user.CanManageTemplates)
@@ -400,6 +403,14 @@ public static class InternalHost
         secured.MapGet("/contract-signing-demo/availability", (IHostEnvironment environment) => Results.Ok(new { available = environment.IsDevelopment() }));
         secured.MapPost("/contract-signing-demo", async (HttpContext c, InternalSigningDemoService demo, CancellationToken ct) =>
             Results.Ok(await demo.Create(Current(c), ct)));
+        secured.MapGet("/signed-contracts", async (string? search, int? page, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.SignedContracts(Current(c), search, page ?? 1, ct)));
+        secured.MapGet("/signed-contracts/{documentId:long}/versions/{versionId:long}/pdf", async (long documentId, long versionId,
+            HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+        {
+            c.Response.Headers.CacheControl = "private, no-store";
+            return Results.File(await signing.InternalFinalDocument(Current(c), documentId, versionId, ct), "application/pdf");
+        });
         secured.MapGet("/contract-archive", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
             if (!Current(c).CanManageAll) throw new InternalAppException(403, "Kho hợp đồng chỉ dành cho quản trị viên công ty.");
@@ -432,13 +443,13 @@ public static class InternalHost
         secured.MapGet("/company-signing/queue", async (HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
             Results.Ok(await signing.Queue(Current(c), ct)));
         secured.MapPost("/contract-drafts/{id:long}/start-signing", async (long id, StartCompanySigningRequest input, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
-            Results.Ok(await signing.Start(id, input, Current(c), ct)));
+            Results.Ok(await signing.Start(id, input, Current(c), ct))).WithMetadata(new CompanySigningAction());
         secured.MapGet("/contract-drafts/{id:long}/print-pdf", async (long id, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
         { var (pdf, name) = await signing.PrintPdf(id, Current(c), ct); return Results.File(pdf, "application/pdf", name); });
         secured.MapGet("/company-signing/{id:long}/document", async (long id, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
             Results.File(await signing.CompanyDocument(id, Current(c), ct), "application/pdf", $"contract-{id}.pdf"));
         secured.MapPost("/company-signing/{id:long}/sign", async (long id, CompanySignatureRequest input, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
-            Results.Ok(await signing.SignCompany(id, input, Current(c), ct)));
+            Results.Ok(await signing.SignCompany(id, input, Current(c), ct))).WithMetadata(new CompanySigningAction());
         secured.MapPost("/contract-drafts/{id:long}/versions", async (long id, NewVersionRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
             Results.Ok(await r.CreateVersion(id, input, Current(c), ct)));
         secured.MapPost("/contract-reviews/{id:long}/followup", async (long id, FollowupRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>

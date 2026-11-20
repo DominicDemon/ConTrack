@@ -60,7 +60,10 @@ public sealed class CustomerSigningService(
             throw new InternalAppException(503, "Dịch vụ gửi OTP chưa được cấu hình.");
         var link = await ResolvePortalLink(customerId, reviewId, ct);
         var now = DateTime.UtcNow;
-        if (link.ActivatedAt is DateTime activated && activated > now.AddMinutes(-1))
+        // Opening the review link also sets ActivatedAt. Only a previous signing OTP starts the resend cooldown.
+        var cooldownStart = now.AddMinutes(-1);
+        if (await db.ContractCustomerOtpChallenges.AnyAsync(x => x.ContractAccessLinkId == link.ContractAccessLinkId
+            && x.CreatedAt > cooldownStart, ct))
             throw new InternalAppException(429, "Vui lòng chờ một phút trước khi yêu cầu mã mới.");
         var previous = await db.ContractCustomerOtpChallenges.Where(x => x.ContractAccessLinkId == link.ContractAccessLinkId && x.UsedAt == null).ToListAsync(ct);
         foreach (var challenge in previous) challenge.UsedAt = now;
@@ -111,7 +114,48 @@ public sealed class CustomerSigningService(
         var signed = await db.ContractElectronicSignatures.AnyAsync(x => x.ContractDocumentId == review.ContractDocumentId
             && x.ContractVersionId == review.ContractVersionId && x.ContractElectronicPartytype == CustomerParty && x.ContractElectronicStatus == Signed, ct);
         if (!signed) throw new InternalAppException(409, "Khách hàng chưa ký xong hợp đồng.");
-        return await CurrentPdf(review.ContractDocumentId, review.ContractVersionId, ct);
+        return await CurrentPdf(review.ContractDocumentId, review.ContractVersionId, ct, finalOnly: true);
+    }
+
+    private IQueryable<ContractVersion> VisibleSignedVersions(InternalUser user)
+    {
+        bool companyWide = user.CanCheck || user.CanApprove;
+        if (!companyWide && !user.CanWrite) throw new InternalAppException(403, "Bạn không có quyền xem hợp đồng đã ký.");
+        var signatures = db.ContractElectronicSignatures.Where(s => s.ContractElectronicStatus == Signed);
+        return from v in db.ContractVersions.AsNoTracking()
+               join d in db.ContractDocuments on v.ContractDocumentId equals d.ContractDocumentId
+               where d.TenantId == null && (companyWide || d.EmployeeId == user.Id)
+                   && signatures.Any(s => s.ContractDocumentId == d.ContractDocumentId && s.ContractVersionId == v.ContractVersionId && s.ContractElectronicPartytype == 1)
+                   && signatures.Any(s => s.ContractDocumentId == d.ContractDocumentId && s.ContractVersionId == v.ContractVersionId && s.ContractElectronicPartytype == CustomerParty)
+               select v;
+    }
+
+    public async Task<SignedContractPage> SignedContracts(InternalUser user, string? search, int page, CancellationToken ct)
+    {
+        const int size = 20;
+        if (page < 1 || page > int.MaxValue / size) throw new InternalAppException(400, "Số trang không hợp lệ.");
+        var term = search?.Trim();
+        var query = from v in VisibleSignedVersions(user)
+                    join d in db.ContractDocuments on v.ContractDocumentId equals d.ContractDocumentId
+                    join c in db.Customers on d.CustomerId equals c.CustomerId
+                    join e in db.Employees on d.EmployeeId equals e.EmployeeId
+                    where string.IsNullOrEmpty(term) || d.ContractDocumentName.Contains(term)
+                        || (d.ContractDocumentCode != null && d.ContractDocumentCode.Contains(term)) || c.CustomerDisplayName.Contains(term)
+                    let signedAt = v.ContractVersionSigndate ?? db.ContractElectronicSignatures
+                        .Where(s => s.ContractVersionId == v.ContractVersionId && s.ContractElectronicStatus == Signed)
+                        .Max(s => s.ContractElectronicSignedat)
+                    orderby signedAt descending, v.ContractVersionId descending
+                    select new SignedContractEntry(d.ContractDocumentId, v.ContractVersionId, d.ContractDocumentCode ?? "",
+                        d.ContractDocumentName, c.CustomerDisplayName, e.EmployeeDisplayName, v.ContractVersionVersionNo, signedAt);
+        var rows = await query.Skip((page - 1) * size).Take(size + 1).ToListAsync(ct);
+        return new(rows.Take(size).ToList(), rows.Count > size);
+    }
+
+    public async Task<byte[]> InternalFinalDocument(InternalUser user, long documentId, long versionId, CancellationToken ct)
+    {
+        if (!await VisibleSignedVersions(user).AnyAsync(v => v.ContractDocumentId == documentId && v.ContractVersionId == versionId, ct))
+            throw new InternalAppException(404, "Không tìm thấy hợp đồng đã ký.");
+        return await CurrentPdf(documentId, versionId, ct, finalOnly: true);
     }
 
     public async Task<byte[]> PortalSign(long customerId, long reviewId, CustomerSigningRequest request, string? ipAddress, string? userAgent, CancellationToken ct)
@@ -309,14 +353,17 @@ public sealed class CustomerSigningService(
         .Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == versionId && x.ContractElectronicPartytype == CustomerParty && x.ContractElectronicStatus == Pending)
         .Select(x => x.ContractElectronicSignatureId).SingleAsync(ct);
 
-    private async Task<byte[]> CurrentPdf(long documentId, long versionId, CancellationToken ct)
+    private async Task<byte[]> CurrentPdf(long documentId, long versionId, CancellationToken ct, bool finalOnly = false)
     {
         var file = await (from relation in db.ContractDocumentFiles.AsNoTracking()
             join stored in db.FileStorages.AsNoTracking() on relation.FileStorageFileid equals stored.FileStorageFileid
             where relation.ContractDocumentId == documentId && relation.ContractVersionId == versionId && relation.IsPrimary
+                && (!finalOnly || stored.FileStorageFiletype == "FULLY_SIGNED_PDF")
             select stored).SingleOrDefaultAsync(ct) ?? throw new InternalAppException(404, "Không tìm thấy bản PDF hợp đồng.");
         if (Path.GetFileName(file.FileStorageStoragekey) != file.FileStorageStoragekey) throw new InvalidDataException("Invalid signing storage key.");
-        var bytes = await File.ReadAllBytesAsync(Path.Combine(root, file.FileStorageStoragekey), ct);
+        var path = Path.Combine(root, file.FileStorageStoragekey);
+        if (!File.Exists(path)) throw new InternalAppException(404, "Không tìm thấy tệp PDF đã lưu của phiên bản này.");
+        var bytes = await File.ReadAllBytesAsync(path, ct);
         if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(file.FileStorageSha256, StringComparison.OrdinalIgnoreCase))
             throw new InternalAppException(409, "File hợp đồng không khớp mã kiểm tra đã lưu.");
         return bytes;

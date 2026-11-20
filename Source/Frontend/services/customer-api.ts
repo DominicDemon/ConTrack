@@ -1,5 +1,5 @@
 import type { DraftContent } from "@/services/internal-api";
-export type CustomerSession = { id: string; name: string; mustChangePassword: boolean };
+export type CustomerSession = { id: string; name: string; mustChangePassword: boolean; linkReviewId?: string | null };
 export type ReviewLinkStatus = { verified: boolean; reviewId: string | null; expiresAt: string };
 export type CustomerSigningOtpResult = { challengeId: string; expiresAt: string; deliveryChannel: string; developmentOtp: string | null };
 export type CustomerReviewSummary = { id: string; contractName: string; versionNo: string; status: string; sentAt: string; respondedAt: string | null; firstViewedAt?: string | null };
@@ -45,6 +45,7 @@ export async function customerApiBlob(path: string, method = "GET", body?: unkno
 /** Sends the customer to the right page for auth errors; returns false when the error was handled that way. */
 export function handleAuthError(error: unknown, replace: (url: string) => void): boolean {
   if (error instanceof CustomerApiError && error.status === 401) { replace("/portal/login"); return false; }
+  if (error instanceof CustomerApiError && error.code === "REVIEW_LINK_SESSION") { replace("/portal/login"); return false; }
   if (error instanceof CustomerApiError && error.code === "PASSWORD_CHANGE_REQUIRED") { replace("/portal/change-password"); return false; }
   return true;
 }

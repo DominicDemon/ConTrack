@@ -26,6 +26,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Phòng ban", icon: Building2, href: "/workspace/admin/departments", permissions: ["department.manage"] },
   { label: "Hợp đồng nháp", icon: Files, href: "/workspace/contracts/drafts", permissions: ["draft.write", "contract.check", "contract.approve"] },
   { label: "Ký phía công ty", icon: FileSignature, href: "/workspace/contracts/company-signing", permissions: ["contract.approve"] },
+  { label: "Hợp đồng đã ký", icon: FileSignature, href: "/workspace/contracts/signed", permissions: ["draft.write", "contract.check", "contract.approve"] },
   { label: "Theo dõi ký", icon: Activity, href: "/workspace/contracts/signing", permissions: ["draft.manage.all", "contract.approve"] },
   { label: "Kho hợp đồng", icon: Archive, href: "/workspace/contracts/archive", permissions: ["draft.manage.all"] },
   { label: "Bản ký giấy", icon: FileSignature, href: "/workspace/signed-contracts", permissions: ["contract.signed_evidence.view"], exclude: "/workspace/signed-contracts/search" },

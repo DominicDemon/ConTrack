@@ -99,7 +99,6 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
       { title: "Lưu bản ký giấy", detail: signingComplete ? "Bản scan đã được xác nhận, hồ sơ đã ký." : "Scan bản đã đóng dấu, tải lên màn Bản ký giấy và xác nhận.", done: signingComplete, current: false },
     ] : [{ title: "Sếp ký cho công ty", detail: companySigned ? "Sếp đã ký." : approval?.signingStarted ? "Đang chờ Sếp ký trong hàng đợi Ký phía công ty." : "Sau khi Hành chính duyệt bản chốt, Sếp tạo phiên ký và ký.", done: companySigned, current: record.status === 3 && !companySigned },
     { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? (prospect ? "Công ty đã ký. Khách mở link trong email, xác minh OTP rồi ký." : "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký.") : prospect ? "Sau khi công ty ký, khách ký ngay trên link đã nhận qua email." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned }],
-    ...prospect ? [{ title: "Tạo tài khoản cho khách", detail: signingComplete ? "Hai bên đã ký. Bấm “Tạo tài khoản khách” để gửi email đăng nhập lần đầu (SĐT + mật khẩu tạm)." : "Khách tiềm năng chưa có tài khoản; tạo sau khi hai bên đã ký.", done: false, current: signingComplete }] : [],
   ];
 
   function ask(c: Confirm) { setConfirmed(false); setConfirm(c); setNote(""); setExpiry(inSevenDays()); setError(""); setNotice(""); }
@@ -213,7 +212,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
         </button>}
         {canPrint && <><button className={ui.primaryButton} disabled={busy} onClick={() => void printContract()}><Printer size={16}/>In hợp đồng (PDF)</button>
           <Link className={ui.secondaryButton} href={`/workspace/signed-contracts/${encodeURIComponent(record.id)}`}><Upload size={16}/>Tải bản ký giấy</Link></>}
-        {(user.canWrite || user.canCheck) && prospect && signingComplete && <button className={ui.primaryButton} disabled={busy}
+        {(user.canWrite || user.canCheck) && prospect && (signingComplete || latest?.status === "APPROVED") && <button className={ui.primaryButton} disabled={busy}
           title="Gửi email cho khách: tên đăng nhập là SĐT, kèm mật khẩu tạm; khách đổi mật khẩu ở lần đăng nhập đầu"
           onClick={() => void issueCustomerPassword(true)}><UserPlus size={16}/>Tạo tài khoản khách</button>}
         {(user.canWrite || user.canCheck) && !prospect && latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất email"
@@ -231,7 +230,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
     {(record.carriedComments?.length ?? 0) > 0 && <section className={ui.notice}><strong>Góp ý chuyển tiếp sang phiên bản này</strong>{record.carriedComments?.map(c => <div key={c.id}><p>{c.content} · chuyển từ bản trước · {c.resolved ? "Đã xử lý" : "Chưa xử lý"}</p>{!c.resolved && <button type="button" disabled={busy} className={ui.secondaryButton} onClick={() => void act(async () => { await internalApi(`/contract-comments/${c.id}/resolve`,"POST"); onChanged(); })}>Đánh dấu đã xử lý</button>}</div>)}</section>}
     {latest && <div className={s.customerPortalAccess}>
       {prospect
-        ? <div><strong>Cách khách mở hợp đồng</strong><p>Khách tiềm năng chưa có tài khoản: khách mở link riêng trong email, xác minh số điện thoại bằng mã OTP rồi xem, góp ý, đồng ý và ký ngay trên link đó. Link chỉ mở được hợp đồng này.</p><p className={s.muted}>Sau khi hai bên ký, bấm “Tạo tài khoản khách” để gửi email đăng nhập lần đầu.</p></div>
+        ? <div><strong>Cách khách mở hợp đồng</strong><p>Khách tiềm năng chưa có tài khoản: khách mở link riêng trong email, xác minh số điện thoại bằng mã OTP rồi xem, góp ý, đồng ý và ký ngay trên link đó. Link chỉ mở được hợp đồng này.</p><p className={s.muted}>Khi khách đồng ý lần đầu, hệ thống tự cấp tài khoản và gửi hướng dẫn đăng nhập qua email.</p></div>
         : <div><strong>Cách khách mở hợp đồng</strong><p>Khách đã có tài khoản: khách đăng nhập Cổng khách hàng bằng số điện thoại và mật khẩu, rồi chọn hợp đồng trong mục “Hợp đồng của bạn”. Khách nhận email báo có hợp đồng mới.</p></div>}
       {!prospect && <a href={customerPortalLoginUrl} target="_blank" rel="noreferrer">Mở Portal khách hàng</a>}
     </div>}

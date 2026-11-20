@@ -336,8 +336,8 @@ public sealed class ContractReviewRepository(
 
     private async Task<ResetTemporaryPasswordResult> IssuePassword(long customerId, InternalUser actor, bool create, CancellationToken ct)
     {
-        if (!actor.CanManageAll && !actor.CanCheck && !await db.ContractDocuments.AnyAsync(d => d.CustomerId == customerId && d.EmployeeId == actor.Id && d.TenantId == null, ct))
-            throw new InternalAppException(403, "Bạn không phụ trách khách hàng này.");
+        if (!actor.CanManageAll && !actor.CanCheck)
+            throw new InternalAppException(403, "Chỉ phòng Hành chính - Pháp chế và Ban Giám Đốc mới có quyền cấp tài khoản khách hàng.");
         var customer = await db.Customers.SingleOrDefaultAsync(c => c.CustomerId == customerId && c.CustomerStatus == 1, ct) ?? throw new InternalAppException(404, "Không tìm thấy khách hàng.");
         var hasAccount = await ReviewData.HasAccount(db, customerId, ct);
         if (create && hasAccount) throw new InternalAppException(409, "Khách đã có tài khoản. Dùng “Cấp lại mật khẩu tạm” nếu khách chưa đăng nhập được.");

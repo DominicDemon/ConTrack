@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, type ReactNode } from "react";
+import { Eye, EyeOff, Sparkles } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +53,147 @@ export function CustomerFormDialog({ customer, onClose, onSaved }: { customer: C
       : businesses.length === 0 ? <span className="text-muted-foreground">Chưa có pháp nhân. Có thể thêm khi soạn hợp đồng cho khách này.</span>
       : <ul className="grid gap-1">{businesses.map(b => <li key={b.id}>{b.name} <span className="text-muted-foreground">· MST {b.taxCode}</span></li>)}</ul>}</div>}
   </FormDialog>;
+}
+
+export function CustomerCredentialsDialog({
+  customer,
+  onClose,
+  onSent,
+}: {
+  customer: CustomerRow;
+  onClose: () => void;
+  onSent: (sentTo: string) => void;
+}) {
+  const [phone, setPhone] = useState(customer.phone ?? "");
+  const [password, setPassword] = useState("");
+  const [show, setShow] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const generatePassword = () => {
+    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%";
+    let res = "";
+    for (let i = 0; i < 10; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
+    setPassword(res);
+  };
+
+  const handleSend = async () => {
+    if (!password.trim() || password.length < 6) {
+      setError("Mật khẩu phải có ít nhất 6 ký tự.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const res = await internalApi<{ sentTo: string }>(
+        `/crm/customers/${customer.id}/credentials`,
+        "POST",
+        { password: password.trim(), phone: phone.trim() }
+      );
+      onSent(res.sentTo);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={open => { if (!busy && !open) onClose(); }}>
+      <DialogContent className="sm:max-w-lg" onInteractOutside={e => e.preventDefault()}>
+        <DialogHeader>
+          <DialogTitle>Gửi thông tin tài khoản khách hàng</DialogTitle>
+          <DialogDescription>
+            Cấp tài khoản và gửi thông tin đăng nhập trực tiếp đến email của khách hàng.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4 py-2 text-sm">
+          <div className="grid gap-1">
+            <span className="font-medium text-foreground">Khách hàng</span>
+            <div className="rounded-md bg-muted px-3 py-2 font-semibold">
+              {customer.name}
+            </div>
+          </div>
+
+          <div className="grid gap-1">
+            <span className="font-medium text-foreground">Email nhận thông tin</span>
+            <div className="rounded-md bg-muted px-3 py-2 text-muted-foreground">
+              {customer.email}
+            </div>
+          </div>
+
+          <label className={field}>
+            Tên đăng nhập (Số điện thoại) *
+            <Input
+              required
+              type="tel"
+              value={phone}
+              disabled={busy}
+              placeholder="VD: 0912345678"
+              onChange={e => setPhone(e.target.value)}
+            />
+          </label>
+
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between">
+              <label className="font-medium">Mật khẩu ban đầu *</label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                disabled={busy}
+                onClick={generatePassword}
+              >
+                <Sparkles size={13} className="mr-1" /> Tạo ngẫu nhiên
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                required
+                minLength={6}
+                type={show ? "text" : "password"}
+                value={password}
+                disabled={busy}
+                placeholder="Nhập hoặc bấm Tạo ngẫu nhiên"
+                onChange={e => setPassword(e.target.value)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                disabled={busy}
+                onClick={() => setShow(!show)}
+                title={show ? "Ẩn" : "Hiện"}
+              >
+                {show ? <EyeOff size={16} /> : <Eye size={16} />}
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-md border-l-4 border-amber-500 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+            <strong>Bắt buộc đổi mật khẩu:</strong> Sau khi đăng nhập bằng mật khẩu trên, hệ thống sẽ yêu cầu khách hàng <strong>đổi mật khẩu mới ngay lập tức</strong> để kích hoạt tài khoản và bảo mật thông tin.
+          </div>
+        </div>
+
+        {error && <p role="alert" className={ui.error}>{error}</p>}
+
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={busy} onClick={onClose}>
+            Hủy
+          </Button>
+          <Button
+            type="button"
+            disabled={busy || !password.trim() || password.length < 6}
+            onClick={handleSend}
+          >
+            {busy ? "Đang gửi email…" : "Gửi email"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export function ProductFormDialog({ product, categories, onClose, onSaved }: { product: ProductRow | null; categories: CategoryOption[]; onClose: () => void; onSaved: (row: ProductRow) => void }) {

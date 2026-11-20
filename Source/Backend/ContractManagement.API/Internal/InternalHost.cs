@@ -262,6 +262,14 @@ public static class InternalHost
             await RequireCustomer(db, Current(c), id, AllCustomers(Current(c)), ct);
             return Results.Ok(new { sentTo = await welcome.SendAsync(id, ct) });
         });
+        crm.MapPost("/customers/{id:long}/credentials", async (long id, CustomerCredentialsInput input, HttpContext c, MasterDbContext db, ContractManagement.Infrastructure.Email.CustomerWelcomeMailer welcome, CancellationToken ct) =>
+        {
+            var user = Current(c);
+            if (!AllCustomers(user) && !user.CanManageAll && !user.CanCheck)
+                throw new InternalAppException(403, "Chỉ phòng Hành chính - Pháp chế và Ban Giám Đốc mới có quyền gửi thông tin tài khoản cho khách hàng.");
+            await RequireCustomer(db, user, id, true, ct);
+            return Results.Ok(new { sentTo = await welcome.SendCredentialsAsync(id, input.Password ?? "", input.Phone, user.Id, ct) });
+        });
         crm.MapPut("/customers/{id:long}", async (long id, CustomerUpdateInput input, HttpContext c, MasterDbContext db, ICatalogAdmin a, CancellationToken ct) =>
         { await RequireCustomer(db, Current(c), id, AllCustomers(Current(c)), ct); return Results.Ok(await a.UpdateCustomer(id, input, Current(c), ct)); });
         crm.MapPut("/customers/{id:long}/status", async (long id, ActiveInput input, HttpContext c, MasterDbContext db, ICatalogAdmin a, CancellationToken ct) =>
@@ -587,6 +595,7 @@ public static class InternalHost
          select new CustomerOwnerOption(e.EmployeeId, e.EmployeeDisplayName)).ToListAsync(ct);
     public sealed record EmailCodeInput(string? Password, string? NewEmail);
     public sealed record EmailConfirmInput(string? Code);
+    public sealed record CustomerCredentialsInput(string? Password, string? Phone);
 }
 
 public sealed class StringLongConverter : JsonConverter<long>

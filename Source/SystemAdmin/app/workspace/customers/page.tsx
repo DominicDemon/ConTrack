@@ -1,9 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Contact, RefreshCw, UserCheck, UserPlus, UserX } from "lucide-react";
+import { Contact, RefreshCw, UserCheck, UserPlus, UserX, Mail } from "lucide-react";
 import { SummaryCards } from "@/components/ui/custom/summary-cards";
 import { internalStyles as ui } from "@/components/internal/internal-theme";
-import { CustomerFormDialog } from "@/components/internal/catalog-dialogs";
+import { CustomerFormDialog, CustomerCredentialsDialog } from "@/components/internal/catalog-dialogs";
 import s from "@/components/internal/workspace.module.css";
 import { useInternalUser } from "@/components/internal/internal-shell";
 import { internalApi, dateTime, type CustomerOwnerOption, type CustomerRow } from "@/services/internal-api";
@@ -15,6 +15,7 @@ export default function CustomersPage() {
   const [rows, setRows] = useState<CustomerRow[]>([]); const [search, setSearch] = useState(""); const [status, setStatus] = useState("");
   const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [busy, setBusy] = useState(true); const [acting, setActing] = useState(false); const [reload, setReload] = useState(0);
   const [form, setForm] = useState<{ customer: CustomerRow | null } | null>(null);
+  const [credentialsCustomer, setCredentialsCustomer] = useState<CustomerRow | null>(null);
   useEffect(() => { let active = true;
     void internalApi<CustomerRow[]>("/crm/customers").then(list => { if (active) setRows(list); })
       .catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setBusy(false); });
@@ -65,11 +66,17 @@ export default function CustomersPage() {
           <td className={s.muted}>{dateTime(r.createdAt)}</td>
           <td><div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button className={ui.secondaryButton} disabled={acting} onClick={() => setForm({ customer: r })}>Sửa</button>
-            {r.email && r.active && <button className={ui.secondaryButton} disabled={acting} title="Gửi lại thư báo tài khoản và link đặt mật khẩu" onClick={() => invite(r)}>Gửi email mời</button>}
+            {all && r.email && r.active && <button className={ui.secondaryButton} disabled={acting} title="Gửi thông tin tài khoản và mật khẩu tới email khách hàng" onClick={() => setCredentialsCustomer(r)}><Mail size={15}/>Gửi thông tin tài khoản</button>}
             <button className={ui.secondaryButton} disabled={acting} onClick={() => toggle(r)}>{r.active ? "Khóa" : "Mở khóa"}</button>
           </div></td></tr>)}</tbody></table></div>}
     </section>
     {form && <CustomerFormDialog customer={form.customer} onClose={() => setForm(null)}
       onSaved={row => { const created = form.customer === null; setForm(null); replace(row); setNotice(created ? `Đã thêm ${row.name}.` : `Đã cập nhật ${row.name}.`); }}/>}
+    {credentialsCustomer && <CustomerCredentialsDialog customer={credentialsCustomer} onClose={() => setCredentialsCustomer(null)}
+      onSent={sentTo => {
+        const name = credentialsCustomer.name;
+        setCredentialsCustomer(null);
+        setNotice(`Đã gửi thông tin tài khoản của ${name} tới ${sentTo}. Khách hàng sẽ dùng SĐT và mật khẩu này để đăng nhập và đổi mật khẩu mới.`);
+      }}/>}
   </div>;
 }

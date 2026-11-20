@@ -213,10 +213,10 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
         </button>}
         {canPrint && <><button className={ui.primaryButton} disabled={busy} onClick={() => void printContract()}><Printer size={16}/>In hợp đồng (PDF)</button>
           <Link className={ui.secondaryButton} href={`/workspace/signed-contracts/${encodeURIComponent(record.id)}`}><Upload size={16}/>Tải bản ký giấy</Link></>}
-        {(user.canWrite || user.canCheck) && prospect && signingComplete && <button className={ui.primaryButton} disabled={busy}
-          title="Gửi email cho khách: tên đăng nhập là SĐT, kèm mật khẩu tạm; khách đổi mật khẩu ở lần đăng nhập đầu"
+        {user.canCheck && prospect && signingComplete && <button className={ui.primaryButton} disabled={busy}
+          title="Hành chính tạo tài khoản cho khách: tên đăng nhập là SĐT, kèm mật khẩu tạm; khách đổi mật khẩu ở lần đăng nhập đầu"
           onClick={() => void issueCustomerPassword(true)}><UserPlus size={16}/>Tạo tài khoản khách</button>}
-        {(user.canWrite || user.canCheck) && !prospect && latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất email"
+        {user.canCheck && !prospect && latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất email"
           onClick={() => void issueCustomerPassword(false)}><KeyRound size={16}/>Cấp lại mật khẩu tạm</button>}
       </div>
     </div>

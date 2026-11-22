@@ -7,11 +7,12 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, GripVertical, ListChecks, Plus, Save, Trash2, Users, Wallet } from "lucide-react";
 import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
+import { DEFAULT_PROVIDER_FIELDS } from "../../../Shared/draft-validation";
 import DraftPreview from "./draft-preview";
 import WordDraftPreview from "./word-draft-preview";
 import TemplateUpload from "./template-upload";
 import s from "./workspace.module.css";
-const blank = (): DraftContent => ({ templateId: "", customerId: "", name: "", fields: {}, items: [], terms: [], vatPercent: 0, effectiveDate: null, expireDate: null, templateSnapshot: null, totals: { subtotal: 0, discount: 0, vat: 0, total: 0 }, missingFields: [] });
+const blank = (): DraftContent => ({ templateId: "", customerId: "", name: "", fields: { ...DEFAULT_PROVIDER_FIELDS }, items: [], terms: [], vatPercent: 0, effectiveDate: null, expireDate: null, templateSnapshot: null, totals: { subtotal: 0, discount: 0, vat: 0, total: 0 }, missingFields: [] });
 const newCustomer = (): CustomerInput => ({ name: "", phone: "", email: "", company: "", taxCode: "", address: "" });
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className={s.label}>{label}{children}</label>; }
 export default function DraftEditor({ id }: { id?: string }) {
@@ -26,7 +27,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   useEffect(() => { let active = true;
     void Promise.all([internalApi<TemplateDefinition[]>("/contract-templates"), internalApi<CustomerOption[]>("/customers"), internalApi<ProductOption[]>("/products"), id ? internalApi<DraftRecord>(`/contract-drafts/${id}`) : Promise.resolve(null)]).then(([ts, cs, ps, draft]) => {
       if (!active) return; ts = ts.map(completePartyFields); setTemplates(ts); setCustomers(cs); setProducts(ps); setRecord(draft);
-      setContent(draft?.content ?? { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
+      setContent(draft?.content ? { ...draft.content, fields: { ...DEFAULT_PROVIDER_FIELDS, ...draft.content.fields } } : { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
       setDirty(false); dirtyRef.current = false;
     }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; };
   }, [id, loadAttempt]);

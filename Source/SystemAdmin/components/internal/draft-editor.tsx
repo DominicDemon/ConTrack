@@ -1,6 +1,6 @@
 "use client";
 import { isGroupedWordSection, wordDisplaySections } from "../../../Shared/word-display-sections";
-import { sendIssues, focusIssue } from "../../../Shared/draft-validation";
+import { sendIssues, focusIssue, DEFAULT_PROVIDER_FIELDS } from "../../../Shared/draft-validation";
 import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 import { PartyEditor, PaymentEditor } from "./draft-details";
 import { keepInView } from "./word-clause-form";
@@ -21,7 +21,7 @@ import ChecklistPanel from "./checklist-panel";
 import ApprovalPanel from "./approval-panel";
 import { useInternalUser } from "./internal-shell";
 import s from "./workspace.module.css";
-const blank = (): DraftContent => ({ formatVersion: 2, partyType: "", customerBusinessId: null, paymentMode: "PERCENT", milestones: [], templateId: "", customerId: "", name: "", fields: {}, items: [], terms: [], vatPercent: 0, effectiveDate: null, expireDate: null, templateSnapshot: null, totals: { subtotal: 0, discount: 0, vat: 0, total: 0 }, missingFields: [] });
+const blank = (): DraftContent => ({ formatVersion: 2, partyType: "", customerBusinessId: null, paymentMode: "PERCENT", milestones: [], templateId: "", customerId: "", name: "", fields: { ...DEFAULT_PROVIDER_FIELDS }, items: [], terms: [], vatPercent: 0, effectiveDate: null, expireDate: null, templateSnapshot: null, totals: { subtotal: 0, discount: 0, vat: 0, total: 0 }, missingFields: [] });
 const newCustomer = (): CustomerInput => ({ name: "", phone: "", email: "", company: "", taxCode: "", address: "" });
 /** Same list as InternalDraftPolicy.EnglishFieldKeys: what reads differently in English; numbers and codes are shared. */
 const ENGLISH_FIELDS = ["CUSTOMER_COMPANY", "CUSTOMER_ADDRESS", "CUSTOMER_CONTACT_TITLE", "CUSTOMER_BANK_NAME", "PROVIDER_LEGAL_NAME", "PROVIDER_ADDRESS", "PROVIDER_REPRESENTATIVE_TITLE", "PROVIDER_BANK_NAME"];
@@ -46,7 +46,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   useEffect(() => { let active = true;
     void Promise.all([internalApi<TemplateDefinition[]>("/contract-templates"), internalApi<ProductOption[]>("/products"), id ? internalApi<DraftRecord>(`/contract-drafts/${id}`) : Promise.resolve(null)]).then(([ts, ps, draft]) => {
       if (!active) return; ts = ts.map(completePartyFields); setTemplates(ts); setProducts(ps); setRecord(draft);
-      setContent(draft?.content ?? { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
+      setContent(draft?.content ? { ...draft.content, fields: { ...DEFAULT_PROVIDER_FIELDS, ...draft.content.fields } } : { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
       receipt.current = undefined; setDirty(false); dirtyRef.current = false;
     }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; };
   }, [id, loadAttempt]);
@@ -113,11 +113,19 @@ export default function DraftEditor({ id }: { id?: string }) {
   const issues = sendIssues({...content, templateSnapshot: template ?? null});
   const missing = issues.map(i => i.message);
   function selectCustomer(customer: CustomerOption, businessId: string | null = null) {
-    change(current => ({
-      ...current, customerId: customer.id, partyType: businessId ? "BUSINESS" : "PERSON", customerBusinessId: businessId,
-      fields: { ...Object.fromEntries(Object.entries(current.fields).filter(([key]) => !key.startsWith("CUSTOMER_"))), ...customer.fields },
-      fieldsEn: current.fieldsEn && Object.fromEntries(Object.entries(current.fieldsEn).filter(([key]) => !key.startsWith("CUSTOMER_")))
-    }));
+    change(current => {
+      const mergedFields = { ...current.fields };
+      for (const [key, val] of Object.entries(customer.fields)) {
+        if (val?.trim() || !mergedFields[key]?.trim()) {
+          mergedFields[key] = val;
+        }
+      }
+      return {
+        ...current, customerId: customer.id, partyType: businessId ? "BUSINESS" : "PERSON", customerBusinessId: businessId,
+        fields: mergedFields,
+        fieldsEn: current.fieldsEn && Object.fromEntries(Object.entries(current.fieldsEn).filter(([key]) => !key.startsWith("CUSTOMER_")))
+      };
+    });
     setCustomerSearch("");
     setCustomers([]);
     setLookupError("");
@@ -132,12 +140,21 @@ export default function DraftEditor({ id }: { id?: string }) {
     try {
       const profile = await internalApi<CustomerLookupResult>(`/customers/${encodeURIComponent(content.customerId)}/profile`
         + (content.customerBusinessId ? `?businessId=${encodeURIComponent(content.customerBusinessId)}` : ""));
-      if (!Object.entries(profile.customer.fields).some(([key, value]) => (content.fields[key] ?? "") !== (value ?? ""))) {
-        if (!auto) setCustomerNotice("Thông tin Bên A đã khớp với hồ sơ khách hàng.");
+      if (!auto) {
+        selectCustomer(profile.customer, profile.businessId);
+        setCustomerNotice("Đã lấy lại thông tin Bên A theo hồ sơ khách hàng. Kiểm tra rồi bấm Lưu nháp.");
         return;
       }
-      selectCustomer(profile.customer, profile.businessId);
-      setCustomerNotice((auto ? "Đã điền lại" : "Đã lấy lại") + " thông tin Bên A theo hồ sơ khách hàng (cả trong nội dung Word). Kiểm tra rồi bấm Lưu nháp.");
+      const emptyKeys = Object.entries(profile.customer.fields).filter(([k, v]) => Boolean(v?.trim()) && !content.fields[k]?.trim());
+      if (emptyKeys.length > 0) {
+        change(current => ({
+          ...current,
+          fields: {
+            ...current.fields,
+            ...Object.fromEntries(emptyKeys)
+          }
+        }));
+      }
     } catch (e) { if (!auto) setCustomerNotice("Chưa lấy được thông tin khách hàng: " + (e as Error).message); }
   }
   // Opening an editable version (e.g. the one created after the customer asked for changes) refills Bên A once.
@@ -190,7 +207,11 @@ export default function DraftEditor({ id }: { id?: string }) {
     if (!content.customerId) { setError("Tìm và chọn khách hàng trước khi lưu nháp."); focusIssue("partyType"); return; } setBusy(true); setError(""); setSuccess(""); setConflict(false);
     try { if (receipt.current === null) throw new Error("Cập nhật bản xem trước Word trước khi lưu nháp.");
       const saved = await internalApi<DraftRecord>(id ? `/contract-drafts/${id}` : "/contract-drafts", id ? "PUT" : "POST", { content, wordPreviewToken:receipt.current, rowVersion: record?.rowVersion, versionRowVersion: record?.versionRowVersion });
-      receipt.current = undefined; setRecord(saved); setContent(saved.content); setDirty(false); dirtyRef.current = false; setSuccess("Đã lưu bản nháp thành công."); if (!id) router.replace(`/workspace/contracts/drafts/${saved.id}`);
+      receipt.current = undefined;
+      refilled.current = `${saved.id}:${saved.versionNo}`;
+      setRecord(saved);
+      setContent({ ...saved.content, fields: { ...DEFAULT_PROVIDER_FIELDS, ...saved.content.fields } });
+      setDirty(false); dirtyRef.current = false; setSuccess("Đã lưu bản nháp thành công."); if (!id) router.replace(`/workspace/contracts/drafts/${saved.id}`);
     } catch (e) { setError((e as Error).message); if(e instanceof InternalApiError && e.issues.length) focusIssue(e.issues[0].path); setConflict(e instanceof InternalApiError && e.status === 409); } finally { setBusy(false); }
   }
   async function reload() { if (dirty && !window.confirm("Tải lại sẽ bỏ nội dung chưa lưu của bạn. Tiếp tục?")) return; retryLoad(v => v + 1); setConflict(false); }

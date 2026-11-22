@@ -51,6 +51,17 @@ export function draftIssues(c: DraftContent): DraftIssue[] {
   if(rows.length && (summary.remaining!==0 || (c.paymentMode!=='AMOUNT' && summary.percent!==100))) add("payment_total","milestones","Lịch thanh toán phải đủ tổng sau VAT");
   return issues;
 }
+export const DEFAULT_PROVIDER_FIELDS: Record<string, string> = {
+  PROVIDER_LEGAL_NAME: "Công ty Cổ phần Công nghệ ConTrack",
+  PROVIDER_REPRESENTATIVE_NAME: "Đại diện Ban Giám Đốc",
+  PROVIDER_REPRESENTATIVE_TITLE: "Giám đốc",
+  PROVIDER_ADDRESS: "Tầng 12, Tòa nhà Keangnam, Nam Từ Liêm, Hà Nội",
+  PROVIDER_PHONE: "02431234567",
+  PROVIDER_TAX_CODE: "0101234567",
+  PROVIDER_BANK_NAME: "Ngân hàng TMCP Ngoại thương Việt Nam (Vietcombank)",
+  PROVIDER_BANK_ACCOUNT_NUMBER: "0011001234567"
+};
+
 export const requiredPartyFields = [
     {key:"CUSTOMER_CONTACT_NAME",label:"Người đại diện khách hàng",required:true},
     {key:"CUSTOMER_COMPANY",label:"Tên bên khách hàng",required:true},
@@ -66,7 +77,8 @@ export function sendIssues(c: DraftContent): DraftIssue[] {
   for (const f of [...requiredPartyFields, ...(c.templateSnapshot?.fields ?? [])]) {
     // Word templates carry Bên B in the file itself.
     if (c.templateSnapshot?.wordStorageKey && f.key.startsWith("PROVIDER_")) continue;
-    if (f.required && !c.fields[f.key]?.trim() && !issues.some(i => i.path === "fields."+f.key))
+    const value = c.fields[f.key]?.trim() || (f.key.startsWith("PROVIDER_") ? DEFAULT_PROVIDER_FIELDS[f.key] : "");
+    if (f.required && !value && !issues.some(i => i.path === "fields."+f.key))
       issues.push({code:"required",path:"fields."+f.key,message:f.label});
   }
   for (const t of c.terms) {

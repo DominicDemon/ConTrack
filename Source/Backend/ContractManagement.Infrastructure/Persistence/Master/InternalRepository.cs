@@ -162,8 +162,14 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     {
         var contact = CustomerProfile(customer);
         contact.Fields["CUSTOMER_COMPANY"] = b.CustomerBusinessLegalName;
-        contact.Fields["CUSTOMER_ADDRESS"] = b.CustomerBusinessOfficeAddress ?? b.CustomerBusinessHeadOfficeAddress ?? "";
-        contact.Fields["CUSTOMER_CONTACT_NAME"] = b.CustomerBusinessRepresentativeName ?? "";
+        contact.Fields["CUSTOMER_ADDRESS"] = !string.IsNullOrWhiteSpace(b.CustomerBusinessOfficeAddress)
+            ? b.CustomerBusinessOfficeAddress
+            : !string.IsNullOrWhiteSpace(b.CustomerBusinessHeadOfficeAddress)
+                ? b.CustomerBusinessHeadOfficeAddress
+                : (customer.CustomerAddress ?? "");
+        contact.Fields["CUSTOMER_CONTACT_NAME"] = !string.IsNullOrWhiteSpace(b.CustomerBusinessRepresentativeName)
+            ? b.CustomerBusinessRepresentativeName
+            : customer.CustomerDisplayName;
         contact.Fields["CUSTOMER_CONTACT_PHONE"] = b.CustomerBusinessPhone ?? customer.CustomerPersonalPhone;
         contact.Fields["CUSTOMER_EMAIL"] = b.CustomerBusinessEmail ?? customer.CustomerEmail ?? "";
         contact.Fields["CUSTOMER_TAX_CODE"] = b.CustomerBusinessCompanyTaxIdentifier;

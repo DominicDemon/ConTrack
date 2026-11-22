@@ -1,4 +1,5 @@
 import { paymentMethodLabel, renderContract } from "../../../Shared/contract-renderer";
+import { DEFAULT_PROVIDER_FIELDS } from "../../../Shared/draft-validation";
 import type { ReactNode } from "react";
 import { type DraftContent, money } from "@/services/internal-api";
 import s from "./workspace.module.css";
@@ -9,7 +10,19 @@ export default function DraftPreview({ content, code }: { content: DraftContent;
   // Bilingual (VI_EN), as in the company's printed contracts: English first, Vietnamese in italics.
   const bi = content.languageMode === "VI_EN";
   const L = (vi: string, en: string) => bi ? `${en} / ${vi}` : vi;
-  const field = (key: string, label: string) => content.fields[key]?.trim() || <span className={s.missing}>Chưa điền: {label}</span>;
+  const customerCompany = content.fields.CUSTOMER_COMPANY?.trim();
+  const customerContact = content.fields.CUSTOMER_CONTACT_NAME?.trim();
+  const effectiveCompany = customerCompany || customerContact || "";
+  const effectiveContact = customerContact || customerCompany || "";
+  const field = (key: string, label: string) => {
+    let val = content.fields[key]?.trim();
+    if (!val) {
+      if (key === "CUSTOMER_COMPANY") val = effectiveCompany;
+      else if (key === "CUSTOMER_CONTACT_NAME") val = effectiveContact;
+      else if (key.startsWith("PROVIDER_")) val = DEFAULT_PROVIDER_FIELDS[key] ?? "";
+    }
+    return val || <span className={s.missing}>Chưa điền: {label}</span>;
+  };
   const both = (key: string, vi: ReactNode) => { const en = bi ? content.fieldsEn?.[key]?.trim() : ""; return en ? <>{en}<br/><em>{vi}</em></> : vi; };
   const date = (value: string | null) => value ? value.split("-").reverse().join("/") : <span className={s.missing}>Chưa điền ngày</span>;
   if ((content.formatVersion ?? 1) < 2 && content.templateSnapshot?.isImported) return <div className={s.previewPane}><article className={s.paper}><div className={s.demoStamp}>BẢN NHÁP • MẪU TẢI LÊN — CHƯA XÁC NHẬN PHÊ DUYỆT</div><h2>{content.name}</h2><p>Mã nháp: {code || "Được cấp khi lưu"}</p>{content.terms.map(t => <p key={t.key}>{t.content}</p>)}</article></div>;

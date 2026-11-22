@@ -9,6 +9,92 @@ namespace ContractManagement.Tests.Infrastructure;
 public class InternalWordDocumentTests
 {
     internal const string TinyPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+
+    private static byte[] MixedFonts()
+    {
+        using var stream = new MemoryStream();
+        using (var doc = WordprocessingDocument.Create(stream, WordprocessingDocumentType.Document))
+        {
+            var main = doc.AddMainDocumentPart();
+            var header = main.AddNewPart<HeaderPart>();
+            header.Header = new Header(new Paragraph(new Run(new RunProperties(new RunFonts { Ascii = "Calibri" }), new Text("Đầu trang"))));
+            var footer = main.AddNewPart<FooterPart>();
+            footer.Footer = new Footer(new Paragraph(new Run(new RunProperties(new RunFonts { Ascii = "Arial" }), new Text("Chân trang"))));
+            main.AddNewPart<StyleDefinitionsPart>().Styles = new Styles(
+                new DocDefaults(new RunPropertiesDefault(new RunPropertiesBaseStyle(new RunFonts { Ascii = "Calibri" }))),
+                new Style(new StyleRunProperties(new RunFonts { HighAnsi = "Arial" })) { StyleId = "TableText", Type = StyleValues.Paragraph });
+            main.AddNewPart<FootnotesPart>().Footnotes = new Footnotes(
+                new Footnote(new Paragraph(new Run(new Text("Chú thích tiếng Việt")))) { Id = 1 });
+            main.AddNewPart<NumberingDefinitionsPart>().Numbering = new Numbering(
+                new AbstractNum(new Level(new StartNumberingValue { Val = 1 }, new NumberingFormat { Val = NumberFormatValues.Bullet },
+                    new LevelText { Val = "\uf0b7" }, new NumberingSymbolRunProperties(new RunFonts { Ascii = "Symbol" })) { LevelIndex = 0 },
+                    new Level(new StartNumberingValue { Val = 1 }, new NumberingFormat { Val = NumberFormatValues.Bullet },
+                        new LevelText { Val = "-" }, new NumberingSymbolRunProperties(new RunFonts { Ascii = "Arial" })) { LevelIndex = 1 }) { AbstractNumberId = 1 });
+            main.Document = new Document(new Body(
+                new Paragraph(new Run(new RunProperties(new RunFonts { Ascii = "Arial", AsciiTheme = ThemeFontValues.MinorHighAnsi },
+                    new Bold(), new Italic(), new FontSize { Val = "30" }, new Underline { Val = UnderlineValues.Single }), new Text("Hợp đồng thử font"))),
+                new Table(new TableRow(new TableCell(new Paragraph(new ParagraphProperties(new ParagraphStyleId { Val = "TableText" }),
+                    new Run(new Text("Nội dung ô bảng")))))),
+                new Paragraph(new Run(new Text("Times New Roman"), new FootnoteReference { Id = 1 })),
+                new SectionProperties(new HeaderReference { Id = main.GetIdOfPart(header), Type = HeaderFooterValues.Default },
+                    new FooterReference { Id = main.GetIdOfPart(footer), Type = HeaderFooterValues.Default })));
+        }
+        var source = stream.ToArray();
+        return InternalWordDocument.Edit(source, InternalWordDocument.Blocks(source), [], [new("font-test-image", "0", "image", "", "", TinyPng)]);
+    }
+
+    [Fact]
+    public void ContractFontReplacesThemeAndStyleFontsWithoutChangingFormattingOrImages()
+    {
+        var result = InternalWordDocument.StandardizeContractFont(MixedFonts());
+        using var doc = WordprocessingDocument.Open(new MemoryStream(result), false);
+        var main = doc.MainDocumentPart!;
+        var parts = new OpenXmlPart[] { main, main.StyleDefinitionsPart!, main.HeaderParts.Single(), main.FooterParts.Single(), main.FootnotesPart! };
+        foreach (var part in parts)
+        {
+            Assert.NotEmpty(part.RootElement!.Descendants<RunFonts>());
+            Assert.All(part.RootElement.Descendants<RunFonts>(), font =>
+            {
+                Assert.Equal("Times New Roman", font.Ascii?.Value);
+                Assert.Equal("Times New Roman", font.HighAnsi?.Value);
+                Assert.Equal("Times New Roman", font.EastAsia?.Value);
+                Assert.Equal("Times New Roman", font.ComplexScript?.Value);
+                Assert.Null(font.AsciiTheme);
+            });
+        }
+        var title = main.Document!.Descendants<Run>().First(r => r.InnerText == "Hợp đồng thử font").RunProperties!;
+        Assert.NotNull(title.Bold);
+        Assert.NotNull(title.Italic);
+        Assert.Equal("30", title.FontSize!.Val!.Value);
+        Assert.Equal(UnderlineValues.Single, title.Underline!.Val!.Value);
+        Assert.Single(main.Document.Descendants<Table>());
+        Assert.Equal(new[] { "Symbol", "Times New Roman" }, main.NumberingDefinitionsPart!.Numbering!.Descendants<RunFonts>().Select(f => f.Ascii!.Value));
+        using var image = main.ImageParts.Single().GetStream();
+        using var bytes = new MemoryStream();
+        image.CopyTo(bytes);
+        Assert.Equal(TinyPng, Convert.ToBase64String(bytes.ToArray()));
+    }
+
+    [LibreOfficeContractFontFact]
+    public async Task LibreOfficeRendersMixedTemplateTextInTimesNewRoman()
+    {
+        var converter = new InternalWordDocument(new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+        var pdfBytes = await converter.Pdf(InternalWordDocument.StandardizeContractFont(MixedFonts()), default);
+        using var pdf = UglyToad.PdfPig.PdfDocument.Open(pdfBytes);
+        var letters = pdf.GetPages().SelectMany(p => p.Letters).Where(l => l.Value.Any(char.IsLetter)).ToArray();
+        Assert.NotEmpty(letters);
+        Assert.All(letters, letter => Assert.Contains("TimesNewRoman", letter.FontName?.Replace(" ", "") ?? "", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("Hợp đồng thử font", pdf.GetPage(1).Text);
+    }
+
+    private sealed class LibreOfficeContractFontFactAttribute : FactAttribute
+    {
+        public LibreOfficeContractFontFactAttribute()
+        {
+            if (!OperatingSystem.IsWindows() || ContractManagement.Domains.Services.ContractTemplate.LibreOfficeContractTemplatePdfRenderer.ResolveExecutablePath(null) is null)
+                Skip = "Requires a Windows host with LibreOffice and Times New Roman installed.";
+        }
+    }
     private static byte[] Document()
     {
         using var stream = new MemoryStream();

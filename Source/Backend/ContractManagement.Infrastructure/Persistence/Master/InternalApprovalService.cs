@@ -68,6 +68,11 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
                 var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
                 DraftValidation.Prepare(content, content.TemplateSnapshot!);
                 if (content.MissingFields.Count > 0) throw new DraftValidationException(DraftValidation.Missing(content));
+                if (!content.UseTimesNewRoman)
+                {
+                    content.UseTimesNewRoman = true;
+                    snapshot.FieldValue = JsonSerializer.Serialize(content, InternalRepository.Json);
+                }
                 var workflow = await db.ApprovalWorkflows.SingleAsync(w => w.ApprovalWorkflowCode == Workflow && w.ApprovalWorkflowIsactive, ct);
                 approval = new() { ContractDocumentId = id, ContractVersionId = version.ContractVersionId, ApprovalWorkflowId = workflow.ApprovalWorkflowId,
                     SubmittedByEmployeeId = actor.Id, SubmittedAt = now, InternalStage = "OFFICE", InternalContentHash = await ContentHash(id, version.ContractVersionId, ct) };

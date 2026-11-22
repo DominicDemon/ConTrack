@@ -278,7 +278,16 @@ public sealed class ContractReviewRepository(
                     ContractNegotiationCommentSection = x.ContractNegotiationCommentSection, AuthorCustomerId = x.AuthorCustomerId, RecordedByEmployeeId = x.RecordedByEmployeeId, CreatedAt = now });
             }
             foreach (var x in await db.ContractDynamicValues.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from).ToListAsync(ct))
-            { x.ContractDynamicValueId = 0; x.ContractVersionId = next.ContractVersionId; db.ContractDynamicValues.Add(x); }
+            {
+                x.ContractDynamicValueId = 0; x.ContractVersionId = next.ContractVersionId;
+                if (x.FieldKey == InternalRepository.SnapshotKey)
+                {
+                    var content = JsonSerializer.Deserialize<DraftContent>(x.FieldValue, InternalRepository.Json)!;
+                    content.UseTimesNewRoman = true;
+                    x.FieldValue = JsonSerializer.Serialize(content, InternalRepository.Json);
+                }
+                db.ContractDynamicValues.Add(x);
+            }
             doc.ContractDocumentCurrentVersionId = next.ContractVersionId; doc.UpdatedDate = now;
             ReviewData.Audit(db, "CREATE_VERSION", "CONTRACT_DOCUMENTS", documentId, "EMPLOYEE", actor.Id, now);
             await db.SaveChangesAsync(ct);

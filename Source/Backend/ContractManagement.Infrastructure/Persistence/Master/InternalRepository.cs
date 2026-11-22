@@ -483,6 +483,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     }
     public async Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct)
     {
+        request.Content.UseTimesNewRoman = true;
         string? wordKey = null;
         byte[]? edited = null;
         try

@@ -9,8 +9,10 @@ namespace ContractManagement.Tests.Infrastructure;
 
 public sealed class InternalContractPdfLayoutTests
 {
-    [Fact]
-    public void SigningPdfUsesReadableSectionsAndKeepsSignatureBoxesOnTheFinalPage()
+    [Theory]
+    [InlineData(false, "Arial")]
+    [InlineData(true, "TimesNewRoman")]
+    public void SigningPdfUsesReadableSectionsAndKeepsSignatureBoxesOnTheFinalPage(bool useTimesNewRoman, string expectedFont)
     {
         if (!OperatingSystem.IsWindows()) return;
         var rendered = InternalSigningService.RenderContractPdf(
@@ -35,6 +37,7 @@ public sealed class InternalContractPdfLayoutTests
             },
             new DraftContent
             {
+                UseTimesNewRoman = useTimesNewRoman,
                 Name = "Hợp đồng cung cấp phần mềm",
                 Fields = new Dictionary<string, string>
                 {
@@ -67,6 +70,8 @@ public sealed class InternalContractPdfLayoutTests
         Assert.Contains("HD-2026-0042", text);
         Assert.Contains("Công ty khách hàng", text);
         Assert.Contains("Gói phần mềm quản lý hợp đồng", text);
+        Assert.All(pdf.GetPages().SelectMany(page => page.Letters).Where(letter => letter.Value.Any(char.IsLetter)),
+            letter => Assert.Contains(expectedFont, letter.FontName?.Replace(" ", "") ?? "", StringComparison.OrdinalIgnoreCase));
         Assert.InRange(rendered.CustomerSignatureX + rendered.SignatureWidth, 0, 595 - 44);
         Assert.InRange(rendered.CompanySignatureX + rendered.SignatureWidth, 0, 595 - 44);
     }

@@ -55,9 +55,10 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions, employee.EmployeeMustChangePassword,
             departmentRow?.DepartmentName, isManager || isSysAdmin);
     }
-    public async Task<List<TemplateDefinition>> Templates(CancellationToken ct)
+    public Task<List<TemplateDefinition>> Templates(CancellationToken ct) => TemplateLibrary(false, ct);
+    public async Task<List<TemplateDefinition>> TemplateLibrary(bool allTypes, CancellationToken ct)
     {
-        var templates = await db.ContractTemplates.AsNoTracking().Where(t => t.IsActive && t.ContractTemplateDocumentType == 1).ToListAsync(ct);
+        var templates = await db.ContractTemplates.AsNoTracking().Where(t => t.IsActive && (allTypes || t.ContractTemplateDocumentType == 1)).ToListAsync(ct);
         var result = new List<TemplateDefinition>();
         foreach (var t in templates)
         {

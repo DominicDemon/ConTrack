@@ -347,6 +347,22 @@ public static class InternalHost
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
         wordDrafts.MapPost("/activate", async (long id, WordDraftSave input, HttpContext c, InternalWordTemplates service, CancellationToken ct) => { await service.SaveDraftWord(id, input, Current(c), ct); return Results.NoContent(); })
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
+        var management = secured.MapGroup("/template-library").AddEndpointFilter(async (ctx, next) =>
+        {
+            if (!Current(ctx.HttpContext).CanManageTemplates) return Results.StatusCode(403);
+            return await next(ctx);
+        });
+        management.MapGet("", async (InternalRepository r, CancellationToken ct) => Results.Ok(await r.TemplateLibrary(true, ct)));
+        management.MapGet("/{id:long}/editor", async (long id, InternalRepository r, MasterDbContext db, InternalWordTemplates service, HttpContext c, CancellationToken ct) =>
+        {
+            var row = await db.ContractTemplates.AsNoTracking().SingleOrDefaultAsync(t => t.ContractTemplateId == id && t.IsActive, ct);
+            var template = (await r.TemplateLibrary(true, ct)).FirstOrDefault(t => t.Id == id);
+            if (row == null || template == null) return Results.NotFound();
+            return Results.Ok(new { extraction = await service.OpenTemplate(template, Current(c).Id, ct),
+                stamp = (row.UpdatedDate ?? row.CreatedDate).Ticks.ToString(), template });
+        });
+        management.MapPut("/{id:long}", async (long id, string stamp, WordActivation input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
+            Results.Ok(await service.Activate(input, Current(c).Id, ct, id, stamp))).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
         secured.MapPost("/contract-templates/word/extract", async (TemplateFileInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
             Results.Ok(await service.Extract(input, Current(c).Id, ct)));
         secured.MapPost("/contract-templates/word/preview", async (WordTemplateInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>

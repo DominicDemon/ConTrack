@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useCallback, useEffect, useRef, useState } from "react";
+import { onNotificationRefresh } from "../../../../../Shared/notification-navigation";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -167,6 +168,8 @@ export default function CustomerSupportTicketDetailPage({
   useEffect(() => {
     void loadDetail(false);
   }, [loadDetail]);
+
+  useEffect(() => onNotificationRefresh(() => void loadDetail(true)), [loadDetail]);
 
   useEffect(() => {
     const timer = setInterval(() => {

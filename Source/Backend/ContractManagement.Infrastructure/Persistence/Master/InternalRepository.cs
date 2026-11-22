@@ -4,6 +4,8 @@ using System.Text.Json.Nodes;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Domain.Entities.Master;
 using ContractManagement.Domain.Internal;
+using ContractDocumentFileRoles = ContractManagement.Domain.Internal.Scans.ContractDocumentFileRoles;
+using SignedEvidenceStatus = ContractManagement.Domain.Internal.Scans.SignedEvidenceStatus;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -481,10 +483,18 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             where comment.ContractDocumentId == id && comment.ContractVersionId == v.ContractVersionId && comment.ContractNegotiationCommentCarriedforwardfromcommentid != null
             select new CarriedDraftComment(comment.ContractNegotiationCommentId, term == null ? null : term.ContractTermTermcode, comment.ContractNegotiationCommentContent,
                 comment.ContractNegotiationCommentCarriedforwardfromcommentid, comment.ContractNegotiationCommentCarriedforwardfromversionid, comment.ContractNegotiationCommentState == 1)).ToListAsync(ct);
+        var paperEvidencePending = content.PartyType == "BUSINESS" && d.ContractDocumentStatus == ContractDocumentStatus.PendingSignature
+            && await (from file in db.ContractDocumentFiles
+                      join evidence in db.ContractSignedEvidences on file.ContractDocumentFileId equals evidence.ContractDocumentFileId
+                      where file.ContractDocumentId == id && file.ContractVersionId == v.ContractVersionId
+                          && file.ContractDocumentFileRole == ContractDocumentFileRoles.SignedPaper
+                          && evidence.ContractSignedEvidenceStatus == (int)SignedEvidenceStatus.PendingReview
+                      select evidence.ContractSignedEvidenceId).AnyAsync(ct);
         return new(id, d.ContractDocumentCode!, d.EmployeeId, name, Convert.ToBase64String(d.RowVersion), Convert.ToBase64String(v.ContractVersionRowversion),
             d.UpdatedDate ?? d.CreatedDate, content, d.ContractDocumentStatus, v.ContractVersionVersionNo, v.ContractVersionIslocked,
             ContractReviewPolicy.CanEdit(d.ContractDocumentStatus, v.ContractVersionIslocked), customer.CustomerDisplayName,
-            PhoneNumber.Mask(phone ?? customer.CustomerPersonalPhone), latest, blocked, DraftValidation.Missing(content), carried, await ReviewData.HasAccount(db, d.CustomerId, ct));
+            PhoneNumber.Mask(phone ?? customer.CustomerPersonalPhone), latest, blocked, DraftValidation.Missing(content), carried,
+            await ReviewData.HasAccount(db, d.CustomerId, ct), paperEvidencePending);
     }
     public async Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct)
     {
@@ -528,8 +538,10 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                         throw new InternalAppException(409, "Nháp đã được người khác sửa. Tải lại bản mới trước khi lưu.");
                     var values = await db.ContractDynamicValues.Where(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId).ToListAsync(ct);
                     oldData = values.FirstOrDefault(x => x.FieldKey == SnapshotKey)?.FieldValue;
-                    content.ContractNumber = document.ContractDocumentCode?.StartsWith("HD-", StringComparison.Ordinal) == true
-                        ? document.ContractDocumentCode : null;
+                    var savedContent = oldData == null ? null : JsonSerializer.Deserialize<DraftContent>(oldData, Json);
+                    content.NumberingBusinessId = savedContent?.NumberingBusinessId;
+                    content.ContractNumber = savedContent?.ContractNumber ?? (document.ContractDocumentCode?.StartsWith("HD-", StringComparison.Ordinal) == true
+                        ? document.ContractDocumentCode : null);
                     serialized = JsonSerializer.Serialize(content, Json);
                     var contentChanged = oldData is not null && !SameDraftSnapshot(oldData, serialized);
                     if (contentChanged && !ContractVersionNotes.IsWorking(version.ContractVersionChangenote))
@@ -574,8 +586,17 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 {
                     // The contract register follows Vietnam's calendar, including the New Year boundary.
                     var date = now.AddHours(7);
-                    var allocation = await db.Database.SqlQuery<long>($"EXEC dbo.AllocateContractNumber @contract_year={date.Year}").ToListAsync(ct);
-                    var code = FormattableString.Invariant($"HD-{date:yyyyMMdd}-{allocation.Single():D6}");
+                    var owner = content.NumberingBusinessId ?? 0;
+                    if (content.NumberingBusinessId.HasValue)
+                    {
+                        if (owner <= 0 || owner != content.CustomerBusinessId || content.PartyType != "BUSINESS")
+                            throw new InternalAppException(400, "Quy tắc không khớp pháp nhân đang chọn.");
+                        var rules = new ContractNumberRules(db);
+                        await rules.CheckOwner(owner, content.CustomerId, ct);
+                        if (await rules.Read(owner, ct) == null) throw new InternalAppException(400, "Pháp nhân chưa thiết lập quy tắc.");
+                    }
+                    var numbers = await db.Database.SqlQuery<string>($"EXEC dbo.AllocateFormattedContractNumber @owner={owner}, @day={date.Date}").ToListAsync(ct);
+                    var code = numbers.Single();
                     document = new ContractDocument { CustomerId = content.CustomerId, EmployeeId = actor.Id, ContractTemplateId = content.TemplateId,
                         ContractDocumentName = content.Name, ContractDocumentCode = code, ContractDocumentType = 1,
                         ContractDocumentStatus = 0, CreatedDate = now };
@@ -593,8 +614,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     FileStorageFilesize = edited!.Length, FileStorageFilename = "hop-dong.docx", FileStorageFilepath = wordKey, FileStorageFiletype = "DOCX",
                     FileStorageUploadedbyemployeeid = actor.Id, FileStorageUploadeddate = now });
                 document.ContractDocumentName = content.Name;
-                content.ContractNumber = document.ContractDocumentCode?.StartsWith("HD-", StringComparison.Ordinal) == true
-                    ? document.ContractDocumentCode : null;
+                if (!id.HasValue) content.ContractNumber = document.ContractDocumentCode;
                 serialized = JsonSerializer.Serialize(content, Json);
                 document.UpdatedDate = now;
                 version.ContractVersionSubtotal = content.Totals.Subtotal; version.ContractVersionTotaldiscount = content.Totals.Discount;

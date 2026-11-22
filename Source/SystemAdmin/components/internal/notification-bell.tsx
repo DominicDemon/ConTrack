@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { toast } from "@/components/ui/sonner";
 import { adminNotificationApi, type AdminNotificationItem } from "@/services/internal-notification-api";
 import { internalApi } from "@/services/internal-api";
+import { openNotificationTarget } from "../../../Shared/notification-navigation";
 import { cn } from "@/lib/utils";
 
 const CHANNEL_NAME = "contrack-admin-notifications";
@@ -59,7 +60,12 @@ export function AdminNotificationBell({ tickets = true }: { tickets?: boolean })
       } catch { /* the next poll restores the real state */ }
       broadcastSync();
     }
-    router.push(entry.ticket ? `/workspace/support-tickets/${entry.ticket.subjectId}` : `/workspace/contracts/drafts/${encodeURIComponent(entry.contract!.documentId)}`);
+    if (entry.ticket) openNotificationTarget(`/workspace/support-tickets/${entry.ticket.subjectId}`, router.push);
+    else if (entry.contract) {
+      const id = encodeURIComponent(entry.contract.documentId);
+      openNotificationTarget(entry.contract.eventCode === "SIGNED_PAYMENT_CONFIRMED"
+        ? `/workspace/contracts/signed?documentId=${id}` : `/workspace/contracts/drafts/${id}`, router.push);
+    }
   }, [router]);
 
   const load = useCallback(async (silent = false) => {

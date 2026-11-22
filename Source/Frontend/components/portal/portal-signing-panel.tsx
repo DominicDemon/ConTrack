@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { Check, FileSignature, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import s from "@/components/internal/workspace.module.css";
 import { customerApi, customerApiBlob, handleAuthError, type CustomerSigningOtpResult } from "@/services/customer-api";
 import { dateTime } from "@/services/internal-api";
 import { useRouter } from "next/navigation";
+import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 
 type SigningPhase = "WAITING_APPROVAL" | "SUPERSEDED" | "WAITING_COMPANY" | "READY" | "SIGNED";
 type SigningState = { phase: SigningPhase; companySignedAt: string | null; customerSignedAt: string | null };
@@ -22,7 +23,7 @@ const phaseMessage: Record<SigningPhase, string> = {
   SIGNED: "Bạn đã ký hợp đồng.",
 };
 
-export default function PortalSigningPanel({ reviewId }: { reviewId: string }) {
+export default function PortalSigningPanel({ reviewId, children, onSigned }: { reviewId: string; children: ReactNode; onSigned: () => void }) {
   const router = useRouter();
   const [state, setState] = useState<SigningState | null>(null);
   const [challengeId, setChallengeId] = useState("");
@@ -35,21 +36,26 @@ export default function PortalSigningPanel({ reviewId }: { reviewId: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+  const refreshing = useRef(false);
   const base = `/signing/${encodeURIComponent(reviewId)}`;
 
   const refreshState = useCallback(async () => {
+    if (refreshing.current) return;
+    refreshing.current = true;
     try {
       const result = await customerApi<SigningState>(base);
       setError("");
-      setState(result);
-      if (result.phase === "SIGNED" && !pdfUrl) {
+      if (result.phase === "SIGNED" && (state?.phase !== "SIGNED" || !pdfUrl)) {
         const pdf = await customerApiBlob(`${base}/final-document`);
         setPdfUrl(URL.createObjectURL(pdf));
       }
+      setState(result);
     } catch (e) {
       if (handleAuthError(e, router.replace)) setError((e as Error).message);
-    }
-  }, [base, pdfUrl, router]);
+    } finally { refreshing.current = false; }
+  }, [base, pdfUrl, router, state?.phase]);
+
+  useEffect(() => onNotificationRefresh(() => { if (!busy) void refreshState(); }), [busy, refreshState]);
 
   useEffect(() => {
     let active = true;
@@ -133,12 +139,13 @@ export default function PortalSigningPanel({ reviewId }: { reviewId: string }) {
       });
       setPdfUrl(URL.createObjectURL(signedPdf));
       setState(current => current && ({ ...current, phase: "SIGNED", customerSignedAt: new Date().toISOString() }));
-      setNotice("Chữ ký đã được lưu trên bản PDF hoàn tất. Bạn có thể xem hoặc tải bản đã ký bên dưới.");
+      onSigned();
+      setNotice("Đã lưu chữ ký của bạn.");
     } catch (e) { if (handleAuthError(e, router.replace)) setError((e as Error).message); }
     finally { setBusy(false); }
   }
 
-  return <section className={ui.card} aria-label="Ký hợp đồng trong cổng khách hàng" style={{ marginTop: 18 }}>
+  return <><section className={ui.card} aria-label="Ký hợp đồng trong cổng khách hàng" style={{ marginTop: 18 }}>
     <h2 style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 17 }}><FileSignature size={18}/>Ký hợp đồng</h2>
     <p className={s.muted} style={{ marginTop: 6 }}>{state ? phaseMessage[state.phase] : "Đang kiểm tra trạng thái ký…"}</p>
     {state?.phase === "WAITING_COMPANY" && <Button type="button" variant="outline" style={{ marginTop: 10 }} onClick={() => void refreshState()}><RefreshCw size={15}/>Kiểm tra lại trạng thái</Button>}
@@ -167,5 +174,5 @@ export default function PortalSigningPanel({ reviewId }: { reviewId: string }) {
     </div>}
     {error && <p role="alert" className={ui.error} style={{ marginTop: 12 }}>{error}</p>}
     {notice && <p role="status" className={ui.notice} style={{ marginTop: 12 }}>{notice}</p>}
-  </section>;
+  </section>{state && state.phase !== "SIGNED" && !pdfUrl && children}</>;
 }

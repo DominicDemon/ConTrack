@@ -27,7 +27,12 @@ public class InternalApprovalTests
         public Task SendAsync(EmailMessage message, CancellationToken ct) { Messages.Add(message); return Task.CompletedTask; }
     }
     [MasterDatabaseFact]
-    public async Task EnforcesSequentialApprovalReturnLockAndSnapshotIntegrity()
+    public Task EnforcesSequentialApprovalReturnLockAndSnapshotIntegrity() => VerifyApprovalFlow(false);
+
+    [MasterDatabaseFact]
+    public Task BusinessNumberSurvivesWordDeliveryAndNewVersions() => VerifyApprovalFlow(true);
+
+    private async Task VerifyApprovalFlow(bool useBusinessRule)
     {
         var connection = Environment.GetEnvironmentVariable("CONTRACK_MASTER_TEST_CONNECTION")!;
         await using var db = new MasterDbContext(new DbContextOptionsBuilder<MasterDbContext>().UseSqlServer(connection).Options);
@@ -51,15 +56,30 @@ public class InternalApprovalTests
         var wordKey = Guid.NewGuid().ToString("N") + ".docx";
         await File.WriteAllBytesAsync(Path.Combine(storage.Root, wordKey), approvedWord);
         template = DraftCompletionPolicy.UpgradeTemplate(template) with { WordStorageKey = wordKey, WordSha256 = Convert.ToHexString(SHA256.HashData(approvedWord)), ManualWordContent = true };
-        var content = new DraftContent { TemplateId = templateId, CustomerId = await db.Customers.Select(c => c.CustomerId).FirstAsync(),
+        var accountAddress = $"approval-{Guid.NewGuid():N}@example.invalid";
+        var customer = await repository.CreateCustomer(new("Khách thử " + Guid.NewGuid().ToString("N"), "09" + Random.Shared.Next(10000000, 99999999), accountAddress, null, null, "Hà Nội"), employee, default);
+        var content = new DraftContent { TemplateId = templateId, CustomerId = customer.Id,
             ExpireDate = DateOnly.FromDateTime(DateTime.UtcNow.AddYears(1)), Name = "TEST — Duyệt hai cấp", PartyType = "PERSON", PaymentMethod = "BANK_TRANSFER", TemplateSnapshot = template, Terms = template.Terms,
             Items = [new(null, "Dịch vụ", 1, 100000, 0, 0)], Milestones = [new("PAY1", "Thanh toán", "PAY", 100)] };
         foreach (var field in DraftCompletionPolicy.PartyFields.Where(f => f.Required)) content.Fields[field.Key] = "Thông tin kiểm thử";
         content.Fields["CUSTOMER_CONTACT_PHONE"] = "0901234567";
         content.Fields["CUSTOMER_EMAIL"] = "approval@example.invalid";
+        var prefix = "QA" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        if (useBusinessRule)
+        {
+            var business = await repository.CreateBusiness(customer.Id, new("TEST numbering", "0" + Random.Shared.NextInt64(100000000,999999999), "Hà Nội", "Test"), employee, default);
+            await new ContractNumberRules(db).Save(business.Id, customer.Id, new NumberRule { CompanyCode = prefix, TypeCode = "KD" }, sale, false, default);
+            content.PartyType = "BUSINESS";
+            content.CustomerBusinessId = content.NumberingBusinessId = business.Id;
+            content.Fields["CUSTOMER_TAX_CODE"] = business.TaxCode;
+            content.Fields["CUSTOMER_COMPANY"] = business.Name;
+        }
         DraftValidation.Prepare(content, template);
         var draft = await repository.Save(null, new(content, null, null), sale, default);
-        Assert.Matches(@"^HD-\d{8}-\d{6,}$", draft.Code);
+        if (useBusinessRule) Assert.Matches("^" + prefix + @"-KD-\d{6}-000001$", draft.Code);
+        else if (await new ContractNumberRules(db).Read(0, default) is { } provider)
+            Assert.Matches("^" + provider.CompanyCode + "-" + provider.TypeCode + (provider.IncludeDay ? @"-\d{8}" : @"-\d{6}") + @"-\d{6,}$", draft.Code);
+        else Assert.Matches(@"^HD-\d{8}-\d{6,}$", draft.Code);
         Assert.Equal(draft.Code, draft.Content.ContractNumber);
         async Task<ApprovalAction> Input(string? note = null)
         {
@@ -120,9 +140,13 @@ public class InternalApprovalTests
             && block.Text.Contains("100.000") && block.Text.Contains("Thanh toán: 100.000 VND"));
         var customerPdf = await word.CustomerWord(sent.Id, content.CustomerId, true, default);
         using (var pdf = UglyToad.PdfPig.PdfDocument.Open(customerPdf))
+        {
             Assert.Contains("APPROVED WORD VERSION 1", pdf.GetPage(1).Text);
+            Assert.Contains(draft.Code, pdf.GetPage(1).Text);
+        }
         Assert.Equal(404, (await Assert.ThrowsAsync<InternalAppException>(() => word.CustomerWord(sent.Id, -1, false, default))).Status);
-        var portal = new CustomerPortalRepository(db, Options.Create(new EsmsOptions()));
+        var accountMailbox = new Mailbox();
+        var portal = new CustomerPortalRepository(db, Options.Create(new EsmsOptions()), new CustomerContractMailer(db, accountMailbox, config, NullLogger<CustomerContractMailer>.Instance));
         var customerView = await portal.Review(content.CustomerId, sent.Id, default);
         // As on the portal: a comment by section, then "Gửi yêu cầu sửa" without a note (the comments are the request).
         await portal.Comment(content.CustomerId, sent.Id, new(null, null, "Sửa điều khoản", "ITEMS"), default);
@@ -147,6 +171,9 @@ public class InternalApprovalTests
         Assert.Equal(2, mailbox.Messages.Count);
         var currentCustomerView = await portal.Review(content.CustomerId, resent.Id, default);
         await portal.Respond(content.CustomerId, resent.Id, new("APPROVE", null, currentCustomerView.DocumentHash, currentCustomerView.RowVersion), null, null, default);
+        Assert.True(await ReviewData.HasAccount(db, customer.Id, default));
+        var accountEmail = Assert.Single(accountMailbox.Messages);
+        Assert.Equal(accountAddress, accountEmail.Recipient);
         var finalCheck = await reviews.InternalApproval(draft.Id, director, default);
         Assert.NotNull(finalCheck);
         Assert.Equal(0, finalCheck.Status);
@@ -160,10 +187,13 @@ public class InternalApprovalTests
         await approvals.Act(draft.Id, "submit", await Input(), sale, default);
         await approvals.Act(draft.Id, "approve", await Input(), office, default);
         request = await Input();
-        var missingParty = await Assert.ThrowsAsync<DraftValidationException>(() => reviews.SendReview(draft.Id,
-            new(null, request.RowVersion, request.VersionRowVersion, true, DateTimeOffset.UtcNow.AddDays(1)), sale, default));
-        Assert.Contains(missingParty.Issues, issue => issue.Path == "fields.PROVIDER_ADDRESS");
-        Assert.Equal(2, mailbox.Messages.Count);
+        // Word already contains the provider details. The same customer agrees to a second contract.
+        var existingHash = await db.Customers.Where(c => c.CustomerId == customer.Id).Select(c => c.CustomerPasswordHash).SingleAsync();
+        var another = await reviews.SendReview(draft.Id, new(null, request.RowVersion, request.VersionRowVersion, true, DateTimeOffset.UtcNow.AddDays(1)), sale, default);
+        var anotherView = await portal.Review(customer.Id, another.Id, default);
+        await portal.Respond(customer.Id, another.Id, new("APPROVE", null, anotherView.DocumentHash, anotherView.RowVersion), null, null, default);
+        Assert.Single(accountMailbox.Messages);
+        Assert.Equal(existingHash, await db.Customers.Where(c => c.CustomerId == customer.Id).Select(c => c.CustomerPasswordHash).SingleAsync());
         content.Fields["PROVIDER_ADDRESS"] = "Địa chỉ kiểm thử";
         // Reproduce a pre-upgrade approved snapshot lacking its expiry date.
         content.ExpireDate = null;

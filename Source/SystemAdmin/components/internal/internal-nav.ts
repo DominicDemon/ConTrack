@@ -25,10 +25,12 @@ export type NavItem = { label: string; icon: LucideIcon; href: string; permissio
 export const NAV_ITEMS: NavItem[] = [
   { label: "Tổng quan", icon: LayoutDashboard, href: "/workspace", permissions: [] },
   { label: "Mẫu hợp đồng", icon: Files, href: "/workspace/templates", permissions: ["template.manage"] },
+  { label: "Quy tắc số hợp đồng", icon: Files, href: "/workspace/number-rules", permissions: ["contract.check"] },
   { label: "Nhân viên & phân quyền", icon: UsersRound, href: "/workspace/admin/employees", permissions: ["employee.manage"] },
   { label: "Phòng ban", icon: Building2, href: "/workspace/admin/departments", permissions: ["department.manage"] },
   { label: "Hợp đồng nháp", icon: Files, href: "/workspace/contracts/drafts", permissions: ["draft.write", "contract.check", "contract.approve"] },
   { label: "Ký phía công ty", icon: FileSignature, href: "/workspace/contracts/company-signing", permissions: ["contract.approve"] },
+  { label: "Hợp đồng đã ký", icon: FileSignature, href: "/workspace/contracts/signed", permissions: ["draft.write", "contract.check", "contract.approve"] },
   { label: "Theo dõi ký", icon: Activity, href: "/workspace/contracts/signing", permissions: ["draft.manage.all", "contract.approve"] },
   { label: "Kho hợp đồng", icon: Archive, href: "/workspace/contracts/archive", permissions: ["draft.manage.all"] },
   { label: "Báo cáo hợp đồng", icon: FileChartColumnIncreasing, href: "/workspace/contract-reports", permissions: ["draft.manage.all"] },

@@ -1,5 +1,6 @@
 "use client";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { ThemeToggle } from "@/components/theme-toggle";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { CheckCircle2, ChevronDown, Clock, FileText, ListFilter, LogOut, MessageSquare, ShieldCheck, UserPlus, UserRound } from "lucide-react";
@@ -310,6 +311,7 @@ export default function InternalShell({ children }: { children: ReactNode }) {
                   Quản lý hợp đồng <span className={s.muted}> / Không gian nội bộ</span>
                 </span>
                 <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                  <ThemeToggle />
                   <AdminNotificationBell tickets={user.permissions.some((p) => p.startsWith("ticket."))} />
                   <Link href="/workspace/profile" className={s.muted} title="Hồ sơ của tôi" style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <UserRound size={16} />

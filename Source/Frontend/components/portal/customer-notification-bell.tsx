@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { customerApi } from "@/services/customer-api";
+import { openNotificationTarget } from "../../../Shared/notification-navigation";
 import { customerNotificationApi, type CustomerNotificationItem } from "@/services/portal-notification-api";
 
 const CHANNEL_NAME = "contrack-customer-notifications";
@@ -64,7 +65,11 @@ export function CustomerNotificationBell() {
 
   const go = useCallback(async (entry: Entry) => {
     setOpen(false);
-    if (entry.notice) { markContractRead([entry.notice.key]); router.push(`/portal/contracts/${encodeURIComponent(entry.notice.reviewId)}`); return; }
+    if (entry.notice) {
+      markContractRead([entry.notice.key]);
+      openNotificationTarget(`/portal/contracts/${encodeURIComponent(entry.notice.reviewId)}`, router.push);
+      return;
+    }
     const ticket = entry.ticket!;
     if (!ticket.readAtUtc) {
       const now = new Date().toISOString();
@@ -72,7 +77,7 @@ export function CustomerNotificationBell() {
       try { await customerNotificationApi.markRead(ticket.notificationId); } catch { /* next poll restores the real state */ }
       broadcastSync();
     }
-    router.push(`/portal/support/${ticket.subjectId}`);
+    openNotificationTarget(`/portal/support/${ticket.subjectId}`, router.push);
   }, [markContractRead, router]);
 
   const load = useCallback(async (silent = false) => {

@@ -1,8 +1,10 @@
 "use client";
 import { isGroupedWordSection, wordDisplaySections } from "../../../Shared/word-display-sections";
 import { sendIssues, focusIssue } from "../../../Shared/draft-validation";
+import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 import { PartyEditor, PaymentEditor } from "./draft-details";
 import { keepInView } from "./word-clause-form";
+import NumberRule from "./number-rule";
 
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -49,6 +51,22 @@ export default function DraftEditor({ id }: { id?: string }) {
     }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; };
   }, [id, loadAttempt]);
   useEffect(() => {
+    let generation = 0;
+    const unsubscribe = onNotificationRefresh(() => {
+      if (!id || !record || busy || loading || dirtyRef.current) return;
+      const request = ++generation;
+      void internalApi<DraftRecord>(`/contract-drafts/${id}`).then(latest => {
+        if (request !== generation || dirtyRef.current) return;
+        setRecord(latest);
+        if (latest.rowVersion !== record.rowVersion || latest.versionRowVersion !== record.versionRowVersion) {
+          receipt.current = undefined;
+          setContent(latest.content);
+        }
+      }).catch(e => { if (request === generation) setError(e.message); });
+    });
+    return () => { generation++; unsubscribe(); };
+  }, [id, record, busy, loading]);
+  useEffect(() => {
     const search = customerSearch.trim();
     if (id || !search) return;
     let active = true;
@@ -72,7 +90,15 @@ export default function DraftEditor({ id }: { id?: string }) {
     window.addEventListener("beforeunload", unload); document.addEventListener("click", click, true);
     return () => { window.removeEventListener("beforeunload", unload); document.removeEventListener("click", click, true); navigation?.removeEventListener("navigate", traverse); };
   }, []);
-  const change = useCallback((update: (old: DraftContent) => DraftContent) => { if (receipt.current !== undefined) receipt.current = null; setContent(update); setDirty(true); dirtyRef.current = true; setSuccess(""); }, []);
+  const change = useCallback((update: (old: DraftContent) => DraftContent) => {
+    if (receipt.current !== undefined) receipt.current = null;
+    setContent(old => {
+      const next = update(old);
+      return old.customerId !== next.customerId || old.customerBusinessId !== next.customerBusinessId || old.partyType !== next.partyType
+        ? { ...next, numberingBusinessId: null } : next;
+    });
+    setDirty(true); dirtyRef.current = true; setSuccess("");
+  }, []);
   const setField = (key: string, value: string) => change(c => ({ ...c, fields: { ...c.fields, [key]: value } }));
   const bilingual = content.languageMode === "VI_EN";
   const setTerm = (key: string, patch: Partial<DraftContent["terms"][number]>) => change(c => ({ ...c, terms: c.terms.map(t => t.key === key ? { ...t, ...patch } : t) }));
@@ -222,6 +248,12 @@ export default function DraftEditor({ id }: { id?: string }) {
       <PartyEditor content={content} change={change}/>{template.fields.filter(f => f.key.startsWith("CUSTOMER_")).map(partyField)}
     </div></section>
     <section id="provider-fields" tabIndex={-1} className={s.section}><details open={!template.wordStorageKey || undefined}><summary><Building2/> Công ty mình · Bên B</summary><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></details></section>
+    {!id && <section className={s.section}><h2>Số hợp đồng</h2><p>Chờ cấp số khi lưu nháp</p>
+      <NumberRule owner="0" selected={!content.numberingBusinessId} choose={() => change(c => ({...c, numberingBusinessId:null}))}/>
+      {content.partyType === "BUSINESS" && content.customerBusinessId && <NumberRule key={content.customerBusinessId}
+        owner={content.customerBusinessId} customerId={content.customerId} selected={content.numberingBusinessId === content.customerBusinessId}
+        choose={() => change(c => c.customerBusinessId === content.customerBusinessId && c.customerId === content.customerId ? {...c, numberingBusinessId:c.customerBusinessId} : c)}/>}
+    </section>}
     <section id="contract-items" tabIndex={-1} className={s.section}><h2><Wallet/>Hạng mục và giá trị</h2>
       {content.items.map((item, index) => <div key={index} className={s.lineItem}><header><strong style={{ fontSize: 12 }}>Hạng mục {index + 1}</strong><button type="button" className={s.iconButton} aria-label={`Xóa hạng mục ${index + 1}`} onClick={() => change(c => ({ ...c, items: c.items.filter((_, i) => i !== index) }))}><Trash2 size={16}/></button></header>
         <Field label="Tên sản phẩm / dịch vụ"><input required maxLength={500} className={ui.field} value={item.name} onChange={e => editItem(index, { name: e.target.value })}/></Field>

@@ -38,7 +38,7 @@ public static class CustomerPortalEndpoints
                 // A prospect has no portal account, so they also sign this one contract through the link (signing still asks its own OTP).
                 if (!(path is "/auth/me" or "/auth/logout" || path == $"/reviews/{linkReview}" || path.StartsWith($"/reviews/{linkReview}/")
                     || path == $"/signing/{linkReview}" || path.StartsWith($"/signing/{linkReview}/")))
-                    throw new InternalAppException(403, "Link này chỉ dùng để xem một hợp đồng.");
+                    throw new InternalAppException(403, "Vui lòng đăng nhập bằng số điện thoại và mật khẩu để quản lý tài khoản.", "REVIEW_LINK_SESSION");
             }
             else if (customer.MustChangePassword && !OpenDuringPasswordChange.Contains(path))
                 throw new InternalAppException(403, "Bạn cần đổi mật khẩu tạm trước khi tiếp tục.", "PASSWORD_CHANGE_REQUIRED");
@@ -103,7 +103,11 @@ public static class CustomerPortalEndpoints
             c.Session.Clear(); c.Session.SetString(CustomerKey, link.CustomerId.ToString()); c.Session.SetString(LinkReviewKey, link.ReviewId.ToString());
             return Results.Ok(new { reviewId = link.ReviewId });
         }).RequireRateLimiting("customer-login");
-        api.MapGet("/auth/me", (HttpContext c) => Results.Ok(Current(c)));
+        api.MapGet("/auth/me", (HttpContext c) =>
+        {
+            var customer = Current(c);
+            return Results.Ok(new { customer.Id, customer.Name, customer.MustChangePassword, linkReviewId = c.Session.GetString(LinkReviewKey) });
+        });
         api.MapPost("/auth/logout", (HttpContext c) => { c.Session.Clear(); return Results.NoContent(); });
         api.MapPost("/auth/change-password", async (CustomerChangePasswordInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
         {

@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CheckCircle2, ChevronDown, Clock, FileText, ListFilter, LogOut, MessageSquare, ShieldCheck, UserPlus } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, FileText, ListFilter, LogOut, MessageSquare, ShieldCheck, UserPlus, UserRound } from "lucide-react";
 import { screensFor, type NavItem } from "./internal-nav";
 import { APP_NAME } from "@/lib/application-branding";
 import { internalApi, InternalApiError, type InternalUser } from "@/services/internal-api";
@@ -137,6 +137,15 @@ export default function InternalShell({ children }: { children: ReactNode }) {
                 {screensFor(user.permissions).map((item) => {
                   const Icon = item.icon;
                   if (item.href === "/workspace/support-tickets") {
+                    const isSupportDept = Boolean(
+                      user.department &&
+                      (user.department.includes("Kỹ Thuật") ||
+                       user.department.includes("Kế Toán") ||
+                       user.department.includes("Hành Chính") ||
+                       user.department.includes("Pháp Chế"))
+                    );
+                    if (!isSupportDept) return null;
+
                     const visibleSections = supportSubItems.filter(
                       (sub) => !sub.managerOnly || user.isManager,
                     );
@@ -301,10 +310,11 @@ export default function InternalShell({ children }: { children: ReactNode }) {
                   Quản lý hợp đồng <span className={s.muted}> / Không gian nội bộ</span>
                 </span>
                 <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-                  {user.permissions.some((p) => p.startsWith("ticket.")) && (
-                    <AdminNotificationBell />
-                  )}
-                  <span className={s.muted}>{user.name}</span>
+                  <AdminNotificationBell tickets={user.permissions.some((p) => p.startsWith("ticket."))} />
+                  <Link href="/workspace/profile" className={s.muted} title="Hồ sơ của tôi" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <UserRound size={16} />
+                    {user.name}
+                  </Link>
                   <button
                     data-leave-workspace
                     className={s.iconButton}

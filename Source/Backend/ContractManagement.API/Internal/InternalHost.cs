@@ -42,7 +42,8 @@ public static class InternalHost
         if (string.IsNullOrWhiteSpace(masterConn))
             throw new InvalidOperationException("Internal mode requires ConnectionStrings:MasterDatabase.");
         builder.Services.AddMasterDatabase(builder.Configuration);
-        builder.Services.AddScoped<IInternalRepository, InternalRepository>();
+        builder.Services.AddScoped<InternalRepository>();
+        builder.Services.AddScoped<IInternalRepository>(services => services.GetRequiredService<InternalRepository>());
         builder.Services.AddScoped<InternalDraftService>();
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
         builder.Services.AddScoped<InternalWordDocument>();
@@ -51,6 +52,11 @@ public static class InternalHost
         builder.Services.AddScoped<ContractChecklistService>();
         builder.Services.AddScoped<ContractProgressService>();
         builder.Services.AddScoped<IEmployeeAdmin, EmployeeAdminRepository>();
+        builder.Services.AddScoped<EmployeeProfileService>();
+        builder.Services.AddSingleton<EmailChangeCodes>();
+        builder.Services.AddScoped<CustomerProfileService>();
+        builder.Services.AddScoped<ContractManagement.Infrastructure.Email.CustomerWelcomeMailer>();
+        builder.Services.AddSingleton<CustomerProfileGuards>();
         builder.Services.AddScoped<ICatalogAdmin, CatalogRepository>();
         builder.Services.AddSingleton<ISupportTicketService, SupportTicketService>();
         builder.Services.AddScoped<IContractReviewRepository, ContractReviewRepository>();
@@ -82,6 +88,8 @@ public static class InternalHost
         builder.Services.AddOptions<SmtpEmailOptions>().Bind(builder.Configuration.GetSection(SmtpEmailOptions.SectionName));
         builder.Services.AddSingleton<IEmailTransport, SmtpEmailTransport>();
         builder.Services.AddScoped<ContractExpiryReminders>();
+        builder.Services.AddScoped<ContractNotificationFeed>();
+        builder.Services.AddScoped<CustomerContractMailer>();
         builder.Services.AddHostedService<ContractExpiryReminderWorker>();
         builder.Services.AddScoped<ReviewLinkMailer>();
         builder.Services.AddScoped<ReviewLinkOtp>();
@@ -174,6 +182,21 @@ public static class InternalHost
             await accounts.ChangePassword(user.Id, input, ct);
             return Results.Ok(await r.GetUser(user.Id, ct));
         });
+        // "Hồ sơ của tôi": the employee's own account. A new email is confirmed by a code sent to it.
+        api.MapGet("/profile", async (HttpContext c, IInternalRepository r, EmployeeProfileService profile, CancellationToken ct) =>
+            Results.Ok(await profile.GetAsync((await User(c, r, ct)).Id, ct)));
+        api.MapPost("/profile/email/code", async (EmailCodeInput input, HttpContext c, IAntiforgery csrf, IInternalRepository r, EmployeeProfileService profile, CancellationToken ct) =>
+        {
+            await csrf.ValidateRequestAsync(c);
+            var user = await User(c, r, ct); RequirePasswordChanged(user);
+            return Results.Ok(new { sentTo = await profile.SendEmailCodeAsync(user.Id, input.Password, input.NewEmail, ct) });
+        });
+        api.MapPost("/profile/email", async (EmailConfirmInput input, HttpContext c, IAntiforgery csrf, IInternalRepository r, EmployeeProfileService profile, CancellationToken ct) =>
+        {
+            await csrf.ValidateRequestAsync(c);
+            var user = await User(c, r, ct); RequirePasswordChanged(user);
+            return Results.Ok(await profile.ConfirmEmailAsync(user.Id, input.Code, ct));
+        });
         var admin = api.MapGroup("/admin").AddEndpointFilter(async (invocation, next) =>
         {
             var c = invocation.HttpContext;
@@ -201,14 +224,61 @@ public static class InternalHost
             if (!HttpMethods.IsGet(c.Request.Method)) await c.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(c);
             return await next(invocation);
         });
-        var crm = Screen("/crm", "Bạn không có quyền quản lý khách hàng.", CatalogRules.CustomerManage);
-        crm.MapGet("/customers", async (string? search, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Customers(search, null, ct)));
-        crm.MapPost("/customers", async (CustomerInput input, HttpContext c, IInternalRepository r, ICatalogAdmin a, CancellationToken ct) =>
-            Results.Ok(await a.CustomerRow((await r.CreateCustomer(input, Current(c).Id, ct)).Id, ct)));
-        crm.MapPut("/customers/{id:long}", async (long id, CustomerUpdateInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.UpdateCustomer(id, input, Current(c), ct)));
-        crm.MapPut("/customers/{id:long}/status", async (long id, ActiveInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.SetCustomerStatus(id, input, Current(c), ct)));
-        crm.MapGet("/customers/{id:long}/businesses", async (long id, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Businesses(id, ct)));
-        crm.MapPost("/customers/{id:long}/businesses", async (long id, BusinessInput input, HttpContext c, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.CreateBusiness(id, input, Current(c).Id, ct)));
+        // Sale (customer.manage) sees and manages the customers they look after; Hành chính and Ban Giám Đốc
+        // (customer.manage.all) every customer, and they choose who looks after it (016-customer-owner.sql).
+        var crm = Screen("/crm", "Bạn không có quyền quản lý khách hàng.", CatalogRules.CustomerManage, CatalogRules.CustomerManageAll);
+        crm.MapGet("/customers", async (string? search, HttpContext c, ICatalogAdmin a, CancellationToken ct) =>
+            Results.Ok(await a.Customers(search, AllCustomers(Current(c)) ? null : Current(c).Id, ct)));
+        crm.MapGet("/owners", async (HttpContext c, MasterDbContext db, CancellationToken ct) =>
+        {
+            if (!AllCustomers(Current(c))) throw new InternalAppException(403, "Chỉ Phòng Hành Chính - Pháp Chế và Ban Giám Đốc chuyển được khách hàng.");
+            return Results.Ok(await CustomerOwners(db, ct));
+        });
+        crm.MapPut("/customers/{id:long}/owner", async (long id, CustomerOwnerInput input, HttpContext c, MasterDbContext db, ICatalogAdmin a, CancellationToken ct) =>
+        {
+            var user = Current(c);
+            if (!AllCustomers(user)) throw new InternalAppException(403, "Chỉ Phòng Hành Chính - Pháp Chế và Ban Giám Đốc chuyển được khách hàng.");
+            var customer = await db.Customers.SingleOrDefaultAsync(x => x.CustomerId == id, ct) ?? throw new InternalAppException(404, "Không tìm thấy khách hàng.");
+            if (input.OwnerId is { } owner && !(await CustomerOwners(db, ct)).Any(o => o.Id == owner))
+                throw new ArgumentException("Người phụ trách phải là nhân viên Kinh doanh đang hoạt động.");
+            if (customer.CustomerOwnerEmployeeId != input.OwnerId)
+            {
+                var now = DateTime.UtcNow;
+                customer.CustomerOwnerEmployeeId = input.OwnerId; customer.UpdatedAt = now; customer.UpdatedBy = user.Id;
+                db.AuditLogs.Add(new ContractManagement.Domain.Entities.Master.AuditLog { ActionType = "TRANSFER_OWNER", EntityName = "CUSTOMER", EntityId = id.ToString(), ActorType = "EMPLOYEE", ActorId = user.Id,
+                    NewData = System.Text.Json.JsonSerializer.Serialize(new { ownerId = input.OwnerId }), CreatedAt = now });
+                await db.SaveChangesAsync(ct);
+            }
+            return Results.Ok(await a.CustomerRow(id, ct));
+        });
+        // A new customer with an email is told their portal account exists and how to set a password.
+        crm.MapPost("/customers", async (CustomerInput input, HttpContext c, IInternalRepository r, ICatalogAdmin a, ContractManagement.Infrastructure.Email.CustomerWelcomeMailer welcome, CancellationToken ct) =>
+        {
+            var created = await r.CreateCustomer(input, Current(c).Id, ct);
+            if (!string.IsNullOrWhiteSpace(input.Email)) await welcome.TrySendAsync(created.Id, ct);
+            return Results.Ok(await a.CustomerRow(created.Id, ct));
+        });
+        crm.MapPost("/customers/{id:long}/invite", async (long id, HttpContext c, MasterDbContext db, ContractManagement.Infrastructure.Email.CustomerWelcomeMailer welcome, CancellationToken ct) =>
+        {
+            await RequireCustomer(db, Current(c), id, AllCustomers(Current(c)), ct);
+            return Results.Ok(new { sentTo = await welcome.SendAsync(id, ct) });
+        });
+        crm.MapPost("/customers/{id:long}/credentials", async (long id, CustomerCredentialsInput input, HttpContext c, MasterDbContext db, ContractManagement.Infrastructure.Email.CustomerWelcomeMailer welcome, CancellationToken ct) =>
+        {
+            var user = Current(c);
+            if (!AllCustomers(user) && !user.CanManageAll && !user.CanCheck)
+                throw new InternalAppException(403, "Chỉ phòng Hành chính - Pháp chế và Ban Giám Đốc mới có quyền gửi thông tin tài khoản cho khách hàng.");
+            await RequireCustomer(db, user, id, true, ct);
+            return Results.Ok(new { sentTo = await welcome.SendCredentialsAsync(id, input.Password ?? "", input.Phone, user.Id, ct) });
+        });
+        crm.MapPut("/customers/{id:long}", async (long id, CustomerUpdateInput input, HttpContext c, MasterDbContext db, ICatalogAdmin a, CancellationToken ct) =>
+        { await RequireCustomer(db, Current(c), id, AllCustomers(Current(c)), ct); return Results.Ok(await a.UpdateCustomer(id, input, Current(c), ct)); });
+        crm.MapPut("/customers/{id:long}/status", async (long id, ActiveInput input, HttpContext c, MasterDbContext db, ICatalogAdmin a, CancellationToken ct) =>
+        { await RequireCustomer(db, Current(c), id, AllCustomers(Current(c)), ct); return Results.Ok(await a.SetCustomerStatus(id, input, Current(c), ct)); });
+        crm.MapGet("/customers/{id:long}/businesses", async (long id, HttpContext c, MasterDbContext db, IInternalRepository r, CancellationToken ct) =>
+        { await RequireCustomer(db, Current(c), id, AllCustomers(Current(c)), ct); return Results.Ok(await r.Businesses(id, ct)); });
+        crm.MapPost("/customers/{id:long}/businesses", async (long id, BusinessInput input, HttpContext c, MasterDbContext db, IInternalRepository r, CancellationToken ct) =>
+        { await RequireCustomer(db, Current(c), id, AllCustomers(Current(c)), ct); return Results.Ok(await r.CreateBusiness(id, input, Current(c).Id, ct)); });
         var catalog = Screen("/catalog", "Bạn không có quyền xem sản phẩm và dịch vụ.", CatalogRules.ProductRead, CatalogRules.ProductManage);
         catalog.MapGet("/products", async (string? search, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Products(search, ct)));
         catalog.MapGet("/categories", async (ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Categories(ct)));
@@ -218,9 +288,18 @@ public static class InternalHost
         var org = Screen("/org", "Bạn không có quyền quản lý phòng ban.", CatalogRules.DepartmentManage);
         org.MapGet("/departments", async (ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Departments(ct)));
         org.MapPut("/departments/{id:long}", async (long id, DepartmentInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.UpdateDepartment(id, input, Current(c), ct)));
-        // Hỗ trợ khách hàng: same calls as main's AdminSupportTicketsController, with the employee from the internal session.
-        // The service scopes by department: the manager sees and assigns the department's tickets, staff see tickets assigned to them.
-        var tickets = Screen("/tickets", "Bạn không có quyền xử lý yêu cầu hỗ trợ.", "ticket.handle", "ticket.manage.all");
+        // Hỗ trợ khách hàng: Chỉ nhân sự thuộc 3 phòng ban (Kỹ thuật, Kế toán, Hành chính) có quyền ticket.handle/ticket.manage.all mới được truy cập
+        var tickets = api.MapGroup("/tickets").AddEndpointFilter(async (invocation, next) =>
+        {
+            var c = invocation.HttpContext;
+            var user = await User(c, c.RequestServices.GetRequiredService<IInternalRepository>(), c.RequestAborted);
+            RequirePasswordChanged(user);
+            if (!user.Permissions.Contains("ticket.handle") && !user.Permissions.Contains("ticket.manage.all"))
+                throw new InternalAppException(403, "Bạn không có quyền xử lý yêu cầu hỗ trợ.");
+            c.Items[UserKey] = user;
+            if (!HttpMethods.IsGet(c.Request.Method)) await c.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(c);
+            return await next(invocation);
+        });
         tickets.MapGet("", async (string? status, string? priority, string? department, string? keyword, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
             Results.Ok(await s.GetAllForAdminAsync(TicketActor(c).Id, status, priority, department, keyword, ct)));
         tickets.MapGet("/{id:int}", async (int id, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
@@ -290,6 +369,15 @@ public static class InternalHost
             RequirePasswordChanged(user);
             return Results.Ok(await reminders.Expiring(ContractExpiryReminders.Today(DateTime.UtcNow), user.CanManageAll ? null : user.Id, ct));
         });
+        secured.MapPatch("/contract-templates/{id:long}/name", async (long id, TemplateNameInput input, HttpContext c, InternalRepository repository, CancellationToken ct) =>
+            Results.Ok(new { name = await repository.RenameTemplate(id, input.Name, Current(c), ct) }));
+        // The contract bell: every signed-in employee sees their own contract notifications; the item opens the contract.
+        api.MapGet("/contract-notifications", async (int? limit, HttpContext c, IInternalRepository r, ContractNotificationFeed feed, CancellationToken ct) =>
+            Results.Ok(await feed.List(await User(c, r, ct), limit ?? 20, ct)));
+        api.MapPost("/contract-notifications/{id:long}/read", async (long id, HttpContext c, IInternalRepository r, ContractNotificationFeed feed, CancellationToken ct) =>
+        { await feed.MarkRead(await User(c, r, ct), id, ct); return Results.NoContent(); });
+        api.MapPost("/contract-notifications/read-all", async (HttpContext c, IInternalRepository r, ContractNotificationFeed feed, CancellationToken ct) =>
+        { await feed.MarkRead(await User(c, r, ct), null, ct); return Results.NoContent(); });
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
         secured.MapGet("/contract-progress", async ([AsParameters] ProgressFilter filter, HttpContext c, ContractProgressService service, CancellationToken ct) => Results.Ok(await service.List(filter, Current(c), ct)));
         secured.MapGet("/checklist-rules", () => Results.Ok(ContractChecklistService.Catalog));
@@ -374,10 +462,25 @@ public static class InternalHost
             Results.Ok(await importer.Save(input, Current(c).Id, ct)));
         secured.MapGet("/contract-templates/{id:long}", async (long id, IInternalRepository r, CancellationToken ct) =>
             (await r.Templates(ct)).FirstOrDefault(t => t.Id == id) is { } t ? Results.Ok(t) : Results.NotFound());
-        secured.MapGet("/customers", async (string? search, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Customers(search, ct)));
-        secured.MapGet("/customers/{id:long}/businesses", async (long id, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Businesses(id, ct)));
-        secured.MapPost("/customers/{id:long}/businesses", async (long id, BusinessInput input, HttpContext c, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.CreateBusiness(id, input, Current(c).Id, ct)));
-        secured.MapPost("/customers", async (CustomerInput input, HttpContext c, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.CreateCustomer(input, Current(c).Id, ct)));
+        // Bên A of a draft refilled from the customer record (the person, or the legal entity chosen in the draft).
+        secured.MapGet("/customers/{id:long}/profile", async (long id, long? businessId, InternalRepository repository, CancellationToken ct) =>
+            await repository.CustomerProfileFor(id, businessId, ct) is { } profile ? Results.Ok(profile) : Results.NotFound());
+        secured.MapGet("/customers/lookup", async (string? search, InternalRepository repository, CancellationToken ct) =>
+            Results.Ok(await repository.LookupCustomers(search, ct)));
+        // Drafts: a sale picks among their own customers (a sales manager too); Hành chính and Ban Giám Đốc among all.
+        // A manager still opens the businesses of a customer in a draft of their team (DraftSeesAllCustomers).
+        secured.MapGet("/customers", async (string? search, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+            Results.Ok(await r.Customers(search, ct, AllCustomers(Current(c)) ? null : Current(c).Id)));
+        secured.MapGet("/customers/{id:long}/businesses", async (long id, HttpContext c, MasterDbContext db, IInternalRepository r, CancellationToken ct) =>
+        { await RequireCustomer(db, Current(c), id, DraftSeesAllCustomers(Current(c)), ct); return Results.Ok(await r.Businesses(id, ct)); });
+        secured.MapPost("/customers/{id:long}/businesses", async (long id, BusinessInput input, HttpContext c, MasterDbContext db, IInternalRepository r, CancellationToken ct) =>
+        { await RequireCustomer(db, Current(c), id, DraftSeesAllCustomers(Current(c)), ct); return Results.Ok(await r.CreateBusiness(id, input, Current(c).Id, ct)); });
+        secured.MapPost("/customers", async (CustomerInput input, HttpContext c, IInternalRepository r, ContractManagement.Infrastructure.Email.CustomerWelcomeMailer welcome, CancellationToken ct) =>
+        {
+            var created = await r.CreateCustomer(input, Current(c).Id, ct);
+            if (!string.IsNullOrWhiteSpace(input.Email)) await welcome.TrySendAsync(created.Id, ct);
+            return Results.Ok(created);
+        });
         secured.MapGet("/products", async (string? search, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Products(search, ct)));
         secured.MapGet("/employees", async (HttpContext c, IInternalRepository r, CancellationToken ct) => {
             if (!Current(c).CanManageAll) throw new InternalAppException(403, "Bạn không có quyền xem danh sách nhân viên.");
@@ -390,10 +493,10 @@ public static class InternalHost
                 if (!long.TryParse(ownerId, out var parsed) || parsed <= 0) throw new ArgumentException("Nhân viên không hợp lệ."); owner = parsed; }
             return Results.Ok(await r.Drafts(owner, search, status, ct, partyType));
         });
-        secured.MapGet("/contract-archive", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
+        secured.MapGet("/contract-archive", async (string? search, int? status, string? partyType, DateTime? createdFrom, DateTime? createdTo, int? limit, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
             if (!Current(c).CanManageContractWorkflow) throw new InternalAppException(403, "Bạn không có quyền xem kho hợp đồng.");
-            return Results.Ok(await r.ContractArchive(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType));
+            return Results.Ok(await r.ContractArchive(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType, createdFrom, createdTo, limit ?? 200));
         });
         secured.MapGet("/contract-signing-monitor", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
@@ -447,8 +550,21 @@ public static class InternalHost
         { await r.ResolveComment(id, Current(c), ct); return Results.NoContent(); });
         secured.MapPost("/contract-reviews/{id:long}/resend-link", async (long id, ResendLinkRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
             Results.Ok(await r.ResendLink(id, input, Current(c), ct)));
-        secured.MapPost("/customers/{id:long}/reset-temp-password", async (long id, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
-            Results.Ok(await r.ResetTemporaryPassword(id, Current(c), ct)));
+        secured.MapPost("/customers/{id:long}/reset-temp-password", (long id, HttpContext c, IContractReviewRepository r, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct) =>
+            IssueCustomerPassword(id, r.ResetTemporaryPassword(id, Current(c), ct), db, cache, ct));
+        secured.MapPost("/customers/{id:long}/account", (long id, HttpContext c, IContractReviewRepository r, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct) =>
+            IssueCustomerPassword(id, r.CreateCustomerAccount(id, Current(c), ct), db, cache, ct));
+        static async Task<IResult> IssueCustomerPassword(long id, Task<ResetTemporaryPasswordResult> issue, MasterDbContext db, Microsoft.Extensions.Caching.Memory.IMemoryCache cache, CancellationToken ct)
+        {
+            var result = await issue;
+            // A new password also lifts the wrong-password lock, so the customer can log in right away.
+            if (ContractManagement.Domain.Internal.PhoneNumber.Normalize(await db.Customers.Where(x => x.CustomerId == id).Select(x => x.CustomerPersonalPhone).SingleOrDefaultAsync(ct)) is { } phone)
+                cache.Remove(ReviewLinkOtp.LoginFailureKey(phone));
+            return Results.Ok(result);
+        }
+        // The sale resends the login code: lifts the customer's code / phone / password locks and texts a new code to the contract phone.
+        secured.MapPost("/contract-reviews/{id:long}/resend-otp", async (long id, HttpContext c, ICustomerPortalRepository r, ReviewLinkOtp otp, CancellationToken ct) =>
+        { await otp.ResendByEmployee(await r.ActiveLink(id, Current(c), ct), ct); return Results.NoContent(); });
         ScanEndpoints.Map(api);
         CustomerPortalEndpoints.Map(app);
         await app.RunAsync();
@@ -471,7 +587,30 @@ public static class InternalHost
         if (!long.TryParse(context.Session.GetString(UserKey), out var id)) throw new InternalAppException(401, "Vui lòng đăng nhập.");
         return await repository.GetUser(id, ct) ?? throw new InternalAppException(401, "Phiên đăng nhập hết hạn hoặc tài khoản đã khóa.");
     }
+    public sealed record TemplateNameInput(string? Name);
     public sealed record LoginInput(string Username, string Password);
+    public sealed record CustomerOwnerInput(long? OwnerId);
+    public sealed record CustomerOwnerOption(long Id, string Name);
+    private static bool AllCustomers(InternalUser user) => user.Permissions.Contains(CatalogRules.CustomerManageAll);
+    private static bool DraftSeesAllCustomers(InternalUser user) => AllCustomers(user) || user.CanManageAll;
+    /// <summary>404 rather than 403, so a sale cannot learn that a customer of someone else exists.</summary>
+    private static async Task RequireCustomer(MasterDbContext db, InternalUser user, long customerId, bool all, CancellationToken ct)
+    {
+        if (!await db.Customers.AnyAsync(x => x.CustomerId == customerId && (all || x.CustomerOwnerEmployeeId == user.Id), ct))
+            throw new InternalAppException(404, "Không tìm thấy khách hàng.");
+    }
+    /// <summary>Active employees whose role lets them create and look after customers (customer.manage).</summary>
+    private static Task<List<CustomerOwnerOption>> CustomerOwners(MasterDbContext db, CancellationToken ct) =>
+        (from e in db.Employees
+         where e.EmployeeStatus == "ACTIVE" && (from er in db.EmployeeRoles
+                 join rp in db.SystemRolePermissions on er.SystemRoleId equals rp.SystemRoleId
+                 join p in db.SystemPermissions on rp.SystemPermissionId equals p.SystemPermissionId
+                 where er.EmployeeId == e.EmployeeId && p.SystemPermissionCode == CatalogRules.CustomerManage select er).Any()
+         orderby e.EmployeeDisplayName
+         select new CustomerOwnerOption(e.EmployeeId, e.EmployeeDisplayName)).ToListAsync(ct);
+    public sealed record EmailCodeInput(string? Password, string? NewEmail);
+    public sealed record EmailConfirmInput(string? Code);
+    public sealed record CustomerCredentialsInput(string? Password, string? Phone);
 }
 
 public sealed class StringLongConverter : JsonConverter<long>

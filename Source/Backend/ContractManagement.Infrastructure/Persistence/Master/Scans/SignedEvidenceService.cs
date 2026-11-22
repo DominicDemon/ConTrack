@@ -109,6 +109,46 @@ public sealed class SignedEvidenceService(
         }).ToList();
     }
 
+    public async Task<IReadOnlyList<ContractListItemDto>> ListContractsForCustomerAsync(long customerId, CancellationToken cancellationToken)
+    {
+        var contracts = await CustomerContracts(customerId).OrderByDescending(row => row.DocumentId).Take(200).ToListAsync(cancellationToken);
+        var ids = contracts.Select(row => row.DocumentId).ToList();
+        var versionIds = contracts.Select(row => row.CurrentVersionId).OfType<long>().ToList();
+        var versions = await db.ContractVersions.AsNoTracking().Where(version => versionIds.Contains(version.ContractVersionId))
+            .ToDictionaryAsync(version => version.ContractVersionId, cancellationToken);
+        var online = await SignedOnlineVersionsAsync(versionIds, cancellationToken);
+        var withCustomerScan = await (
+                from documentFile in db.ContractDocumentFiles.AsNoTracking()
+                join file in db.FileStorages.AsNoTracking() on documentFile.FileStorageFileid equals file.FileStorageFileid
+                where ids.Contains(documentFile.ContractDocumentId) && file.FileStorageUploadedbycustomerid == customerId
+                select documentFile.ContractDocumentId)
+            .Distinct().ToListAsync(cancellationToken);
+        return contracts.Select(row =>
+        {
+            var version = row.CurrentVersionId is { } id ? versions.GetValueOrDefault(id) : null;
+            return new ContractListItemDto(row.DocumentId, row.Code, row.Name, row.CustomerName, StatusKey(row.Status),
+                version?.ContractVersionTotalamount ?? 0, version?.ContractVersionVersionNo,
+                version is not null && online.Contains(version.ContractVersionId),
+                withCustomerScan.Contains(row.DocumentId) ? "Ready" : null);
+        }).ToList();
+    }
+
+    private IQueryable<ContractRow> CustomerContracts(long customerId) =>
+        from document in db.ContractDocuments.AsNoTracking()
+        where document.CustomerId == customerId
+        join customer in db.Customers on document.CustomerId equals customer.CustomerId into customers
+        from customer in customers.DefaultIfEmpty()
+        select new ContractRow
+        {
+            DocumentId = document.ContractDocumentId, Code = document.ContractDocumentCode, Name = document.ContractDocumentName,
+            Status = document.ContractDocumentStatus, CurrentVersionId = document.ContractDocumentCurrentVersionId,
+            OwnerId = document.EmployeeId,
+            CustomerName = db.CustomerBusinesses.Where(business => business.CustomerId == document.CustomerId)
+                .OrderBy(business => business.CustomerBusinessId).Select(business => business.CustomerBusinessLegalName).FirstOrDefault()
+                ?? (customer != null ? customer.CustomerDisplayName : ""),
+            TaxCode = null, Phone = customer != null ? customer.CustomerPersonalPhone : null,
+        };
+
     public async Task<SignedEvidenceOverviewDto> GetOverviewAsync(long documentId, CancellationToken cancellationToken)
     {
         var contract = await GetContractAsync(documentId, cancellationToken);

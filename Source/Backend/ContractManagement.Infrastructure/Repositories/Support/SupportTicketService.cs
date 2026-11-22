@@ -2026,7 +2026,8 @@ public sealed class SupportTicketService : ISupportTicketService
         string role,
         int? departmentId)
     {
-        if (role == "SYSADMIN")
+        // Chỉ nhân sự thuộc 3 phòng ban tiếp nhận (2: Kỹ thuật, 4: Kế toán, 5: Hành chính) mới có thông báo ticket
+        if (role == "SYSADMIN" || !departmentId.HasValue || (departmentId.Value != 2 && departmentId.Value != 4 && departmentId.Value != 5))
         {
             return [];
         }
@@ -2084,9 +2085,15 @@ public sealed class SupportTicketService : ISupportTicketService
             return false;
         }
 
+        // Chỉ nhân sự thuộc 3 phòng ban tiếp nhận (2: Kỹ thuật, 4: Kế toán, 5: Hành chính) mới được xem và xử lý ticket
+        if (!employeeDeptId.HasValue || (employeeDeptId.Value != 2 && employeeDeptId.Value != 4 && employeeDeptId.Value != 5))
+        {
+            return false;
+        }
+
         if (role == "SYSADMIN")
         {
-            return true;
+            return false;
         }
 
         if (role == "DEPARTMENT_HEAD")
@@ -2136,12 +2143,7 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         var defaultServices = new List<SupportServiceItemDto>
         {
-            new() { ServiceId = 1, ServiceName = "Triển khai & Chuẩn hóa Mẫu hợp đồng", Description = "Thiết lập biểu mẫu và trường dữ liệu động" },
-            new() { ServiceId = 2, ServiceName = "Gói Hỗ trợ Kỹ thuật Ưu tiên 24/7", Description = "Hỗ trợ kỹ thuật và bảo trì SLA 24/7" },
-            new() { ServiceId = 3, ServiceName = "Phần mềm Quản lý Hợp đồng ConTrack Pro (SaaS)", Description = "Quản trị vòng đời hợp đồng điện tử" },
-            new() { ServiceId = 4, ServiceName = "Dịch vụ Chữ ký số & Xác thực OTP (eSign CA)", Description = "Ký số hợp đồng và xác thực khách hàng" },
-            new() { ServiceId = 5, ServiceName = "Server VPS / Hạ tầng Lưu trữ Hợp đồng Riêng", Description = "Máy chủ lưu trữ tài liệu và cơ sở dữ liệu riêng" },
-            new() { ServiceId = 6, ServiceName = "Module Quét & Bóc tách Hợp đồng AI OCR", Description = "Nhận diện và số hóa văn bản hợp đồng PDF/Scan" }
+            new() { ServiceId = 1, ServiceName = "Phần mềm quản lý hợp đồng", Description = "Phần mềm quản lý hợp đồng toàn diện" }
         };
 
         try
@@ -2400,13 +2402,12 @@ public sealed class SupportTicketService : ISupportTicketService
 
     private static int ResolveDepartmentIdFromInput(int? departmentId, string? departmentText)
     {
-        if (departmentId.HasValue && departmentId.Value is >= 2 and <= 5)
+        if (departmentId.HasValue && (departmentId.Value == 2 || departmentId.Value == 4 || departmentId.Value == 5))
         {
             return departmentId.Value;
         }
 
         var d = (departmentText ?? string.Empty).Trim().ToUpperInvariant();
-        if (d.Contains("BÁN HÀNG") || d.Contains("KINH DOANH") || d.Contains("SALE")) return 3;
         if (d.Contains("KẾ TOÁN") || d.Contains("TÀI CHÍNH") || d.Contains("ACCOUNT")) return 4;
         if (d.Contains("GÓP Ý") || d.Contains("PHÁP CHẾ") || d.Contains("HÀNH CHÍNH") || d.Contains("LEGAL")) return 5;
         return 2; // Mặc định: Phòng Kỹ Thuật & Hỗ Trợ (2)

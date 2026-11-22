@@ -4,9 +4,11 @@ using ContractManagement.Application.Features.Internal;
 using ContractManagement.Domain.Internal;
 using ContractManagement.Infrastructure.Sms;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using ContractManagement.Infrastructure.Persistence.Master;
+using ContractManagement.Infrastructure.Persistence.Master.Scans;
 
 namespace ContractManagement.API.Internal;
 
@@ -25,7 +27,7 @@ public static class CustomerPortalEndpoints
         {
             var c = invocation.HttpContext;
             var path = c.Request.Path.Value!["/api/customer".Length..];
-            if (path is "/auth/csrf" or "/auth/login" || path.StartsWith("/link/")) return await next(invocation);
+            if (path is "/auth/csrf" or "/auth/login" or "/auth/forgot-password" or "/auth/reset-password" || path.StartsWith("/link/")) return await next(invocation);
             if (!long.TryParse(c.Session.GetString(CustomerKey), out var id)) throw new InternalAppException(401, "Vui lòng đăng nhập.");
             var portal = c.RequestServices.GetRequiredService<ICustomerPortalRepository>();
             var customer = await portal.Get(id, c.RequestAborted);
@@ -33,7 +35,9 @@ public static class CustomerPortalEndpoints
             if (long.TryParse(c.Session.GetString(LinkReviewKey), out var linkReview))
             {
                 if (!await portal.LinkActive(linkReview, c.RequestAborted)) { c.Session.Clear(); throw new InternalAppException(410, "Link đã hết hạn. Liên hệ nhân viên phụ trách để nhận link mới.", "LINK_EXPIRED"); }
-                if (!(path is "/auth/me" or "/auth/logout" || path == $"/reviews/{linkReview}" || path.StartsWith($"/reviews/{linkReview}/")))
+                // A prospect has no portal account, so they also sign this one contract through the link (signing still asks its own OTP).
+                if (!(path is "/auth/me" or "/auth/logout" || path == $"/reviews/{linkReview}" || path.StartsWith($"/reviews/{linkReview}/")
+                    || path == $"/signing/{linkReview}" || path.StartsWith($"/signing/{linkReview}/")))
                     throw new InternalAppException(403, "Link này chỉ dùng để xem một hợp đồng.");
             }
             else if (customer.MustChangePassword && !OpenDuringPasswordChange.Contains(path))
@@ -49,9 +53,9 @@ public static class CustomerPortalEndpoints
             var phone = PhoneNumber.Normalize(input.Phone);
             if (phone is null || string.IsNullOrEmpty(input.Password) || input.Password.Length > 200)
                 throw new InternalAppException(401, "Số điện thoại hoặc mật khẩu không đúng.");
-            var failureKey = "customer-login-fail:" + phone;
+            var failureKey = ReviewLinkOtp.LoginFailureKey(phone);
             if (cache.TryGetValue(failureKey, out int failures) && failures >= MaxFailuresPerPhone)
-                throw new InternalAppException(429, "Sai mật khẩu quá nhiều lần. Thử lại sau 15 phút.");
+                throw new InternalAppException(429, "Sai mật khẩu quá nhiều lần. Thử lại sau 15 phút hoặc liên hệ nhân viên phụ trách.");
             var customer = await r.Login(phone, input.Password, ct);
             if (customer is null)
             {
@@ -61,6 +65,20 @@ public static class CustomerPortalEndpoints
             cache.Remove(failureKey);
             c.Session.Clear(); c.Session.SetString(CustomerKey, customer.Id.ToString());
             return Results.Ok(customer);
+        }).RequireRateLimiting("customer-login");
+        // Forgotten password: a code to the email of the account, then a new password; signs the customer in.
+        api.MapPost("/auth/forgot-password", async (CustomerForgotInput input, HttpContext c, IAntiforgery csrf, CustomerProfileService profile, CancellationToken ct) =>
+        {
+            await csrf.ValidateRequestAsync(c);
+            await profile.ForgotPasswordAsync(input.Phone, ct);
+            return Results.Ok(new { message = CustomerProfileService.ForgotAnswer });
+        }).RequireRateLimiting("customer-login");
+        api.MapPost("/auth/reset-password", async (CustomerResetInput input, HttpContext c, IAntiforgery csrf, CustomerProfileService profile, ICustomerPortalRepository r, CancellationToken ct) =>
+        {
+            await csrf.ValidateRequestAsync(c);
+            var id = await profile.ResetPasswordAsync(input.Phone, input.Code, input.NewPassword, ct);
+            c.Session.Clear(); c.Session.SetString(CustomerKey, id.ToString());
+            return Results.Ok(await r.Get(id, ct));
         }).RequireRateLimiting("customer-login");
         // The token travels in the body, not the URL, so it stays out of API request logs.
         api.MapPost("/link/status", async (ReviewLinkInput input, HttpContext c, IAntiforgery csrf, ICustomerPortalRepository r, CancellationToken ct) =>
@@ -94,6 +112,39 @@ public static class CustomerPortalEndpoints
             c.Session.Clear(); c.Session.SetString(CustomerKey, id.ToString());
             return Results.Ok(await r.Get(id, ct));
         });
+        // Scans of the customer's contracts, opened with a key of their own (017-customer-file-keys.sql).
+        api.MapGet("/scans", async (HttpContext c, CustomerScanService scans, CancellationToken ct) => Results.Ok(await scans.ListAsync(Current(c).Id, ct)));
+        api.MapGet("/scans/contracts", async (HttpContext c, SignedEvidenceService scans, CancellationToken ct) =>
+            Results.Ok(await scans.ListContractsForCustomerAsync(Current(c).Id, ct)));
+        api.MapPost("/scans/contracts/{documentId:long}/scans", async (
+            long documentId, IFormFile? file, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+        {
+            if (file is null || file.Length == 0 || file.Length > 21 * 1024 * 1024)
+                throw new ArgumentException("Chọn tệp bản scan có nội dung, tối đa 20 MB.");
+            await using var stream = new MemoryStream();
+            await file.CopyToAsync(stream, ct);
+            return Results.Ok(await scans.UploadAsync(Current(c).Id, documentId, file.FileName, stream.ToArray(), ct));
+        }).WithMetadata(new RequestSizeLimitAttribute(21 * 1024 * 1024)).DisableAntiforgery();
+        api.MapGet("/scans/{fileId:long}/file", async (long fileId, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+        {
+            var file = await scans.OpenAsync(Current(c).Id, fileId, c.Request.Headers["X-File-Key"].FirstOrDefault(), ct);
+            c.Response.Headers.CacheControl = "no-store";
+            return Results.File(file.Content, file.ContentType, file.FileName);
+        });
+        api.MapGet("/file-key", async (HttpContext c, CustomerScanService scans, CancellationToken ct) => Results.Ok(await scans.KeyStatusAsync(Current(c).Id, ct)));
+        api.MapPost("/file-key/code", async (CustomerKeyCodeInput input, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+            Results.Ok(new { sentTo = await scans.SendKeyCodeAsync(Current(c).Id, input.Password, ct) }));
+        api.MapPost("/file-key", async (CustomerSetKeyInput input, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+            Results.Ok(new { recoveredFiles = await scans.SetKeyAsync(Current(c).Id, input.Password, input.Code, input.NewKey, ct) }));
+        api.MapPost("/file-key/change", async (CustomerChangeKeyInput input, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
+        { await scans.ChangeKeyAsync(Current(c).Id, input.CurrentKey, input.NewKey, ct); return Results.NoContent(); });
+        // "Hồ sơ của tôi": a session from an emailed link opens one contract only, so the filter above keeps it out.
+        api.MapGet("/profile", async (HttpContext c, CustomerProfileService profile, CancellationToken ct) =>
+            Results.Ok(await profile.GetAsync(Current(c).Id, ct)));
+        api.MapPost("/profile/email/code", async (CustomerEmailCodeInput input, HttpContext c, CustomerProfileService profile, CancellationToken ct) =>
+            Results.Ok(new { sentTo = await profile.SendEmailCodeAsync(Current(c).Id, input.Password, input.NewEmail, ct) }));
+        api.MapPost("/profile/email", async (CustomerEmailConfirmInput input, HttpContext c, CustomerProfileService profile, CancellationToken ct) =>
+            Results.Ok(await profile.ConfirmEmailAsync(Current(c).Id, input.Code, ct)));
         api.MapGet("/signing/{reviewId:long}", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
             Results.Ok(await signing.PortalState(Current(c).Id, reviewId, ct)));
         api.MapPost("/signing/{reviewId:long}/otp/request", async (long reviewId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
@@ -108,6 +159,8 @@ public static class CustomerPortalEndpoints
             Results.File(await signing.PortalSign(Current(c).Id, reviewId, input, c.Connection.RemoteIpAddress?.ToString(), c.Request.Headers.UserAgent.ToString(), ct),
                 "application/pdf", "signed-contract.pdf"));
         api.MapGet("/reviews", async (HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Reviews(Current(c).Id, ct)));
+        // The portal contract bell: derived from the customer's contracts; the browser keeps which items were read.
+        api.MapGet("/contract-notices", async (HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Notices(Current(c).Id, ct)));
         api.MapGet("/reviews/{id:long}/word", async (long id, bool? pdf, HttpContext c, ICustomerPortalRepository r, InternalWordTemplates word, CancellationToken ct) => {
             await r.Review(Current(c).Id, id, ct);
             var bytes = await word.CustomerWord(id, Current(c).Id, pdf != false, ct);
@@ -116,6 +169,11 @@ public static class CustomerPortalEndpoints
         api.MapGet("/reviews/{id:long}", async (long id, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) => Results.Ok(await r.Review(Current(c).Id, id, ct)));
         api.MapPost("/reviews/{id:long}/comments", async (long id, CommentInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
             Results.Ok(await r.Comment(Current(c).Id, id, input, ct)));
+        // The customer edits or removes their own comment while the review is open and the staff have not replied to it.
+        api.MapPut("/reviews/{id:long}/comments/{commentId:long}", async (long id, long commentId, CommentInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
+            Results.Ok(await r.EditComment(Current(c).Id, id, commentId, input, ct)));
+        api.MapDelete("/reviews/{id:long}/comments/{commentId:long}", async (long id, long commentId, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
+        { await r.DeleteComment(Current(c).Id, id, commentId, ct); return Results.NoContent(); });
         api.MapPost("/reviews/{id:long}/respond", async (long id, CustomerRespondInput input, HttpContext c, ICustomerPortalRepository r, CancellationToken ct) =>
             Results.Ok(await r.Respond(Current(c).Id, id, input, c.Connection.RemoteIpAddress?.ToString(), c.Request.Headers.UserAgent.ToString(), ct)));
 
@@ -162,6 +220,13 @@ public static class CustomerPortalEndpoints
     }
 
     private static CustomerSession Current(HttpContext c) => (CustomerSession)c.Items[CustomerKey]!;
+    public sealed record CustomerEmailCodeInput(string? Password, string? NewEmail);
+    public sealed record CustomerForgotInput(string? Phone);
+    public sealed record CustomerKeyCodeInput(string? Password);
+    public sealed record CustomerSetKeyInput(string? Password, string? Code, string? NewKey);
+    public sealed record CustomerChangeKeyInput(string? CurrentKey, string? NewKey);
+    public sealed record CustomerResetInput(string? Phone, string? Code, string? NewPassword);
+    public sealed record CustomerEmailConfirmInput(string? Code);
     /// <summary>The ticket service (from main) keys people by int.</summary>
     internal static int TicketId(long id) => checked((int)id);
 }

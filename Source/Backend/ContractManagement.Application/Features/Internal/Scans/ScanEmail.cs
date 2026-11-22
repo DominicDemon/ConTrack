@@ -41,7 +41,7 @@ public sealed class ScanEmailOptions
 public static class ScanEmail
 {
     public const int MaxRecipients = 10;
-    public const int MaxNoteLength = 1000;
+    public const int MaxNoteLength = 2000;
 
     /// <summary>Gmail refuses mail above 25 MB; the attachment grows by a third when encoded.</summary>
     public const int MaxAttachmentBytes = 18 * 1024 * 1024;

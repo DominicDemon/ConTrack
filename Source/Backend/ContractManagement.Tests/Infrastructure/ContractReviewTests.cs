@@ -101,6 +101,22 @@ public class ContractReviewTests
     }
 
     [Fact]
+    public async Task EmployeeResendLiftsCustomerLocksAndSendsANewCode()
+    {
+        var sms = new StubSender(); var cache = new MemoryCache(new MemoryCacheOptions()); var otp = Otp(cache, sms);
+        for (var i = 0; i < ReviewLinkOtp.MaxPhoneFailures; i++)
+            await Assert.ThrowsAsync<InternalAppException>(() => otp.Issue(Link, "0909999999", default));
+        cache.Set(ReviewLinkOtp.LoginFailureKey(Link.Phone), 5);
+        Assert.Equal(429, (await Assert.ThrowsAsync<InternalAppException>(() => otp.Issue(Link, Link.Phone, default))).Status); // customer locked
+
+        await otp.ResendByEmployee(Link, default);
+        Assert.Equal(Link.Phone, sms.Sent.Single().Phone);
+        Assert.False(cache.TryGetValue(ReviewLinkOtp.LoginFailureKey(Link.Phone), out _));
+        Assert.Equal(429, (await Assert.ThrowsAsync<InternalAppException>(() => otp.ResendByEmployee(Link, default))).Status); // no double SMS
+        otp.Verify(77, Code(sms));
+    }
+
+    [Fact]
     public async Task OtpFailsClosedWhenSmsIsRejected()
     {
         var sms = new StubSender { Reply = (_, _) => new("104", null, "Brand name code is not exist") }; var otp = Otp(new MemoryCache(new MemoryCacheOptions()), sms);
@@ -234,8 +250,13 @@ public class ContractReviewTests
             await Assert.ThrowsAsync<InternalAppException>(() => drafts.Save(draft.Id, new(locked.Content, locked.RowVersion, locked.VersionRowVersion), sale, default));
             Assert.Equal(1, (await repo.Drafts(saleId, null, 1, default)).Count(d => d.Id == draft.Id && d.LatestReviewStatus == ContractReviewStatus.Sent));
 
-            // 2. SMS worker (kept for the password portal) sends, clears ciphertext; callback marks delivered idempotently.
-            await reviews.ResetTemporaryPassword(customerA.Id, sale, default);
+            // 2. SMS worker sends, clears ciphertext; callback marks delivered idempotently. Passwords now go by email after signing
+            // (CustomerAccountTests); an account from the older SMS temporary password still logs in, so that row is written here directly.
+            var legacy = await db.Customers.SingleAsync(c => c.CustomerId == customerA.Id);
+            var legacyPassword = TemporaryPassword.Generate();
+            legacy.CustomerPasswordHash = new Microsoft.AspNetCore.Identity.PasswordHasher<Customer>().HashPassword(legacy, legacyPassword);
+            writer.Enqueue(db, SmsPurpose.TemporaryPassword, customerA.Id, null, phoneA, writer.TemporaryPasswordMessage("http://localhost/portal", phoneA, legacyPassword), DateTime.UtcNow);
+            await db.SaveChangesAsync();
             var tempSms = await db.SmsOutboxes.AsNoTracking().SingleAsync(s => s.CustomerId == customerA.Id);
             Assert.Equal(SmsPurpose.TemporaryPassword, tempSms.SmsOutboxPurpose);
             Assert.Equal(PhoneNumber.Mask(phoneA), tempSms.SmsOutboxPhoneMasked);

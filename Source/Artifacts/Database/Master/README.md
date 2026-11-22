@@ -98,6 +98,11 @@ them in departments, so on a new database nobody, not even sysadmin, has a permi
 Managers (sysadmin, test.manager, head.*) get their department's manager role, the others its staff role; employees
 who already have an active role are left alone. It also migrates assignments to retired roles such as `INTERNAL_OFFICE`.
 Run it after the seed, 005, and 006.
+`016-customer-owner.sql` adds the sale who looks after each customer (`CUSTOMER.customer_owner_employee_id`) and the
+permission `customer.manage.all` (HCNS, Ban Giám Đốc): sales manage their own customers, HCNS and BGD all of them. Run after 005.
+`017-customer-file-keys.sql` adds CUSTOMER_ENCRYPTION_KEY and CUSTOMER_FILE_KEY: a customer sets their own key on the portal
+and opens the scans of their contracts (accepted paper-signing evidence, and old paper scans confirmed for them or whose
+OCR tax code, phone or email match theirs). Run after 008.
 Two optional helpers, not part of the schema: `demo-scan-contracts.sql` adds 4 demo customers and contracts (1001-1004)
 to try the paper-signing scan flow, on a test database only (it stops if those ids hold other data);
 `report-scan-duplicates.sql` lists scans stored more than once before 013 refused duplicates (read only).

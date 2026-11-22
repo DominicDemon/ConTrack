@@ -220,7 +220,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             {
                 // Consecutive title lines ("HỢP ĐỒNG" / "CUNG CẤP PHẦN MỀM") form one title rather than empty terms.
                 var heading = Regex.Replace(text, @"\s+", " ");
-                var merge = terms.Count > 0 && group == location && terms[^1].Content.Length == 0 && terms[^1].Title != "Phần mở đầu"
+                var merge = !Regex.IsMatch(heading, @"^Điều\s*\d+", RegexOptions.IgnoreCase) && terms.Count > 0 && !Regex.IsMatch(terms[^1].Title, @"^Điều\s*\d+", RegexOptions.IgnoreCase) && group == location && terms[^1].Content.Length == 0 && terms[^1].Title != "Phần mở đầu"
                     && terms[^1].Title.Length + heading.Length < 200;
                 if (merge) heading = terms[^1].Title + " " + heading;
                 var title = heading.Length <= 200 ? heading : heading[..200] + "…";
@@ -372,6 +372,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
     {
         InternalDraftPolicy.Prepare(content, template, forPreview: true);
         var values = PrintValues(content, template);
+        if (string.IsNullOrWhiteSpace(content.ContractNumber)) values["CONTRACT_NUMBER"] = "Chờ cấp số khi lưu nháp";
         // Manual Word content keeps its own text; only placeholders that have a draft value are filled.
         var filled = InternalWordDocument.Fill(bytes, values, preserveUnknown: template.ManualWordContent);
         if (!pdf) return filled;
@@ -382,7 +383,8 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             entry.SlidingExpiration = TimeSpan.FromHours(1);
             return InternalWordDocument.Blocks(bytes).SelectMany(b => Placeholder.Matches(b.Text).Select(m => m.Groups[1].Value)).ToHashSet();
         })!;
-        var signature = template.ManualWordContent + "|" + string.Join("\u0001", used.Order().Select(k => k + "\u0002" + values.GetValueOrDefault(k)));
+        // The contract number is also stamped on the "Số: …" line without a placeholder, so it always belongs to the signature.
+        var signature = template.ManualWordContent + "|" + string.Join("\u0001", used.Append("CONTRACT_NUMBER").Distinct().Order().Select(k => k + "\u0002" + values.GetValueOrDefault(k)));
         var lastKey = "word-pdf-last:" + template.WordSha256;
         if (cache.TryGetValue(lastKey, out (string Signature, byte[] Pdf) last) && last.Signature == signature) return last.Pdf;
         var result = await word.Pdf(filled, ct);
@@ -397,7 +399,9 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         string Due(DraftMilestone milestone) => milestone.Anchor == "DATE"
             ? milestone.DueDate?.ToString("dd/MM/yyyy", culture) ?? "Chưa chọn ngày"
             : $"{milestone.OffsetDays} ngày lịch sau {(milestone.Anchor == "SIGNED" ? "ngày ký đủ" : "ngày bàn giao")}";
-        return new Dictionary<string, string>(template.ManualWordContent ? [] : content.Fields)
+        return new Dictionary<string, string>(template.ManualWordContent
+            ? content.Fields.Where(field => field.Key.StartsWith("CUSTOMER_", StringComparison.Ordinal))
+            : content.Fields)
         {
             ["CONTRACT_NAME"] = content.Name, ["EFFECTIVE_DATE"] = content.EffectiveDate?.ToString("dd/MM/yyyy") ?? "",
             ["EXPIRE_DATE"] = content.ExpireDate?.ToString("dd/MM/yyyy") ?? "",

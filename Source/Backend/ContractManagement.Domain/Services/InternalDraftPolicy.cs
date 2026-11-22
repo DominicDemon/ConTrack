@@ -129,7 +129,9 @@ public static class InternalDraftPolicy
         if (subtotal - discount + vat > 9999999999999999.99m) throw new ArgumentException("Tổng giá trị vượt giới hạn lưu trữ.");
         input.Totals = new(subtotal, discount, vat, subtotal - discount + vat);
         input.TemplateSnapshot = template;
-        input.MissingFields = template.Fields.Where(f => f.Required && string.IsNullOrWhiteSpace(input.Fields.GetValueOrDefault(f.Key))).Select(f => f.Label).ToList();
+        input.MissingFields = template.Fields.Where(f => f.Required
+            && !(template.WordStorageKey is not null && f.Key.StartsWith("PROVIDER_", StringComparison.Ordinal))
+            && string.IsNullOrWhiteSpace(input.Fields.GetValueOrDefault(f.Key))).Select(f => f.Label).ToList();
         if (input.Items.Count == 0) input.MissingFields.Add("Hạng mục hợp đồng");
         // A fixed term is the template's own text (checked above); a title-only one, e.g. a Word signature heading, is complete.
         if (input.Terms.Count == 0 || input.Terms.Any(t => t.Editable && string.IsNullOrWhiteSpace(t.Content))) input.MissingFields.Add("Nội dung điều khoản");

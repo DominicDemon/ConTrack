@@ -2,8 +2,8 @@ import type { DraftContent } from "@/services/internal-api";
 export type CustomerSession = { id: string; name: string; mustChangePassword: boolean };
 export type ReviewLinkStatus = { verified: boolean; reviewId: string | null; expiresAt: string };
 export type CustomerSigningOtpResult = { challengeId: string; expiresAt: string; deliveryChannel: string; developmentOtp: string | null };
-export type CustomerReviewSummary = { id: string; contractName: string; versionNo: string; status: string; sentAt: string; respondedAt: string | null };
-export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string; section?: string | null };
+export type CustomerReviewSummary = { id: string; contractName: string; versionNo: string; status: string; sentAt: string; respondedAt: string | null; firstViewedAt?: string | null };
+export type ReviewComment = { id: string; termKey: string | null; termTitle: string | null; parentId: string | null; content: string; authorName: string; fromCustomer: boolean; resolved: boolean; createdAt: string; section?: string | null; carried?: boolean };
 export type CustomerReviewDetail = { id: string; contractName: string; versionNo: string; status: string; sentAt: string; message: string | null; customerNote: string | null;
   respondedAt: string | null; documentHash: string; rowVersion: string; content: DraftContent; comments: ReviewComment[] };
 export const customerStatusLabel: Record<string, string> = { SENT: "Chờ bạn xem", VIEWED: "Chờ bạn phản hồi", APPROVED: "Đã đồng ý · theo dõi ký", CHANGES_REQUESTED: "Bạn đã yêu cầu sửa",
@@ -25,6 +25,22 @@ export async function customerApi<T>(path: string, method = "GET", body?: unknow
     throw new CustomerApiError(response.status, error?.message ?? (response.status === 429 ? "Bạn thao tác quá nhanh. Vui lòng thử lại sau." : "Không thể xử lý yêu cầu. Vui lòng thử lại."), error?.code ?? undefined);
   }
   return response.status === 204 ? undefined as T : response.json();
+}
+export async function customerApiForm<T>(path: string, form: FormData): Promise<T> {
+  if (!csrfToken) {
+    const tokenResponse = await fetch("/api/customer/auth/csrf", { credentials: "same-origin", cache: "no-store" });
+    if (!tokenResponse.ok) throw new CustomerApiError(tokenResponse.status, "Không kết nối được hệ thống. Vui lòng thử lại.");
+    csrfToken = (await tokenResponse.json()).token as string;
+  }
+  const token = csrfToken;
+  const response = await fetch(`/api/customer${path}`, { method: "POST", credentials: "same-origin", cache: "no-store",
+    headers: { "X-CSRF-TOKEN": token }, body: form });
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    if (response.status === 400) csrfToken = undefined;
+    throw new CustomerApiError(response.status, error?.message ?? "Không thể tải bản scan lên. Vui lòng thử lại.", error?.code);
+  }
+  return response.json();
 }
 export async function customerApiBlob(path: string, method = "GET", body?: unknown): Promise<Blob> {
   if (method !== "GET" && !csrfToken) {

@@ -125,16 +125,17 @@ function SupportTicketsContent() {
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterPriority, setFilterPriority] = useState("All");
 
+  const canAccess = Boolean(user?.canAccess);
   const isSysAdmin =
     user?.supportRole === "SYSADMIN" ||
     user?.username?.toLowerCase() === "sysadmin" ||
     user?.username?.toLowerCase() === "admin";
 
   useEffect(() => {
-    if (isSysAdmin) {
+    if (!canAccess || isSysAdmin) {
       router.replace("/workspace");
     }
-  }, [isSysAdmin, router]);
+  }, [canAccess, isSysAdmin, router]);
 
   useEffect(() => {
     if (!ticketIdParam) return;
@@ -145,7 +146,7 @@ function SupportTicketsContent() {
   }, [ticketIdParam, router]);
 
   const loadTickets = useCallback(async () => {
-    if (isSysAdmin) {
+    if (!canAccess || isSysAdmin) {
       setTickets([]);
       setLoading(false);
       return;
@@ -162,7 +163,7 @@ function SupportTicketsContent() {
     } finally {
       setLoading(false);
     }
-  }, [filterStatus, filterPriority, isSysAdmin]);
+  }, [filterStatus, filterPriority, isSysAdmin, canAccess]);
 
   useEffect(() => {
     void loadTickets();
@@ -457,6 +458,20 @@ function SupportTicketsContent() {
       />
     </>
   );
+
+  if (!canAccess || isSysAdmin) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[400px] p-6 text-center">
+        <Headset className="w-12 h-12 text-muted-foreground/40 mb-3" />
+        <h2 className="text-lg font-semibold text-foreground mb-1">
+          Không có quyền truy cập
+        </h2>
+        <p className="text-sm text-muted-foreground max-w-md">
+          Chức năng Hỗ trợ khách hàng chỉ dành cho nhân sự thuộc Phòng Kỹ Thuật & Hỗ Trợ, Phòng Kế Toán - Tài Chính và Phòng Hành Chính - Pháp Chế.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <>

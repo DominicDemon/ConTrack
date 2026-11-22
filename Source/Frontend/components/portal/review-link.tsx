@@ -12,7 +12,7 @@ import { customerApi, type ReviewLinkStatus } from "@/services/customer-api";
 export default function ReviewLink({ token }: { token: string }) {
   const [status, setStatus] = useState<ReviewLinkStatus | null>(null); const [closed, setClosed] = useState("");
   const [reviewId, setReviewId] = useState<string | null>(null);
-  const [phone, setPhone] = useState(""); const [otp, setOtp] = useState(""); const [otpSent, setOtpSent] = useState(false);
+  const [phone, setPhone] = useState(""); const [otp, setOtp] = useState(""); const [otpSent, setOtpSent] = useState(false); const [fromStaff, setFromStaff] = useState(false);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const check = useCallback(() => customerApi<ReviewLinkStatus>("/link/status", "POST", { token })
     .then(r => { setStatus(r); setReviewId(r.reviewId); }).catch(e => setClosed((e as Error).message)), [token]);
@@ -20,7 +20,7 @@ export default function ReviewLink({ token }: { token: string }) {
   const lost = useCallback(() => { setReviewId(null); setStatus(null); setOtp(""); setOtpSent(false); void check(); }, [check]);
 
   async function requestOtp() { setBusy(true); setError(""); setNotice("");
-    try { await customerApi("/link/otp", "POST", { token, phone }); setOtpSent(true); setOtp(""); setNotice("Đã gửi mã xác nhận. Mã có hiệu lực trong 5 phút."); }
+    try { await customerApi("/link/otp", "POST", { token, phone }); setOtpSent(true); setFromStaff(false); setOtp(""); setNotice("Đã gửi mã xác nhận. Mã có hiệu lực trong 5 phút."); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   async function verify() { setBusy(true); setError(""); setNotice("");
     try { setReviewId((await customerApi<{ reviewId: string }>("/link/verify", "POST", { token, otp })).reviewId); }
@@ -39,10 +39,11 @@ export default function ReviewLink({ token }: { token: string }) {
         : !status ? <p className={s.muted}>Đang kiểm tra link…</p>
         : <><h2>Xác nhận số điện thoại</h2><p className={s.muted}>{otpSent ? "Nhập mã 6 số vừa được gửi tới số điện thoại của bạn." : "Nhập số điện thoại ghi trong hợp đồng để nhận mã xác nhận."}</p>
           <form onSubmit={submit}>{error && <p role="alert" className={ui.error}>{error}</p>}{notice && <p role="status" className={ui.notice}>{notice}</p>}
-            <label className={s.label}>Số điện thoại<input required disabled={otpSent} inputMode="tel" autoComplete="tel" maxLength={20} className={ui.field} value={phone} onChange={e => setPhone(e.target.value)} placeholder="Ví dụ: 0901234567"/></label>
+            <label className={s.label}>Số điện thoại<input required={!fromStaff} disabled={otpSent && !fromStaff} inputMode="tel" autoComplete="tel" maxLength={20} className={ui.field} value={phone} onChange={e => setPhone(e.target.value)} placeholder="Ví dụ: 0901234567"/></label>
             {otpSent && <label className={s.label}>Mã xác nhận<input required autoFocus inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} className={ui.field} value={otp} onChange={e => setOtp(e.target.value)} placeholder="6 chữ số"/></label>}
             <button className={ui.primaryButton} disabled={busy} type="submit">{busy ? "Đang xử lý…" : otpSent ? "Xác nhận" : "Gửi mã xác nhận"}<ArrowRight size={17}/></button>
-            {otpSent && <button type="button" className={ui.secondaryButton} disabled={busy} onClick={() => void requestOtp()}>Gửi lại mã</button>}
+            {otpSent ? <button type="button" className={ui.secondaryButton} disabled={busy || !phone.trim()} onClick={() => void requestOtp()}>Gửi lại mã</button>
+              : <button type="button" className={ui.secondaryButton} disabled={busy} onClick={() => { setOtpSent(true); setFromStaff(true); setOtp(""); setError(""); setNotice("Nhập mã nhân viên vừa gửi tới số điện thoại trong hợp đồng."); }}>Đã có mã (nhân viên gửi)</button>}
           </form></>}
       <p className={s.muted} style={{ marginTop: 28 }}>Cần hỗ trợ hoặc cần link mới? Liên hệ nhân viên phụ trách hợp đồng.</p>
     </section>

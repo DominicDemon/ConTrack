@@ -23,7 +23,8 @@ public static class ContractVersionNotes
 public sealed record FollowupRequest(string? Decision, string? Note, string? RowVersion);
 public sealed record InternalApprovalDecisionRequest(bool Approve, string? Comment);
 public sealed record InternalApprovalState(long Id, int Status, DateTime SubmittedAt, string WorkflowName, string? Comment, bool SigningStarted);
-public sealed record ResetTemporaryPasswordResult(bool SmsSimulated, string? DevelopmentPhone, string? DevelopmentPassword);
+/// <summary>Result of creating a customer account or reissuing its temporary password; the password itself only appears in Development when the email failed.</summary>
+public sealed record ResetTemporaryPasswordResult(bool EmailSent, string? EmailMasked, string? DevelopmentPhone, string? DevelopmentPassword);
 public sealed record SigningStartResult(long CompanySignatureId, long DocumentId, long VersionId, string FileName, DateTime StartedAt,
     string? CustomerSigningUrl = null, DateTime? CustomerLinkExpiresAt = null);
 public sealed record CompanySigningQueueItem(long SignatureId, long DocumentId, long VersionId, string Code, string ContractName, string CustomerName, string SignerName, DateTime CreatedAt);
@@ -32,7 +33,8 @@ public sealed record StartCompanySigningRequest(string SignerName, string Signer
 /// <param name="Section">A key of ContractReviewPolicy.CommentSections when the comment is about a part of the contract other than a term.</param>
 public sealed record CommentInput(string? TermKey, long? ParentCommentId, string? Content, string? Section = null);
 /// <param name="TermTitle">The term's title, or the section's name for a comment by section.</param>
-public sealed record ReviewComment(long Id, string? TermKey, string? TermTitle, long? ParentId, string Content, string AuthorName, bool FromCustomer, bool Resolved, DateTime CreatedAt, string? Section = null);
+/// <param name="Carried">Copied from the previous version (an unresolved earlier comment), not written on this one.</param>
+public sealed record ReviewComment(long Id, string? TermKey, string? TermTitle, long? ParentId, string Content, string AuthorName, bool FromCustomer, bool Resolved, DateTime CreatedAt, string? Section = null, bool Carried = false);
 public sealed record ReviewSummary(long Id, long VersionId, long VersionNo, string Status, DateTime SentAt, string SentByName, string? Message, DateTime? FirstViewedAt,
     string? CustomerNote, DateTime? RespondedAt, string? FollowupDecision, string? FollowupNote, DateTime? FollowupDecidedAt, string RowVersion, List<ReviewComment> Comments,
     DateTime? LinkExpiresAt, bool? LinkEmailSent = null); // LinkEmailSent is only set on the send/resend response
@@ -51,6 +53,7 @@ public interface IContractReviewRepository
     Task<ReviewComment> EmployeeComment(long reviewId, CommentInput input, InternalUser actor, CancellationToken ct);
     Task ResolveComment(long commentId, InternalUser actor, CancellationToken ct);
     Task<ResetTemporaryPasswordResult> ResetTemporaryPassword(long customerId, InternalUser actor, CancellationToken ct);
+    Task<ResetTemporaryPasswordResult> CreateCustomerAccount(long customerId, InternalUser actor, CancellationToken ct);
 }
 
 public interface IInternalSigningService
@@ -66,7 +69,10 @@ public interface IInternalSigningService
 
 // Customer portal
 public sealed record CustomerSession(long Id, string Name, bool MustChangePassword);
-public sealed record CustomerReviewSummary(long Id, string ContractName, long VersionNo, string Status, DateTime SentAt, DateTime? RespondedAt);
+/// <param name="FirstViewedAt">Null = the customer has not opened this version yet (an unread item of the portal bell).</param>
+/// <summary>One portal bell item. Key is stable per event (the browser remembers which keys were read); ReviewId opens the contract.</summary>
+public sealed record CustomerContractNotice(string Key, string Code, string Title, string Body, long ReviewId, DateTime At);
+public sealed record CustomerReviewSummary(long Id, string ContractName, long VersionNo, string Status, DateTime SentAt, DateTime? RespondedAt, DateTime? FirstViewedAt = null);
 public sealed record CustomerReviewDetail(long Id, string ContractName, long VersionNo, string Status, DateTime SentAt, string? Message, string? CustomerNote,
     DateTime? RespondedAt, string DocumentHash, string RowVersion, DraftContent Content, List<ReviewComment> Comments);
 public sealed record CustomerLoginInput(string? Phone, string? Password);
@@ -82,11 +88,17 @@ public interface ICustomerPortalRepository
     Task<CustomerSession?> Get(long customerId, CancellationToken ct);
     /// <summary>Throws 404 for an unknown link and 410 for an expired one.</summary>
     Task<ReviewLinkAccess> OpenLink(string? token, CancellationToken ct);
+    /// <summary>The open review's current link, for the employee in charge to resend the customer's code (audited as RESEND_REVIEW_OTP).</summary>
+    Task<ReviewLinkAccess> ActiveLink(long reviewId, InternalUser actor, CancellationToken ct);
     Task<bool> LinkActive(long reviewId, CancellationToken ct);
     Task RecordLinkVerified(ReviewLinkAccess link, CancellationToken ct);
     Task ChangePassword(long customerId, CustomerChangePasswordInput input, CancellationToken ct);
     Task<List<CustomerReviewSummary>> Reviews(long customerId, CancellationToken ct);
+    /// <summary>What the portal bell shows, derived from the customer's contracts (no table of its own; read state stays in the browser).</summary>
+    Task<List<CustomerContractNotice>> Notices(long customerId, CancellationToken ct);
     Task<CustomerReviewDetail> Review(long customerId, long reviewId, CancellationToken ct);
     Task<ReviewComment> Comment(long customerId, long reviewId, CommentInput input, CancellationToken ct);
+    Task<ReviewComment> EditComment(long customerId, long reviewId, long commentId, CommentInput input, CancellationToken ct);
+    Task DeleteComment(long customerId, long reviewId, long commentId, CancellationToken ct);
     Task<CustomerReviewDetail> Respond(long customerId, long reviewId, CustomerRespondInput input, string? ip, string? userAgent, CancellationToken ct);
 }

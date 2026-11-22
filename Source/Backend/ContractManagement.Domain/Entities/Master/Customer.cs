@@ -37,6 +37,9 @@ public partial class Customer
 
     public DateTime? CustomerLastLoginAt { get; set; }
 
+    /// <summary>The sale who looks after this customer (016-customer-owner.sql); null until someone is given them.</summary>
+    public long? CustomerOwnerEmployeeId { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public long? CreatedBy { get; set; }

@@ -41,6 +41,12 @@ public static class ScanEndpoints
 
     public sealed record AddKeywordRequest(string? Type, string? Value);
 
+    public sealed record SendKeyCodeRequest(string? Password);
+
+    public sealed record SetKeyRequest(string? Password, string? Code, string? NewKey);
+
+    public sealed record ChangeKeyRequest(string? CurrentKey, string? NewKey);
+
     /// <summary>Addresses to send a scan to (each entry may hold several, as pasted) and an optional note.</summary>
     public sealed record EmailRequest(List<string?>? Recipients, string? Note);
 
@@ -251,9 +257,12 @@ public static class ScanEndpoints
         routes.MapGet("/encryption-keys", async (FileProtectionService protection, CancellationToken ct) =>
             Results.Ok(await protection.ListKeysAsync(ct))).Need(EncryptionKeyPermissions.Manage);
 
-        // The answer holds the key, shown once; the internal host already sends no-store on every response.
-        routes.MapPost("/encryption-keys/{employeeId:long}", async (long employeeId, FileProtectionService protection, CancellationToken ct) =>
-            Results.Ok(await protection.IssueKeyAsync(employeeId, ct))).Need(EncryptionKeyPermissions.Manage);
+        // Employees set their own key; the administrator only stops one (an employee who leaves, a key someone else knows).
+        routes.MapPost("/encryption-keys/{employeeId:long}/revoke", async (long employeeId, FileProtectionService protection, CancellationToken ct) =>
+        {
+            await protection.RevokeKeyAsync(employeeId, ct);
+            return Results.NoContent();
+        }).Need(EncryptionKeyPermissions.Manage);
 
         // Reopens the employee's old files for their current key with the company recovery private key: the file sent
         // with this request only and never kept, or, without a file, the key the server keeps.
@@ -270,14 +279,18 @@ public static class ScanEndpoints
             return Results.Ok(await protection.RecoverFilesAsync(employeeId, pem, ct));
         }).AcceptsUpload(64 * 1024).Need(EncryptionKeyPermissions.Manage);
 
+        routes.MapGet("/encryption-keys/me", async (FileKeyOwnerService owner, CancellationToken ct) =>
+            Results.Ok(await owner.MineAsync(ct)));
 
-        routes.MapGet("/encryption-keys/me", async (FileProtectionService protection, ICurrentEmployee employee, CancellationToken ct) =>
-            Results.Ok(new
-            {
-                hasKey = await protection.HasActiveKeyAsync(employee.EmployeeId, ct),
-                encryptionEnabled = protection.Enabled,
-                serverKeepsRecoveryKey = protection.ServerKeepsRecoveryKey,
-            }));
+        // Creating a key, or a new one after forgetting the old: login password, then the code sent by email.
+        routes.MapPost("/encryption-keys/me/code", async (SendKeyCodeRequest request, FileKeyOwnerService owner, CancellationToken ct) =>
+            Results.Ok(new { sentTo = await owner.SendCodeAsync(request.Password, ct) }));
+
+        routes.MapPost("/encryption-keys/me", async (SetKeyRequest request, FileKeyOwnerService owner, CancellationToken ct) =>
+            Results.Ok(await owner.SetAsync(request.Password, request.Code, request.NewKey, ct)));
+
+        routes.MapPost("/encryption-keys/me/change", async (ChangeKeyRequest request, FileKeyOwnerService owner, CancellationToken ct) =>
+            Results.Ok(await owner.ChangeAsync(request.CurrentKey, request.NewKey, ct)));
     }
 
     /// <summary>The employee, active, with the permissions of their roles and all those they depend on (guide 2.1).</summary>

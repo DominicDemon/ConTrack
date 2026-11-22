@@ -1,6 +1,22 @@
 .dialog { display:flex; flex-direction:column; width:98vw; max-width:98vw; height:96dvh; max-height:96dvh; padding:18px; gap:12px; overflow:hidden; }
-.metadata { display:flex; flex-wrap:wrap; align-items:end; gap:12px; padding-right:24px; }
-.metadata label { display:grid; gap:4px; font-size:13px; flex:1; min-width:180px; }
+/* Template details: a framed block with bold labels and bordered white inputs, so the fields to fill stand out from the dialog. */
+.metadata { display:flex; flex-wrap:wrap; align-items:end; gap:14px; margin:0; padding:14px 16px; border:1px solid #bfdbfe; border-left:4px solid #2563eb; border-radius:8px; background:#eff6ff; }
+.metadata label { display:grid; gap:6px; font-size:13px; font-weight:600; color:#1e3a8a; flex:1; min-width:180px; }
+.metadata input, .metadata select { min-height:40px; border:1.5px solid #93c5fd !important; border-radius:6px; background:#fff !important; color:#0f172a; font-weight:400; box-shadow:0 1px 2px #0000000d; }
+.metadata input:focus, .metadata select:focus { outline:2px solid #2563eb; outline-offset:1px; }
+.required { color:#dc2626; margin-left:2px; }
+.checklist { padding:10px 16px; border:1px solid #fcd34d; border-left:4px solid #f59e0b; border-radius:8px; background:#fffbeb; }
+.checklist[data-done="true"] { border-color:#86efac; border-left-color:#16a34a; background:#f0fdf4; }
+.checklist summary { cursor:pointer; font-weight:600; font-size:14px; }
+.checklist fieldset { margin:10px 0; }
+.checklist label { font-size:13px; }
+@media (prefers-color-scheme: dark) {
+ .metadata { background:#0f1e3a; border-color:#1e3a8a; }
+ .metadata label { color:#bfdbfe; }
+ .metadata input, .metadata select { background:#0b1220 !important; color:#e2e8f0; border-color:#3b5bdb !important; }
+ .checklist { background:#2a2110; border-color:#a16207; }
+ .checklist[data-done="true"] { background:#0f2a1a; border-color:#15803d; }
+}
 .select { width:100%; min-height:36px; border:1px solid var(--border); border-radius:6px; padding:6px 9px; background:var(--background); color:var(--foreground); }
 .workspace { flex:1; min-height:0; overflow:hidden; }
 .pane { height:100%; min-height:0; display:flex; flex-direction:column; border:1px solid var(--border); border-radius:8px; overflow:hidden; }

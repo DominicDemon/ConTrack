@@ -34,9 +34,6 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
   useEffect(() => onNotificationRefresh(() => setRefresh(value => value + 1)), []);
   const [confirm, setConfirm] = useState<Confirm | null>(null); const [note, setNote] = useState(""); const [busy, setBusy] = useState(false); const [expiry, setExpiry] = useState("");
   const [replyTo, setReplyTo] = useState<{ review: string; comment: ReviewComment } | null>(null); const [reply, setReply] = useState("");
-  const [signerName, setSignerName] = useState(record.content.fields.PROVIDER_REPRESENTATIVE_NAME ?? "");
-  const [signerTitle, setSignerTitle] = useState(record.content.fields.PROVIDER_REPRESENTATIVE_TITLE ?? "");
-  const [signerPhone, setSignerPhone] = useState(record.content.fields.PROVIDER_PHONE ?? "");
   const fetchWorkflow = useCallback(async () => {
     const [reviewRows, approvalState, versionRows, preSendState] = await Promise.all([
       internalApi<ReviewSummary[]>(`/contract-drafts/${record.id}/reviews`),
@@ -83,7 +80,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
     : null;
   /** A business signs the printed contract and stamps its red seal; a person signs electronically. */
   const business = record.content.partyType === "BUSINESS";
-  const canStartSigning = !business && user.canApprove && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
+  const canEnsureSigning = !business && user.canCheck && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
   const canPrint = business && record.status === 3 && approval?.status === 1;
   const customerApproved = latest?.status === "APPROVED";
   const signingComplete = record.status === 4 || record.status === 5;
@@ -102,7 +99,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
     ...business ? [
       { title: "In, ký và đóng dấu đỏ", detail: signingComplete ? "Hai bên đã ký giấy." : paperPending ? "Đã nộp bản scan để Hành chính kiểm tra." : approval?.status === 1 ? "In hợp đồng; đại diện hai bên ký, doanh nghiệp đóng dấu đỏ." : "Sau khi Hành chính duyệt bản chốt, in hợp đồng để Sếp ký và khách đóng dấu.", done: signingComplete || paperPending, current: paperWaiting && !paperPending },
       { title: "Lưu bản ký giấy", detail: signingComplete ? "Bản scan đã được xác nhận, hồ sơ đã ký." : paperPending ? "Đang chờ Hành chính xác nhận bản ký giấy." : "Scan bản đã đóng dấu, tải lên màn Bản ký giấy và xác nhận.", done: signingComplete, current: paperPending },
-    ] : [{ title: "Sếp ký cho công ty", detail: companySigned ? "Sếp đã ký." : approval?.signingStarted ? "Đang chờ Sếp ký trong hàng đợi Ký phía công ty." : "Sau khi Hành chính duyệt bản chốt, Sếp tạo phiên ký và ký.", done: companySigned, current: record.status === 3 && !companySigned },
+    ] : [{ title: "Sếp ký cho công ty", detail: companySigned ? "Sếp đã ký." : approval?.signingStarted ? "Đang chờ Sếp kiểm tra hợp đồng và ký trong hàng đợi Ký phía công ty." : "Phiên ký được tạo tự động khi Hành chính duyệt bản chốt.", done: companySigned, current: record.status === 3 && !companySigned },
     { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? (prospect ? "Công ty đã ký. Khách mở link trong email, xác minh OTP rồi ký." : "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký.") : prospect ? "Sau khi công ty ký, khách ký ngay trên link đã nhận qua email." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned }],
   ];
 
@@ -110,7 +107,13 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
   async function run() {
     if (!confirm) return; setBusy(true); setError("");
     try { await confirm.run(note.trim(), confirm.expiry ? new Date(expiry).toISOString() : ""); setConfirm(null); await load(); onChanged(); }
-    catch (e) { setError((e as Error).message); setConfirm(null); if(e instanceof InternalApiError && e.issues.length) focusIssue(e.issues[0].path); } finally { setBusy(false); }
+    catch (e) {
+      const finalApproval = confirm.action === "Duyệt, chuyển Sếp ký";
+      setConfirm(null);
+      if (finalApproval) { await load(); onChanged(); }
+      setError((e as Error).message);
+      if(e instanceof InternalApiError && e.issues.length) focusIssue(e.issues[0].path);
+    } finally { setBusy(false); }
   }
   async function act<T>(action: () => Promise<T>, done?: string | ((result: T) => string)) {
     setBusy(true); setError(""); setNotice("");
@@ -162,15 +165,11 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
       : { label: "Lý do từ chối (bắt buộc)", required: true, max: 2000 },
     run: comment => internalApi(`/contract-drafts/${record.id}/internal-approval`, "POST", { approve, comment: comment || null }),
   });
-  async function startSigning() {
-    if (signerName.trim().length < 2) { setError("Nhập họ tên người đại diện ký (ít nhất 2 ký tự)."); return; }
-    if (!signerPhone.trim()) { setError("Nhập số điện thoại người đại diện ký."); return; }
+  async function ensureSigning() {
     setBusy(true); setError(""); setNotice("");
     try {
-      await internalApi(`/contract-drafts/${record.id}/start-signing`, "POST", {
-        signerName: signerName.trim(), signerPhone: signerPhone.trim(), signerTitle: signerTitle.trim() || null,
-      });
-      setNotice("Đã tạo phiên ký. Hợp đồng đang ở hàng đợi ký của công ty.");
+      await internalApi(`/contract-drafts/${record.id}/ensure-signing`, "POST");
+      setNotice("Đã tạo phiên ký cho Sếp. Hợp đồng đang ở hàng đợi ký của công ty.");
       await load(); onChanged();
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -209,18 +208,18 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
         {user.canWrite && linkUsable && latest && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách không kịp nhập mã, nhập sai quá nhiều lần hoặc bị khóa đăng nhập"
           onClick={() => void act(() => internalApi(`/contract-reviews/${latest.id}/resend-otp`, "POST"), `Đã gửi mã OTP mới tới ${record.customerPhoneMasked} và mở khóa cho khách. Khách mở link trong email, chọn “Đã có mã” và nhập mã (hiệu lực 5 phút).`)}><KeyRound size={16}/>Gửi lại mã OTP</button>}
         {canDecideFinal && <>
-          <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>{business ? "Duyệt, chuyển ký giấy" : "Duyệt, chuyển Sếp ký"}</button>
+          <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>{business ? "Duyệt, chuyển ký giấy" : "Duyệt và gửi Sếp ký"}</button>
           <button className={ui.secondaryButton} disabled={busy || dirty} onClick={() => decideApproval(false)}><XCircle size={16}/>Từ chối</button>
         </>}
-        {canStartSigning && <button className={ui.primaryButton} disabled={busy || dirty || signerName.trim().length < 2 || !signerPhone.trim()} onClick={() => void startSigning()}>
-          <Send size={16}/>Tạo phiên ký
+        {canEnsureSigning && <button className={ui.secondaryButton} disabled={busy || dirty} onClick={() => void ensureSigning()}>
+          <RefreshCw size={16}/>Thử tạo lại phiên ký cho Sếp
         </button>}
         {canPrint && <><button className={ui.primaryButton} disabled={busy} onClick={() => void printContract()}><Printer size={16}/>In hợp đồng (PDF)</button>
           {user.permissions.includes("contract.signed_evidence.view") && <Link className={ui.secondaryButton} href={`/workspace/signed-contracts/${encodeURIComponent(record.id)}`}><Upload size={16}/>{paperPending ? "Kiểm tra bản ký giấy" : "Mở hồ sơ ký giấy"}</Link>}</>}
-        {user.canCheck && prospect && (signingComplete || latest?.status === "APPROVED") && <button className={ui.primaryButton} disabled={busy}
-          title="Hành chính tạo tài khoản cho khách: tên đăng nhập là SĐT, kèm mật khẩu tạm; khách đổi mật khẩu ở lần đăng nhập đầu"
+        {(user.canManageAll || user.canCheck) && prospect && (signingComplete || latest?.status === "APPROVED") && <button className={ui.primaryButton} disabled={busy}
+          title="Gửi email cho khách: tên đăng nhập là SĐT, kèm mật khẩu tạm; khách đổi mật khẩu ở lần đăng nhập đầu"
           onClick={() => void issueCustomerPassword(true)}><UserPlus size={16}/>Tạo tài khoản khách</button>}
-        {user.canCheck && !prospect && latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất email"
+        {(user.canManageAll || user.canCheck) && !prospect && latest && <button className={ui.secondaryButton} disabled={busy} title="Chỉ dùng khi khách chưa đổi mật khẩu tạm và mất email"
           onClick={() => void issueCustomerPassword(false)}><KeyRound size={16}/>Cấp lại mật khẩu tạm</button>}
       </div>
     </div>
@@ -246,11 +245,6 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
       <strong>{approval.workflowName}:</strong>{" "}
       {approval.status === 0 ? "Đang chờ Hành chính duyệt bản khách đã đồng ý" : approval.status === 1 ? "Hành chính đã duyệt, hồ sơ chờ Sếp ký" : "Đã từ chối phê duyệt"}
       {approval.comment && <span> · {approval.comment}</span>}
-    </div>}
-    {canStartSigning && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginTop: 12 }}>
-      <label className={s.label}>Người đại diện công ty *<input className={ui.field} required aria-invalid={signerName.trim().length < 2} maxLength={200} value={signerName} onChange={e => setSignerName(e.target.value)}/>{signerName.trim().length < 2 && <span role="alert" className={s.muted}>Nhập họ tên người đại diện ký (ít nhất 2 ký tự).</span>}</label>
-      <label className={s.label}>Chức vụ<input className={ui.field} maxLength={100} value={signerTitle} onChange={e => setSignerTitle(e.target.value)}/></label>
-      <label className={s.label}>Số điện thoại<input className={ui.field} inputMode="tel" maxLength={30} value={signerPhone} onChange={e => setSignerPhone(e.target.value)}/></label>
     </div>}
 
     {versions.length > 0 && <details style={{ marginTop: 12 }} open>
@@ -291,9 +285,9 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
 
     <Dialog open={!!confirm} onOpenChange={v => { if (!busy && !v) setConfirm(null); }}><DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
       <DialogHeader><DialogTitle>{confirm?.title}</DialogTitle><DialogDescription>{confirm?.description}</DialogDescription></DialogHeader>
-      {confirm?.action === "Gửi khách xem" && <><DraftPreview content={record.content} code={record.code}/><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>Tôi đã kiểm tra bên giao dịch, số tiền, lịch thanh toán và các nội dung viết cố định trong mẫu.</label></>}{confirm?.expiry && <label className="grid gap-2 text-sm font-medium">Link hết hạn lúc *<input required type="datetime-local" className={ui.field} value={expiry} disabled={busy} onChange={e => setExpiry(e.target.value)}/></label>}{confirm?.note && <label className="grid gap-2 text-sm font-medium">{confirm.note.label}<Textarea maxLength={confirm.note.max} value={note} disabled={busy} onChange={e => setNote(e.target.value)}/></label>}
+      {(confirm?.action === "Gửi khách xem" || confirm?.action === "Duyệt, chuyển Sếp ký") && <><DraftPreview content={record.content} code={record.code}/><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>{confirm.action === "Gửi khách xem" ? "Tôi đã kiểm tra bên giao dịch, số tiền, lịch thanh toán và các nội dung viết cố định trong mẫu." : "Tôi đã mở và kiểm tra chi tiết bản khách đã đồng ý; xác nhận duyệt và tạo phiên ký cho Sếp."}</label></>}{confirm?.expiry && <label className="grid gap-2 text-sm font-medium">Link hết hạn lúc *<input required type="datetime-local" className={ui.field} value={expiry} disabled={busy} onChange={e => setExpiry(e.target.value)}/></label>}{confirm?.note && <label className="grid gap-2 text-sm font-medium">{confirm.note.label}<Textarea maxLength={confirm.note.max} value={note} disabled={busy} onChange={e => setNote(e.target.value)}/></label>}
       <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setConfirm(null)}>Hủy</Button>
-        <Button type="button" disabled={busy || (!!confirm?.expiry && !expiry) || (confirm?.action === "Gửi khách xem" && !confirmed) || (!!confirm?.note?.required && !note.trim())} onClick={() => void run()}>{busy ? "Đang xử lý…" : confirm?.action}</Button></DialogFooter>
+        <Button type="button" disabled={busy || (!!confirm?.expiry && !expiry) || ((confirm?.action === "Gửi khách xem" || confirm?.action === "Duyệt, chuyển Sếp ký") && !confirmed) || (!!confirm?.note?.required && !note.trim())} onClick={() => void run()}>{busy ? "Đang xử lý…" : confirm?.action}</Button></DialogFooter>
     </DialogContent></Dialog>
   </section>;
 }

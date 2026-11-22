@@ -96,7 +96,8 @@ for and revokes keys. No schema change. Run it after 007 and 008.
 `015-seed-employee-roles.sql` gives the seeded accounts their roles (EMPLOYEE_ROLE): `seed-masterdb.sql` only places
 them in departments, so on a new database nobody, not even sysadmin, has a permission or can open "Nhân viên & phân quyền".
 Managers (sysadmin, test.manager, head.*) get their department's manager role, the others its staff role; employees
-who already have a role are left alone. Run it after the seed and 005.
+who already have an active role are left alone. It also migrates assignments to retired roles such as `INTERNAL_OFFICE`.
+Run it after the seed, 005, and 006.
 `016-customer-owner.sql` adds the sale who looks after each customer (`CUSTOMER.customer_owner_employee_id`) and the
 permission `customer.manage.all` (HCNS, Ban Giám Đốc): sales manage their own customers, HCNS and BGD all of them. Run after 005.
 `017-customer-file-keys.sql` adds CUSTOMER_ENCRYPTION_KEY and CUSTOMER_FILE_KEY: a customer sets their own key on the portal

@@ -24,7 +24,7 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
                     join version in db.ContractVersions on doc.ContractDocumentCurrentVersionId equals version.ContractVersionId
                     join employee in db.Employees on doc.EmployeeId equals employee.EmployeeId
                     join customer in db.Customers on doc.CustomerId equals customer.CustomerId
-                    where doc.TenantId == null && (actor.CanManageAll || doc.EmployeeId == actor.Id)
+                    where doc.TenantId == null && (actor.CanManageContractWorkflow || doc.EmployeeId == actor.Id)
                     && db.ContractDynamicValues.Any(v => v.ContractDocumentId == doc.ContractDocumentId && v.ContractVersionId == doc.ContractDocumentCurrentVersionId && v.FieldKey == InternalRepository.SnapshotKey)
                     select new { doc, version, employee.EmployeeDisplayName, customer.CustomerDisplayName };
         if (filter.OwnerId.HasValue) query = query.Where(x => x.doc.EmployeeId == filter.OwnerId);
@@ -97,12 +97,10 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
                     entered = uploaded;
                 }
             }
-            var department = stage switch { "OFFICE" or "FINAL_CHECK" => "Hành chính", "CUSTOMER" => "Khách hàng", "SIGNATURE" => "Sếp ký, rồi khách ký", "CLOSED" => "Đã đóng", _ => "Sale" };
-            if (stage == "PAPER_SIGNATURE") department = "Hai bên ký giấy";
-            if (stage == "PAPER_REVIEW") department = "Hành chính";
-            var mine = stage switch { "OFFICE" or "FINAL_CHECK" => actor.CanCheck, "SIGNATURE" => actor.CanApprove, "DRAFT" or "RETURNED" or "APPROVED" or "CHANGES" => actor.CanWrite && doc.EmployeeId == actor.Id, _ => false };
-            if (stage == "PAPER_SIGNATURE") mine = actor.CanCheck || actor.CanApprove || (actor.CanWrite && doc.EmployeeId == actor.Id);
-            if (stage == "PAPER_REVIEW") mine = actor.CanCheck;
+            var department = stage switch { "OFFICE" or "RETURNED" => "Hành chính", "DIRECTOR" or "FINAL_CHECK" => "Sếp", "CUSTOMER" => "Khách hàng", "SIGNATURE" => "Các bên ký",
+                "PAPER_SIGNATURE" => "Hai bên ký giấy", "PAPER_REVIEW" => "Hành chính", "CLOSED" => "Đã đóng", _ => "Sale" };
+            var mine = stage switch { "OFFICE" or "RETURNED" or "PAPER_REVIEW" => actor.CanReviewLegal, "DIRECTOR" or "FINAL_CHECK" => actor.CanApprove, "DRAFT" or "APPROVED" or "CHANGES" => actor.CanWrite && doc.EmployeeId == actor.Id,
+                "PAPER_SIGNATURE" => actor.CanReviewLegal || actor.CanApprove || (actor.CanWrite && doc.EmployeeId == actor.Id), _ => false };
             if (filter.Mine && !mine || filter.WaitingDays.HasValue && (entered is null || now - entered < TimeSpan.FromDays(filter.WaitingDays.Value))) continue;
             var config = checklists.GetValueOrDefault(version.ContractVersionId);
             var configured = config?.Configured ?? false;

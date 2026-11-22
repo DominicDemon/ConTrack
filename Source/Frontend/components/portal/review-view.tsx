@@ -103,8 +103,8 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
         onClick={() => { setDecision("REQUEST_CHANGES"); setNote(""); }}><PenLine size={16}/>Gửi yêu cầu sửa{mine ? ` (${mine} góp ý)` : ""}</button>
       {mine > 0 && <p className={s.muted} style={{ flexBasis: "100%" }}>Bạn đã góp ý cho phiên bản này nên không chọn Đồng ý. Bấm Gửi yêu cầu sửa để nhân viên chỉnh lại hợp đồng.</p>}
       <button className={ui.secondaryButton} disabled={busy} onClick={() => { setDecision("REJECT"); setNote(""); }}><XCircle size={16}/>Từ chối</button></div>}
-    <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", alignItems: "start" }}>
-      {!electronicReview && preview}
+    {!electronicReview && <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 380px), 1fr))", alignItems: "start" }}>
+      {preview}
       {!approved && <section className={ui.card} aria-label="Góp ý và yêu cầu sửa theo mục"><h2 style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 16 }}><MessageSquare size={18}/>Góp ý / yêu cầu sửa theo mục</h2>
         {open && <p className={s.muted} style={{ marginTop: 4 }}>Chọn mục cần sửa (thông tin các bên, hạng mục, thanh toán, từng điều khoản…), ghi nội dung rồi bấm Thêm góp ý. Khi xong, bấm Gửi yêu cầu sửa.</p>}
         {targets.map(group => {
@@ -129,7 +129,7 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
           <label className={s.label}>Góp ý / nội dung cần sửa<Textarea maxLength={4000} value={comment} onChange={e => setComment(e.target.value)} placeholder="Ví dụ: Đề nghị sửa đơn giá hạng mục 2 thành…"/></label>
           <button className={ui.secondaryButton} disabled={busy || !comment.trim()} onClick={() => void sendComment()}>Thêm góp ý</button></div>}
       </section>}
-    </div>
+    </div>}
     <Dialog open={!!decision} onOpenChange={v => { if (!busy && !v) setDecision(null); }}><DialogContent>
       {decision && <><DialogHeader><DialogTitle>{decisions[decision].title}</DialogTitle><DialogDescription>{decisions[decision].description}</DialogDescription></DialogHeader>
         <label className="grid gap-2 text-sm font-medium">{decisions[decision].note}<Textarea maxLength={4000} value={note} disabled={busy} onChange={e => setNote(e.target.value)}/></label>

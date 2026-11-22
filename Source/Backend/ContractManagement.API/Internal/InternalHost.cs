@@ -47,7 +47,6 @@ public static class InternalHost
         builder.Services.AddScoped<ContractNumberRules>();
         builder.Services.AddScoped<IInternalRepository>(services => services.GetRequiredService<InternalRepository>());
         builder.Services.AddScoped<InternalDraftService>();
-        builder.Services.AddScoped<InternalSigningDemoService>();
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
         builder.Services.AddScoped<InternalWordDocument>();
         builder.Services.AddScoped<InternalWordTemplates>();
@@ -67,6 +66,8 @@ public static class InternalHost
         builder.Services.AddScoped<ICustomerSigningService, CustomerSigningService>();
         builder.Services.AddScoped<IElectronicSigningPdfService, ContractManagement.Infrastructure.Files.ElectronicSigningPdfService>();
         builder.Services.AddScoped<ICustomerPortalRepository, CustomerPortalRepository>();
+        builder.Services.AddSingleton<CustomerProfileGuards>();
+        builder.Services.AddScoped<CustomerProfileService>();
         builder.Services.AddScoped<SmsCallbackProcessor>();
         builder.Services.AddOptions<EsmsOptions>().Bind(builder.Configuration.GetSection("Esms"))
             .Validate(o => !o.Enabled || (!string.IsNullOrWhiteSpace(o.ApiKey) && !string.IsNullOrWhiteSpace(o.SecretKey)
@@ -340,12 +341,20 @@ public static class InternalHost
             var c = invocation.HttpContext;
             var user = await User(c, c.RequestServices.GetRequiredService<IInternalRepository>(), c.RequestAborted);
             RequirePasswordChanged(user);
-            if (!user.CanWrite && !user.CanCheck && !user.CanApprove && !user.CanManageTemplates) throw new InternalAppException(403, "Bạn không có quyền sử dụng chức năng hợp đồng.");
-            var path = c.Request.Path.Value ?? "";
+            var path = (c.Request.Path.Value ?? "").TrimEnd('/').ToLowerInvariant();
             var canSign = user.CanApprove && c.GetEndpoint()?.Metadata.GetMetadata<CompanySigningAction>() is not null;
+            var legalContractRead = user.CanManageLegal && HttpMethods.IsGet(c.Request.Method)
+                && (path is "/api/internal/contract-drafts" or "/api/internal/contract-progress" or "/api/internal/contract-archive"
+                    or "/api/internal/contract-signing-monitor" or "/api/internal/company-signing/queue" or "/api/internal/contract-templates"
+                    || System.Text.RegularExpressions.Regex.IsMatch(path,
+                        @"^/api/internal/(contract-drafts/\d+(/(approval|internal-approval|internal-comments|checklist|reviews|versions|word/content|print-pdf))?|contract-signing-monitor/\d+|company-signing/\d+/document|contract-templates/\d+(/checklist)?)$"));
+            var legalWorkflowAction = user.CanManageLegal && HttpMethods.IsPost(c.Request.Method)
+                && System.Text.RegularExpressions.Regex.IsMatch(path,
+                    @"^/api/internal/(contract-drafts/\d+/(approval/(approve|return)|internal-approval|internal-comments|checklist|start-signing)|contract-comments/\d+/resolve)$");
+            if (!user.CanWrite && !user.CanCheck && !user.CanApprove && !user.CanManageTemplates && !legalContractRead && !legalWorkflowAction)
+                throw new InternalAppException(403, "Bạn không có quyền sử dụng chức năng hợp đồng.");
             if (!HttpMethods.IsGet(c.Request.Method) && !user.CanWrite && !user.CanCheck && !user.CanManageTemplates
-                && !canSign
-                && !path.Contains("/approval/") && !path.EndsWith("/internal-approval") && !path.EndsWith("/internal-comments") && !path.EndsWith("/word-preview"))
+                && !legalWorkflowAction && !canSign && !path.Contains("/approval/") && !path.EndsWith("/internal-approval") && !path.EndsWith("/internal-comments") && !path.EndsWith("/word-preview"))
                 throw new InternalAppException(403, "Bạn chỉ có quyền xem và duyệt hồ sơ.");
             if (path.StartsWith("/api/internal/contract-templates/") && (path.EndsWith("/extract") || path.EndsWith("/preview") || path.EndsWith("/activate") || path.EndsWith("/import")) && !user.CanManageTemplates)
                 throw new InternalAppException(403, "Chỉ Hành chính được quản lý mẫu hợp đồng.");
@@ -491,14 +500,11 @@ public static class InternalHost
         });
         secured.MapGet("/contract-drafts", async (string? search, string? ownerId, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
-            var user = Current(c); long? owner = user.CanManageAll ? null : user.Id;
-            if (!string.IsNullOrEmpty(ownerId)) { if (!user.CanManageAll) throw new InternalAppException(403, "Không được lọc nháp của nhân viên khác.");
+            var user = Current(c); long? owner = user.CanManageContractWorkflow ? null : user.Id;
+            if (!string.IsNullOrEmpty(ownerId)) { if (!user.CanManageContractWorkflow) throw new InternalAppException(403, "Không được lọc nháp của nhân viên khác.");
                 if (!long.TryParse(ownerId, out var parsed) || parsed <= 0) throw new ArgumentException("Nhân viên không hợp lệ."); owner = parsed; }
             return Results.Ok(await r.Drafts(owner, search, status, ct, partyType));
         });
-        secured.MapGet("/contract-signing-demo/availability", (IHostEnvironment environment) => Results.Ok(new { available = environment.IsDevelopment() }));
-        secured.MapPost("/contract-signing-demo", async (HttpContext c, InternalSigningDemoService demo, CancellationToken ct) =>
-            Results.Ok(await demo.Create(Current(c), ct)));
         secured.MapGet("/signed-contracts", async (string? search, int? page, long? documentId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
             Results.Ok(await signing.SignedContracts(Current(c), search, page ?? 1, ct, documentId)));
         var signedPayments = secured.MapGroup("/signed-contracts/{documentId:long}/versions/{versionId:long}/payments");
@@ -518,17 +524,17 @@ public static class InternalHost
         });
         secured.MapGet("/contract-archive", async (string? search, int? status, string? partyType, DateTime? createdFrom, DateTime? createdTo, int? limit, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
-            if (!Current(c).CanManageAll) throw new InternalAppException(403, "Kho hợp đồng chỉ dành cho quản trị viên công ty.");
+            if (!Current(c).CanManageContractWorkflow) throw new InternalAppException(403, "Bạn không có quyền xem kho hợp đồng.");
             return Results.Ok(await r.ContractArchive(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType, createdFrom, createdTo, limit ?? 200));
         });
         secured.MapGet("/contract-signing-monitor", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
-            if (!Current(c).CanManageAll) throw new InternalAppException(403, "Theo dõi ký chỉ dành cho quản trị viên công ty.");
+            if (!Current(c).CanManageContractWorkflow) throw new InternalAppException(403, "Bạn không có quyền theo dõi ký.");
             return Results.Ok(await r.SigningMonitor(string.IsNullOrWhiteSpace(search) ? null : search.Trim(), status, ct, partyType));
         });
         secured.MapGet("/contract-signing-monitor/{id:long}", async (long id, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
-            if (!Current(c).CanManageAll) throw new InternalAppException(403, "Theo dõi ký chỉ dành cho quản trị viên công ty.");
+            if (!Current(c).CanManageContractWorkflow) throw new InternalAppException(403, "Bạn không có quyền theo dõi ký.");
             return await r.SigningMonitorDetail(id, ct) is { } detail ? Results.Ok(detail) : Results.NotFound();
         });
         secured.MapGet("/contract-drafts/{id:long}", async (long id, HttpContext c, InternalDraftService s, CancellationToken ct) => Results.Ok(await s.Get(id, Current(c), ct)));
@@ -543,8 +549,16 @@ public static class InternalHost
             var approval = await r.InternalApproval(id, Current(c), ct);
             return approval is null ? Results.Content("null", "application/json") : Results.Ok(approval);
         });
-        secured.MapPost("/contract-drafts/{id:long}/internal-approval", async (long id, InternalApprovalDecisionRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
-            Results.Ok(await r.ResolveInternalApproval(id, input, Current(c), ct)));
+        secured.MapPost("/contract-drafts/{id:long}/internal-approval", async (long id, InternalApprovalDecisionRequest input, HttpContext c, IContractReviewRepository r, IInternalSigningService signing, CancellationToken ct) =>
+        {
+            var actor = Current(c);
+            var state = await r.ResolveInternalApproval(id, input, actor, ct);
+            if (!input.Approve) return Results.Ok(state);
+            var signingSession = await signing.StartAfterFinalApproval(id, actor, ct);
+            return Results.Ok(state with { SigningStarted = signingSession is not null });
+        });
+        secured.MapPost("/contract-drafts/{id:long}/ensure-signing", async (long id, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.StartAfterFinalApproval(id, Current(c), ct)));
         secured.MapGet("/company-signing/queue", async (HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
             Results.Ok(await signing.Queue(Current(c), ct)));
         secured.MapPost("/contract-drafts/{id:long}/start-signing", async (long id, StartCompanySigningRequest input, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>

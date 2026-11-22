@@ -98,6 +98,7 @@ INSERT INTO @grants VALUES
     ('INTERNAL_FINANCE_MANAGER', 'finance.manage'), ('INTERNAL_FINANCE_MANAGER', 'contract.read'), ('INTERNAL_FINANCE_MANAGER', 'payment.approve'),
     ('INTERNAL_LEGAL', 'template.read'), ('INTERNAL_LEGAL', 'legal.manage'), ('INTERNAL_LEGAL', 'contract.read'),
     ('INTERNAL_LEGAL_MANAGER', 'template.read'), ('INTERNAL_LEGAL_MANAGER', 'legal.manage'), ('INTERNAL_LEGAL_MANAGER', 'contract.read'),
+    ('INTERNAL_LEGAL', 'contract.check'), ('INTERNAL_LEGAL_MANAGER', 'contract.check'),
     ('INTERNAL_LEGAL_MANAGER', 'template.manage'),
     -- Hỗ trợ: ticket chỉ gửi tới 3 phòng (Kỹ thuật, Kế toán, Hành chính - Pháp chế); trưởng phòng phân công trong phòng mình.
     ('INTERNAL_FINANCE', 'ticket.handle'), ('INTERNAL_FINANCE_MANAGER', 'ticket.handle'), ('INTERNAL_FINANCE_MANAGER', 'ticket.manage.all'),

@@ -13,7 +13,7 @@ public class DraftSendCompletenessTests
         var issues = DraftValidation.SendIssues(draft);
         Assert.Contains(issues, i => i.Path == "fields.CUSTOMER_ADDRESS");
         Assert.DoesNotContain(issues, i => i.Path.StartsWith("fields.PROVIDER_"));
-        Assert.Single(issues.Where(i => i.Path == "terms"));
+        Assert.Single(issues, i => i.Path == "terms");
         foreach (var field in DraftCompletionPolicy.PartyFields.Where(f => f.Required && f.Key.StartsWith("CUSTOMER_")))
             draft.Fields[field.Key] = "Đã bổ sung";
         draft.Terms[1] = draft.Terms[1] with { Content = "Cung cấp phần mềm theo phụ lục." };

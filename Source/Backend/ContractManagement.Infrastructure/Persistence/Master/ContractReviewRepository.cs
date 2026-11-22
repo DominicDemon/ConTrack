@@ -12,7 +12,6 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 public sealed class ContractReviewRepository(
     MasterDbContext db,
     IInternalRepository drafts,
-    SmsOutboxWriter sms,
     ReviewLinkMailer mailer,
     IConfiguration config,
     InternalApprovalService approval,
@@ -220,7 +219,7 @@ public sealed class ContractReviewRepository(
                 .Where(x => x.ApprovalWorkflowId == approval.ApprovalWorkflowId)
                 .Select(x => x.ApprovalWorkflowName).FirstOrDefaultAsync(ct) ?? "Kiểm tra nội bộ";
             return new InternalApprovalState(approval.ContractApprovalRequestId, approval.ContractApprovalRequestStatus,
-                approval.SubmittedAt, workflowName, approval.ContractApprovalRequestDecisioncomment, true);
+                approval.SubmittedAt, workflowName, approval.ContractApprovalRequestDecisioncomment, false);
         }, ct);
         // After the commit: tell the customer the company's decision on the version they agreed to.
         if (customerMail is not null)

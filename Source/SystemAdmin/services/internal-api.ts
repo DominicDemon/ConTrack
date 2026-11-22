@@ -1,5 +1,5 @@
 import { requiredPartyFields } from "../../Shared/draft-validation";
-export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean; canCheck: boolean; canApprove: boolean; canManageTemplates: boolean; canManageEmployees: boolean; mustChangePassword: boolean; department: string | null; isManager: boolean };
+export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canManageLegal: boolean; canWrite: boolean; canCheck: boolean; canApprove: boolean; canManageTemplates: boolean; canManageEmployees: boolean; mustChangePassword: boolean; department: string | null; isManager: boolean };
 export type EmployeeAdminRow = { id: string; code: string; username: string; name: string; email: string | null; phone: string | null; status: "ACTIVE" | "LOCKED" | string; mustChangePassword: boolean; lastLoginAt: string | null; departmentId: string | null; isManager: boolean };
 /** staffPermissions is null when the department has a manager only (Ban Giám Đốc). */
 export type DepartmentOption = { id: string; code: string; name: string; staffPermissions: string[] | null; managerPermissions: string[]; managerId: string | null; managerName: string | null };

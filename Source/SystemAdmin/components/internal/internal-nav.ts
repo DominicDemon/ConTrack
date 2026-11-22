@@ -45,6 +45,19 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Hỗ trợ khách hàng", icon: LifeBuoy, href: "/workspace/support-tickets", permissions: ["ticket.handle", "ticket.manage.all"] },
 ];
 
+/** The legal role receives only existing contract workflow screens, based on its assigned permission. */
+const ADMIN_OFFICER_NAV_ITEMS: NavItem[] = [
+  { label: "Tổng quan", icon: LayoutDashboard, href: "/workspace", permissions: [] },
+  { label: "Hợp đồng cần xử lý", icon: Files, href: "/workspace/contracts/drafts", permissions: ["legal.manage"] },
+  { label: "Kho hợp đồng", icon: Archive, href: "/workspace/contracts/archive", permissions: ["contract.read", "legal.manage"] },
+  { label: "Theo dõi ký", icon: Activity, href: "/workspace/contracts/signing", permissions: ["contract.read", "legal.manage"] },
+  { label: "Chờ Admin ký", icon: FileSignature, href: "/workspace/contracts/company-signing", permissions: ["legal.manage"] },
+  { label: "Mẫu hợp đồng", icon: Files, href: "/workspace/templates", permissions: ["template.read", "template.manage"] },
+  { label: "Hỗ trợ khách hàng", icon: LifeBuoy, href: "/workspace/support-tickets", permissions: ["ticket.handle", "ticket.manage.all"] },
+];
+
 /** Screens a set of permissions opens, in menu order. */
-export const screensFor = (permissions: string[]) =>
-  NAV_ITEMS.filter(item => item.permissions.length === 0 || item.permissions.some(p => permissions.includes(p)));
+export const screensFor = (permissions: string[]) => {
+  const items = permissions.includes("legal.manage") ? ADMIN_OFFICER_NAV_ITEMS : NAV_ITEMS;
+  return items.filter(item => item.permissions.length === 0 || item.permissions.some(p => permissions.includes(p)));
+};

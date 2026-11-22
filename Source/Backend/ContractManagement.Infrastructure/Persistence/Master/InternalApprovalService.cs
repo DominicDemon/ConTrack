@@ -46,7 +46,7 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
         if (reviewStatus is not null && version.ContractVersionIslocked && stage == "APPROVED") stage = "CUSTOMER_" + reviewStatus;
         return new(stage, approval is null ? null : Convert.ToBase64String(approval.ContractApprovalRequestRowversion),
             actor.CanWrite && !version.ContractVersionIslocked && stage is "DRAFT" or "RETURNED",
-            stage == "OFFICE" && actor.CanCheck, history);
+            stage == "OFFICE" && actor.CanReviewLegal || stage == "DIRECTOR" && actor.CanApprove, history);
     }
 
     public async Task Act(long id, string action, ApprovalAction input, InternalUser actor, CancellationToken ct)
@@ -79,9 +79,8 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
             {
                 if (approval is null) throw new InternalAppException(409, "Hợp đồng chưa trình duyệt.");
                 ReviewData.Expect(approval.ContractApprovalRequestRowversion, input.ApprovalRowVersion);
-                // Only Hành chính decides before the contract goes to the customer; Sếp signs later and does not approve.
-                if (!(approval.InternalStage == "OFFICE" && actor.CanCheck))
-                    throw new InternalAppException(403, "Chỉ Hành chính duyệt hợp đồng trước khi gửi khách.");
+                if (!(approval.InternalStage == "OFFICE" && actor.CanReviewLegal || approval.InternalStage == "DIRECTOR" && actor.CanApprove))
+                    throw new InternalAppException(403, "Không đúng quyền hoặc thứ tự duyệt.");
                 if (approval.InternalContentHash != await ContentHash(id, version.ContractVersionId, ct)) throw new InternalAppException(409, "Nội dung đã thay đổi, cần trình lại.");
                 if (action == "return")
                 {
@@ -136,7 +135,7 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
             var now = DateTime.UtcNow;
             if (input.ResolveId is not null)
             {
-                if (!actor.CanCheck) throw new InternalAppException(403, "Chỉ Hành chính được xử lý nhận xét.");
+                if (!actor.CanReviewLegal) throw new InternalAppException(403, "Chỉ Hành chính được xử lý nhận xét.");
                 if (!await db.AuditLogs.AnyAsync(a => a.AuditLogId == input.ResolveId && a.EntityName == Entity && a.EntityId == id.ToString() && a.ActionType == "COMMENT", ct))
                     throw new InternalAppException(404, "Không tìm thấy nhận xét.");
                 Audit(id, actor, "RESOLVE", new { version = version.ContractVersionVersionNo, termKey = (string?)null, note = "", resolveId = input.ResolveId }, now);

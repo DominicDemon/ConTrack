@@ -81,6 +81,7 @@ public class InternalApprovalTests
             Assert.Matches("^" + provider.CompanyCode + "-" + provider.TypeCode + (provider.IncludeDay ? @"-\d{8}" : @"-\d{6}") + @"-\d{6,}$", draft.Code);
         else Assert.Matches(@"^HD-\d{8}-\d{6,}$", draft.Code);
         Assert.Equal(draft.Code, draft.Content.ContractNumber);
+        Assert.True(draft.Content.UseTimesNewRoman);
         async Task<ApprovalAction> Input(string? note = null)
         {
             draft = (await repository.Draft(draft.Id, default))!;
@@ -143,6 +144,8 @@ public class InternalApprovalTests
         {
             Assert.Contains("APPROVED WORD VERSION 1", pdf.GetPage(1).Text);
             Assert.Contains(draft.Code, pdf.GetPage(1).Text);
+            Assert.All(pdf.GetPage(1).Letters.Where(letter => letter.Value.Any(char.IsLetter)), letter =>
+                Assert.Contains("TimesNewRoman", letter.FontName?.Replace(" ", "") ?? "", StringComparison.OrdinalIgnoreCase));
         }
         Assert.Equal(404, (await Assert.ThrowsAsync<InternalAppException>(() => word.CustomerWord(sent.Id, -1, false, default))).Status);
         var accountMailbox = new Mailbox();

@@ -2,6 +2,7 @@ using ContractManagement.Application.Features.Internal;
 using ContractManagement.Domain.Entities.Master;
 using ContractManagement.Infrastructure.Persistence.Master;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace ContractManagement.Tests.Infrastructure;
 
@@ -12,7 +13,9 @@ public sealed class CustomerLookupTests
 
     private static MasterDbContext Seed()
     {
-        var db = new MasterDbContext(new DbContextOptionsBuilder<MasterDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
+        var db = new MasterDbContext(new DbContextOptionsBuilder<MasterDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)).Options);
         db.Customers.AddRange(
             new Customer { CustomerId = 1, CustomerDisplayName = "Nguyễn An", CustomerEmail = "an@x.vn", CustomerPersonalPhone = "0901234567", CustomerPasswordHash = "x", CustomerStatus = 1 },
             new Customer { CustomerId = 2, CustomerDisplayName = "Khách khóa", CustomerEmail = "locked@x.vn", CustomerPersonalPhone = "0907654321", CustomerPasswordHash = "x", CustomerStatus = 0 });
@@ -61,5 +64,35 @@ public sealed class CustomerLookupTests
         Assert.Equal(("Công ty B", 11L), (entity!.Customer.Fields["CUSTOMER_COMPANY"], entity.BusinessId));
         Assert.Null((await Repo(db).CustomerProfileFor(1, 999, default))!.BusinessId);   // unknown entity: the person
         Assert.Null(await Repo(db).CustomerProfileFor(2, null, default));                // locked customer
+    }
+
+    [Fact]
+    public async Task CreatingBusinessReturnsTheLegalEntityReadyToSelectInDraft()
+    {
+        await using var db = Seed();
+        var repo = Repo(db);
+        var created = await repo.CreateCustomer(new("Trần Bình", "0914567890", "binh@x.vn",
+            "Công ty Bình", "0104567890", "Hà Nội", "BUSINESS"), 1, default);
+
+        Assert.NotNull(created.BusinessId);
+        var persisted = await repo.CustomerProfileFor(created.Id, created.BusinessId, default);
+        Assert.Equal(created.BusinessId, persisted!.BusinessId);
+        Assert.Equal("Công ty Bình", created.Fields["CUSTOMER_COMPANY"]);
+        Assert.Equal("Trần Bình", created.Fields["CUSTOMER_CONTACT_NAME"]);
+        Assert.Equal("0104567890", created.Fields["CUSTOMER_TAX_CODE"]);
+    }
+
+    [Fact]
+    public async Task CreatingCustomerValidatesTheSelectedType()
+    {
+        await using var db = Seed();
+        var repo = Repo(db);
+        var input = new CustomerInput("Trần Bình", "0914567890", null, "Công ty Bình", null, null, "BUSINESS");
+        await Assert.ThrowsAsync<ArgumentException>(() => repo.CreateCustomer(input, 1, default));
+        await Assert.ThrowsAsync<ArgumentException>(() => repo.CreateCustomer(input with { PartyType = "PERSON" }, 1, default));
+
+        var person = await repo.CreateCustomer(input with { PartyType = "PERSON", Company = null }, 1, default);
+        Assert.Null(person.BusinessId);
+        Assert.Empty(await repo.Businesses(person.Id, default));
     }
 }

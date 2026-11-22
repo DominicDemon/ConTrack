@@ -79,8 +79,8 @@ public static class EmployeeAdminRules
         + System.Security.Cryptography.RandomNumberGenerator.GetString("23456789", 4);
 }
 public sealed record CustomerLookupResult(CustomerOption Customer, long? BusinessId, string? BusinessName);
-public sealed record CustomerOption(long Id, string Name, string Phone, Dictionary<string, string> Fields);
-public sealed record CustomerInput(string Name, string Phone, string? Email, string? Company, string? TaxCode, string? Address);
+public sealed record CustomerOption(long Id, string Name, string Phone, Dictionary<string, string> Fields, long? BusinessId = null);
+public sealed record CustomerInput(string Name, string Phone, string? Email, string? Company, string? TaxCode, string? Address, string? PartyType = null);
 public sealed record BusinessInput(string Name, string TaxCode, string Address, string Representative);
 public sealed record BusinessOption(long Id, string Name, string TaxCode, string Address, string Representative);
 public sealed record ProductOption(long Id, string Name, decimal Price);

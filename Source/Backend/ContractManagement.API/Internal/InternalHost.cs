@@ -441,11 +441,13 @@ public static class InternalHost
         secured.MapPost("/contract-drafts/word-preview", async (WordDraftPreview input, HttpContext c,
             InternalDraftService drafts, IInternalRepository repository, InternalWordTemplates service, CancellationToken ct) =>
         {
-            var template = input.DraftId.HasValue
-                ? (await drafts.Get(input.DraftId.Value, Current(c), ct)).Content.TemplateSnapshot
+            var draft = input.DraftId.HasValue ? await drafts.Get(input.DraftId.Value, Current(c), ct) : null;
+            var template = draft is not null
+                ? draft.Content.TemplateSnapshot
                 : (await repository.Templates(ct)).SingleOrDefault(t => t.Id == input.Content.TemplateId);
             if (template is null) throw new ArgumentException("Không tìm thấy mẫu hợp đồng.");
-            var previewContent = input.DraftId.HasValue ? (await drafts.Get(input.DraftId.Value, Current(c), ct)).Content : input.Content;
+            var previewContent = draft?.Content ?? input.Content;
+            if (draft is null || draft.CanEdit) previewContent.UseTimesNewRoman = true;
             var bytes = await service.Render(previewContent, template, input.Pdf, ct);
             return Results.Ok(new { base64 = Convert.ToBase64String(bytes), contentType = input.Pdf ? "application/pdf" : InternalWordDocument.Mime });
         });

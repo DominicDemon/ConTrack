@@ -213,6 +213,12 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         if (email.Length > 0 && !System.Net.Mail.MailAddress.TryCreate(email, out _)) throw new ArgumentException("Email không hợp lệ.");
         var company = InternalDraftPolicy.Text(input.Company, 1000);
         var tax = InternalDraftPolicy.Text(input.TaxCode, 20);
+        if (input.PartyType is not (null or InternalDraftPolicy.Person or InternalDraftPolicy.Business))
+            throw new ArgumentException("Chọn loại khách hàng: Cá nhân hoặc Doanh nghiệp.");
+        if (input.PartyType == InternalDraftPolicy.Person && (company.Length > 0 || tax.Length > 0))
+            throw new ArgumentException("Hồ sơ cá nhân không nhận thông tin pháp nhân khi tạo.");
+        if (input.PartyType == InternalDraftPolicy.Business && (company.Length == 0 || tax.Length == 0))
+            throw new ArgumentException("Nhập tên pháp lý và mã số thuế doanh nghiệp.");
         if (company.Length > 0 && tax.Length == 0) throw new ArgumentException("Thông tin doanh nghiệp cần mã số thuế.");
         if (await db.Customers.AnyAsync(c => c.CustomerPersonalPhone == phone || c.CustomerDisplayName == name || (email != "" && c.CustomerEmail == email), ct))
             throw new InternalAppException(409, "Khách hàng đã có trong hệ thống (trùng tên, SĐT hoặc email). Không thấy trong danh sách của bạn thì liên hệ Phòng Hành Chính - Pháp Chế để được chuyển khách.");
@@ -226,13 +232,21 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             customer.CustomerPasswordHash = new PasswordHasher<Customer>().HashPassword(customer, Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)));
             db.Customers.Add(customer);
             await db.SaveChangesAsync(ct);
-            if (company.Length > 0) db.CustomerBusinesses.Add(new CustomerBusiness { CustomerId = customer.CustomerId,
-                CustomerBusinessLegalName = company, CustomerBusinessCompanyTaxIdentifier = tax, CustomerBusinessOfficeAddress = customer.CustomerAddress,
-                CreatedAt = DateTime.UtcNow, CreatedBy = actor });
+            CustomerBusiness? business = null;
+            if (company.Length > 0)
+            {
+                business = new CustomerBusiness { CustomerId = customer.CustomerId,
+                    CustomerBusinessLegalName = company, CustomerBusinessCompanyTaxIdentifier = tax, CustomerBusinessOfficeAddress = customer.CustomerAddress,
+                    CustomerBusinessRepresentativeName = input.PartyType == InternalDraftPolicy.Business ? name : null,
+                    CreatedAt = DateTime.UtcNow, CreatedBy = actor };
+                db.CustomerBusinesses.Add(business);
+            }
             db.AuditLogs.Add(new AuditLog { ActionType = "CREATE", EntityName = "CUSTOMER", EntityId = customer.CustomerId.ToString(), ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow });
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
-            return (await Customer(customer.CustomerId, ct))!;
+            return input.PartyType == InternalDraftPolicy.Business && business is not null
+                ? BusinessProfile(customer, business).Customer with { BusinessId = business.CustomerBusinessId }
+                : CustomerProfile(customer);
         });
     }
     public Task<List<ProductOption>> Products(string? search, CancellationToken ct) => db.Products.AsNoTracking()
@@ -504,6 +518,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     }
     public async Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct)
     {
+        request.Content.UseTimesNewRoman = true;
         string? wordKey = null;
         byte[]? edited = null;
         try

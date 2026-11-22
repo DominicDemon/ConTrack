@@ -435,6 +435,55 @@ public sealed class InternalWordDocument(IConfiguration configuration)
         }
     }
 
+    internal static byte[] StandardizeContractFont(byte[] bytes)
+    {
+        using var stream = new MemoryStream();
+        stream.Write(bytes);
+        stream.Position = 0;
+        using (var doc = WordprocessingDocument.Open(stream, true))
+        {
+            var main = doc.MainDocumentPart!;
+            var stylePart = main.StyleDefinitionsPart ?? main.AddNewPart<StyleDefinitionsPart>();
+            var styles = stylePart.Styles ??= new Styles();
+            var defaults = styles.GetFirstChild<DocDefaults>() ?? styles.PrependChild(new DocDefaults());
+            var defaultRun = defaults.GetFirstChild<RunPropertiesDefault>() ?? defaults.PrependChild(new RunPropertiesDefault());
+            var defaultsBase = defaultRun.GetFirstChild<RunPropertiesBaseStyle>() ?? defaultRun.AppendChild(new RunPropertiesBaseStyle());
+            defaultsBase.RunFonts = ContractFonts();
+
+            var parts = new List<OpenXmlPart> { main, stylePart };
+            parts.AddRange(main.HeaderParts);
+            parts.AddRange(main.FooterParts);
+            parts.AddRange(new OpenXmlPart?[] { main.FootnotesPart, main.EndnotesPart, main.WordprocessingCommentsPart, main.NumberingDefinitionsPart }.OfType<OpenXmlPart>());
+            foreach (var part in parts)
+            {
+                if (part.RootElement is not { } root) continue;
+                foreach (var fonts in root.Descendants<RunFonts>().ToList())
+                {
+                    // A bullet label can be a private-use character mapped by Symbol or Wingdings.
+                    if (part is NumberingDefinitionsPart && fonts.Ancestors<Level>().FirstOrDefault() is { } level
+                        && level.NumberingFormat?.Val?.Value == NumberFormatValues.Bullet
+                        && (level.LevelText?.Val?.Value?.Any(c => char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.PrivateUse) == true
+                            || fonts.GetAttributes().Any(a => Regex.IsMatch(a.Value ?? "", @"\A(?:Symbol|Webdings|Wingdings(?: [23])?)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))))
+                        continue;
+                    fonts.InsertAfterSelf(ContractFonts());
+                    fonts.Remove();
+                }
+                foreach (var run in root.Descendants<Run>().Where(r => r.Elements<Text>().Any()))
+                {
+                    run.RunProperties ??= new RunProperties();
+                    run.RunProperties.RunFonts ??= ContractFonts();
+                }
+            }
+        }
+        return stream.ToArray();
+    }
+
+    private static RunFonts ContractFonts() => new()
+    {
+        Ascii = DraftContent.ContractFont, HighAnsi = DraftContent.ContractFont,
+        EastAsia = DraftContent.ContractFont, ComplexScript = DraftContent.ContractFont
+    };
+
     public static byte[] Fill(byte[] bytes, IReadOnlyDictionary<string, string> values, bool preserveUnknown = false)
     {
         using var stream = new MemoryStream();

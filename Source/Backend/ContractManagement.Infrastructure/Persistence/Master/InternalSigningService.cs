@@ -514,13 +514,14 @@ public sealed class InternalSigningService(
         var muted = XColor.FromArgb(70, 78, 82);
         var border = XColor.FromArgb(184, 198, 198);
         var pale = XColor.FromArgb(242, 248, 246);
-        var titleFont = new XFont("Times New Roman", 17, XFontStyleEx.Bold);
-        var headingFont = new XFont("Times New Roman", 13, XFontStyleEx.Bold);
-        var bodyFont = new XFont("Times New Roman", 13, XFontStyleEx.Regular);
-        var smallFont = new XFont("Times New Roman", 11, XFontStyleEx.Regular);
-        var labelFont = new XFont("Times New Roman", 13, XFontStyleEx.Bold);
-        var italicFont = new XFont("Times New Roman", 13, XFontStyleEx.Italic);
-        var labelItalicFont = new XFont("Times New Roman", 13, XFontStyleEx.BoldItalic);
+        var family = content.UseTimesNewRoman ? DraftContent.ContractFont : "Arial";
+        var titleFont = new XFont(family, 17, XFontStyleEx.Bold);
+        var headingFont = new XFont(family, 13, XFontStyleEx.Bold);
+        var bodyFont = new XFont(family, 13, XFontStyleEx.Regular);
+        var smallFont = new XFont(family, 11, XFontStyleEx.Regular);
+        var labelFont = new XFont(family, 13, XFontStyleEx.Bold);
+        var italicFont = new XFont(family, 13, XFontStyleEx.Italic);
+        var labelItalicFont = new XFont(family, 13, XFontStyleEx.BoldItalic);
         // Bilingual layout of the company's printed contracts: English first, Vietnamese (in italics) under or after it.
         var bilingual = content.LanguageMode == InternalDraftPolicy.Bilingual;
         string L(string vi, string en) => bilingual ? $"{en} / {vi}" : vi;
@@ -553,7 +554,7 @@ public sealed class InternalSigningService(
                 if (bilingual && !string.IsNullOrWhiteSpace(content.NameEn))
                 {
                     DrawCentered(content.NameEn, titleFont, new XSolidBrush(navy), y, 24); y += 22;
-                    DrawCentered(document.ContractDocumentName, new XFont("Times New Roman", 13, XFontStyleEx.BoldItalic), new XSolidBrush(navy), y, 20); y += 23;
+                    DrawCentered(document.ContractDocumentName, new XFont(family, 13, XFontStyleEx.BoldItalic), new XSolidBrush(navy), y, 20); y += 23;
                 }
                 else { DrawCentered(document.ContractDocumentName, titleFont, new XSolidBrush(navy), y, 24); y += 25; }
                 DrawCentered($"{L("Số", "No.")}: {document.ContractDocumentCode ?? $"HD-{document.ContractDocumentId}"}", smallFont, new XSolidBrush(muted), y, 13); y += 24;
@@ -737,7 +738,7 @@ public sealed class InternalSigningService(
         EnsureSpace(27);
         graphics.DrawLine(new XPen(border, 0.8), marginLeft + innerWidth * .55, y, marginLeft + innerWidth, y); y += 7;
         graphics.DrawString(L("TỔNG GIÁ TRỊ", "TOTAL"), labelFont, new XSolidBrush(navy), new XRect(marginLeft + innerWidth * .55, y, innerWidth * .23, 20), XStringFormats.TopLeft);
-        graphics.DrawString($"{FormatMoney(content.Totals.Total)} VND", new XFont("Times New Roman", 13, XFontStyleEx.Bold), new XSolidBrush(teal),
+        graphics.DrawString($"{FormatMoney(content.Totals.Total)} {currency}", new XFont(family, 13, XFontStyleEx.Bold), new XSolidBrush(teal),
             new XRect(marginLeft + innerWidth * .78, y, innerWidth * .22, 20), XStringFormats.TopRight);
         y += 27;
 

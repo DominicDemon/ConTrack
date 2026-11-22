@@ -16,6 +16,9 @@ public sealed record DraftItem(long? ProductId, string Name, decimal Quantity, d
 public sealed record DraftTotals(decimal Subtotal, decimal Discount, decimal Vat, decimal Total);
 public sealed class DraftContent
 {
+    public const string ContractFont = "Times New Roman";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool UseTimesNewRoman { get; set; }
     public int FormatVersion { get; set; } = 1;
     public string PartyType { get; set; } = "";
     public long? CustomerBusinessId { get; set; }

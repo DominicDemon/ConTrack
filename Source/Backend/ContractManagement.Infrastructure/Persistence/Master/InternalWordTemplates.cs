@@ -100,7 +100,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                 sample.Keys.Any(key => block.Text.Contains("{{" + key + "}}", StringComparison.Ordinal)))
                 ? InternalWordDocument.Fill(document, sample, preserveUnknown: true)
                 : document;
-        var pdf = await word.Pdf(previewDocument, ct);
+        var pdf = await word.Pdf(InternalWordDocument.StandardizeContractFont(previewDocument), ct);
         var receipt = new Receipt(actor, Fingerprint(input), Hash(InternalWordDocument.Decode(input.Base64)), Hash(document), DateTime.UtcNow.AddHours(2));
         var token = protector.Protect(JsonSerializer.Serialize(receipt));
         return new(Convert.ToBase64String(pdf), token);
@@ -248,6 +248,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         if (!string.Equals(extracted.SourceHash, source.WordSha256, StringComparison.OrdinalIgnoreCase))
             throw new InternalAppException(409, "Nguồn Word đã thay đổi.");
         var bytes = Prepare(input.Document, actor);
+        input.Content.UseTimesNewRoman = true;
         input.Content.Terms = source.Terms.ToList();
         var pdf = await RenderBytes(input.Content, source with { WordSha256 = Hash(bytes) }, bytes, true, ct);
         var token = protector.Protect(JsonSerializer.Serialize(new Receipt(actor, DraftSignature(input.Content, source, draftId), extracted.SourceHash, Hash(bytes), DateTime.UtcNow.AddMinutes(30))));
@@ -256,7 +257,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
     }
 
     private static string DraftSignature(DraftContent content, TemplateDefinition template, long? draftId) =>
-        Hash(JsonSerializer.SerializeToUtf8Bytes(new { draftId, template.Id, Values = PrintValues(content, template).OrderBy(p => p.Key, StringComparer.Ordinal) }));
+        Hash(JsonSerializer.SerializeToUtf8Bytes(new { draftId, template.Id, content.UseTimesNewRoman, Values = PrintValues(content, template).OrderBy(p => p.Key, StringComparer.Ordinal) }));
 
     internal byte[] ReviewedDocument(string token, long actor, TemplateDefinition template, long? draftId, DraftContent content)
     {
@@ -297,6 +298,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                 if (template.WordStorageKey is null || !string.Equals(template.WordSha256, receipt.SourceHash, StringComparison.OrdinalIgnoreCase))
                     throw new InternalAppException(409, "Bản Word đã thay đổi. Mở lại trình sửa để lấy bản mới.");
                 var terms = Sections(InternalWordDocument.Blocks(bytes));
+                content.UseTimesNewRoman = true;
                 content.TemplateSnapshot = template with { WordStorageKey = key, WordSha256 = Hash(bytes), ManualWordContent = true, Terms = terms };
                 content.Terms = terms;
                 var storedTerms = await db.ContractTerms.Where(t => t.ContractDocumentId == id && t.ContractVersionId == version.ContractVersionId).ToListAsync(ct);
@@ -360,7 +362,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
     }
     public async Task<byte[]> PreviewStoredWord(TemplateDefinition template, bool pdf, CancellationToken ct)
     {
-        var bytes = await ReadWord(template, ct);
+        var bytes = InternalWordDocument.StandardizeContractFont(await ReadWord(template, ct));
         return pdf ? await word.Pdf(bytes, ct) : bytes;
     }
     public async Task<byte[]> Render(DraftContent content, TemplateDefinition template, bool pdf, CancellationToken ct)
@@ -375,7 +377,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         if (string.IsNullOrWhiteSpace(content.ContractNumber)) values["CONTRACT_NUMBER"] = "Chờ cấp số khi lưu nháp";
         // Manual Word content keeps its own text; only placeholders that have a draft value are filled.
         var filled = InternalWordDocument.Fill(bytes, values, preserveUnknown: template.ManualWordContent);
-        if (!pdf) return filled;
+        if (!pdf) return content.UseTimesNewRoman ? InternalWordDocument.StandardizeContractFont(filled) : filled;
         // The print depends only on the placeholders the file uses: an edit to anything else reuses the last PDF of this
         // template instead of starting LibreOffice (~2-3 s). One entry per template keeps memory bounded while typing.
         var used = cache.GetOrCreate("word-placeholders:" + template.WordSha256, entry =>
@@ -384,9 +386,10 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             return InternalWordDocument.Blocks(bytes).SelectMany(b => Placeholder.Matches(b.Text).Select(m => m.Groups[1].Value)).ToHashSet();
         })!;
         // The contract number is also stamped on the "Số: …" line without a placeholder, so it always belongs to the signature.
-        var signature = template.ManualWordContent + "|" + string.Join("\u0001", used.Append("CONTRACT_NUMBER").Distinct().Order().Select(k => k + "\u0002" + values.GetValueOrDefault(k)));
+        var signature = $"{template.ManualWordContent}|{content.UseTimesNewRoman}|" + string.Join("\u0001", used.Append("CONTRACT_NUMBER").Distinct().Order().Select(k => k + "\u0002" + values.GetValueOrDefault(k)));
         var lastKey = "word-pdf-last:" + template.WordSha256;
         if (cache.TryGetValue(lastKey, out (string Signature, byte[] Pdf) last) && last.Signature == signature) return last.Pdf;
+        if (content.UseTimesNewRoman) filled = InternalWordDocument.StandardizeContractFont(filled);
         var result = await word.Pdf(filled, ct);
         cache.Set(lastKey, (signature, result), new MemoryCacheEntryOptions { SlidingExpiration = TimeSpan.FromMinutes(10) });
         return result;

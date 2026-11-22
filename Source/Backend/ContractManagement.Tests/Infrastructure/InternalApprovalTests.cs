@@ -27,7 +27,12 @@ public class InternalApprovalTests
         public Task SendAsync(EmailMessage message, CancellationToken ct) { Messages.Add(message); return Task.CompletedTask; }
     }
     [MasterDatabaseFact]
-    public async Task EnforcesSequentialApprovalReturnLockAndSnapshotIntegrity()
+    public Task EnforcesSequentialApprovalReturnLockAndSnapshotIntegrity() => VerifyApprovalFlow(false);
+
+    [MasterDatabaseFact]
+    public Task BusinessNumberSurvivesWordDeliveryAndNewVersions() => VerifyApprovalFlow(true);
+
+    private async Task VerifyApprovalFlow(bool useBusinessRule)
     {
         var connection = Environment.GetEnvironmentVariable("CONTRACK_MASTER_TEST_CONNECTION")!;
         await using var db = new MasterDbContext(new DbContextOptionsBuilder<MasterDbContext>().UseSqlServer(connection).Options);
@@ -59,9 +64,22 @@ public class InternalApprovalTests
         foreach (var field in DraftCompletionPolicy.PartyFields.Where(f => f.Required)) content.Fields[field.Key] = "Thông tin kiểm thử";
         content.Fields["CUSTOMER_CONTACT_PHONE"] = "0901234567";
         content.Fields["CUSTOMER_EMAIL"] = "approval@example.invalid";
+        var prefix = "QA" + Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        if (useBusinessRule)
+        {
+            var business = await repository.CreateBusiness(customer.Id, new("TEST numbering", "0" + Random.Shared.NextInt64(100000000,999999999), "Hà Nội", "Test"), employee, default);
+            await new ContractNumberRules(db).Save(business.Id, customer.Id, new NumberRule { CompanyCode = prefix, TypeCode = "KD" }, sale, false, default);
+            content.PartyType = "BUSINESS";
+            content.CustomerBusinessId = content.NumberingBusinessId = business.Id;
+            content.Fields["CUSTOMER_TAX_CODE"] = business.TaxCode;
+            content.Fields["CUSTOMER_COMPANY"] = business.Name;
+        }
         DraftValidation.Prepare(content, template);
         var draft = await repository.Save(null, new(content, null, null), sale, default);
-        Assert.Matches(@"^HD-\d{8}-\d{6,}$", draft.Code);
+        if (useBusinessRule) Assert.Matches("^" + prefix + @"-KD-\d{6}-000001$", draft.Code);
+        else if (await new ContractNumberRules(db).Read(0, default) is { } provider)
+            Assert.Matches("^" + provider.CompanyCode + "-" + provider.TypeCode + (provider.IncludeDay ? @"-\d{8}" : @"-\d{6}") + @"-\d{6,}$", draft.Code);
+        else Assert.Matches(@"^HD-\d{8}-\d{6,}$", draft.Code);
         Assert.Equal(draft.Code, draft.Content.ContractNumber);
         async Task<ApprovalAction> Input(string? note = null)
         {
@@ -122,7 +140,10 @@ public class InternalApprovalTests
             && block.Text.Contains("100.000") && block.Text.Contains("Thanh toán: 100.000 VND"));
         var customerPdf = await word.CustomerWord(sent.Id, content.CustomerId, true, default);
         using (var pdf = UglyToad.PdfPig.PdfDocument.Open(customerPdf))
+        {
             Assert.Contains("APPROVED WORD VERSION 1", pdf.GetPage(1).Text);
+            Assert.Contains(draft.Code, pdf.GetPage(1).Text);
+        }
         Assert.Equal(404, (await Assert.ThrowsAsync<InternalAppException>(() => word.CustomerWord(sent.Id, -1, false, default))).Status);
         var accountMailbox = new Mailbox();
         var portal = new CustomerPortalRepository(db, Options.Create(new EsmsOptions()), new CustomerContractMailer(db, accountMailbox, config, NullLogger<CustomerContractMailer>.Instance));

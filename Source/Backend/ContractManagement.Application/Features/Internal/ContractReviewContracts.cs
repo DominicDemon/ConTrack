@@ -71,9 +71,10 @@ public sealed record CustomerSession(long Id, string Name, bool MustChangePasswo
 /// <param name="FirstViewedAt">Null = the customer has not opened this version yet (an unread item of the portal bell).</param>
 /// <summary>One portal bell item. Key is stable per event (the browser remembers which keys were read); ReviewId opens the contract.</summary>
 public sealed record CustomerContractNotice(string Key, string Code, string Title, string Body, long ReviewId, DateTime At);
-public sealed record CustomerReviewSummary(long Id, string ContractName, long VersionNo, string Status, DateTime SentAt, DateTime? RespondedAt, DateTime? FirstViewedAt = null);
+public sealed record CustomerReviewSummary(long Id, string ContractName, long VersionNo, string Status, DateTime SentAt, DateTime? RespondedAt,
+    DateTime? FirstViewedAt = null, bool IsSigned = false);
 public sealed record CustomerReviewDetail(long Id, string ContractName, long VersionNo, string Status, DateTime SentAt, string? Message, string? CustomerNote,
-    DateTime? RespondedAt, string DocumentHash, string RowVersion, DraftContent Content, List<ReviewComment> Comments);
+    DateTime? RespondedAt, string DocumentHash, string RowVersion, DraftContent Content, List<ReviewComment> Comments, bool IsSigned = false);
 public sealed record CustomerLoginInput(string? Phone, string? Password);
 public sealed record CustomerChangePasswordInput(string? CurrentPassword, string? NewPassword);
 public sealed record CustomerRespondInput(string? Decision, string? Note, string? DocumentHash, string? RowVersion);

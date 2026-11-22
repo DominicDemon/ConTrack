@@ -1,5 +1,6 @@
 "use client";
 import { sendIssues as validateSend, focusIssue } from "../../../Shared/draft-validation";
+import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 import DraftPreview from "./draft-preview";
 
 import { useCallback, useEffect, useState } from "react";
@@ -29,6 +30,8 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
   const [preSend, setPreSend] = useState<{ stage: string } | null>(null);
   const [signingProgress, setSigningProgress] = useState<SigningMonitorDetail | null>(null);
   const [error, setError] = useState(""); const [notice, setNotice] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => onNotificationRefresh(() => setRefresh(value => value + 1)), []);
   const [confirm, setConfirm] = useState<Confirm | null>(null); const [note, setNote] = useState(""); const [busy, setBusy] = useState(false); const [expiry, setExpiry] = useState("");
   const [replyTo, setReplyTo] = useState<{ review: string; comment: ReviewComment } | null>(null); const [reply, setReply] = useState("");
   const [signerName, setSignerName] = useState(record.content.fields.PROVIDER_REPRESENTATIVE_NAME ?? "");
@@ -61,7 +64,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
       setReviews(state.reviewRows); setApproval(state.approvalState); setSigningProgress(state.signingState); setVersions(state.versionRows); setPreSend(state.preSendState); setError("");
     }).catch(e => { if (active) setError((e as Error).message); });
     return () => { active = false; };
-  }, [fetchWorkflow, record.rowVersion]);
+  }, [fetchWorkflow, record.rowVersion, refresh]);
   const latest = reviews[0];
   const canSendToCustomer = record.status === 0 || record.status === 1 || (record.status === 2 && !approval);
   const canCreateVersion = (record.canEdit && !["SENT", "VIEWED"].includes(latest?.status ?? ""))
@@ -84,6 +87,8 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
   const canPrint = business && record.status === 3 && approval?.status === 1;
   const customerApproved = latest?.status === "APPROVED";
   const signingComplete = record.status === 4 || record.status === 5;
+  const paperWaiting = business && record.status === 3;
+  const paperPending = paperWaiting && record.paperEvidencePending;
   /** A prospect has no portal account: they read, comment and sign through the emailed link; the account comes after both sides signed. */
   const prospect = !record.customerHasAccount;
   const linkUsable = prospect && !!latest && (["SENT", "VIEWED"].includes(latest.status) || (latest.status === "APPROVED" && !signingComplete));
@@ -95,8 +100,8 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
     { title: "Khách hàng duyệt nội dung", detail: customerApproved ? "Khách hàng đã đồng ý phiên bản này." : latest && ["SENT", "VIEWED"].includes(latest.status) ? "Đang chờ khách xem và phản hồi." : "Gửi phiên bản đã hoàn thiện để khách xác nhận nội dung.", done: customerApproved, current: !customerApproved && record.status === 1 },
     { title: "Hành chính duyệt bản chốt", detail: approval?.status === 1 ? "Hành chính đã duyệt bản khách đồng ý." : awaitingInternalApproval ? "Đang chờ Hành chính duyệt bản khách đã đồng ý." : "Chỉ mở sau khi khách hàng đồng ý.", done: approval?.status === 1, current: awaitingInternalApproval },
     ...business ? [
-      { title: "In, ký và đóng dấu đỏ", detail: signingComplete ? "Hai bên đã ký giấy." : approval?.status === 1 ? "In hợp đồng; đại diện hai bên ký, doanh nghiệp đóng dấu đỏ." : "Sau khi Hành chính duyệt bản chốt, in hợp đồng để Sếp ký và khách đóng dấu.", done: signingComplete, current: record.status === 3 },
-      { title: "Lưu bản ký giấy", detail: signingComplete ? "Bản scan đã được xác nhận, hồ sơ đã ký." : "Scan bản đã đóng dấu, tải lên màn Bản ký giấy và xác nhận.", done: signingComplete, current: false },
+      { title: "In, ký và đóng dấu đỏ", detail: signingComplete ? "Hai bên đã ký giấy." : paperPending ? "Đã nộp bản scan để Hành chính kiểm tra." : approval?.status === 1 ? "In hợp đồng; đại diện hai bên ký, doanh nghiệp đóng dấu đỏ." : "Sau khi Hành chính duyệt bản chốt, in hợp đồng để Sếp ký và khách đóng dấu.", done: signingComplete || paperPending, current: paperWaiting && !paperPending },
+      { title: "Lưu bản ký giấy", detail: signingComplete ? "Bản scan đã được xác nhận, hồ sơ đã ký." : paperPending ? "Đang chờ Hành chính xác nhận bản ký giấy." : "Scan bản đã đóng dấu, tải lên màn Bản ký giấy và xác nhận.", done: signingComplete, current: paperPending },
     ] : [{ title: "Sếp ký cho công ty", detail: companySigned ? "Sếp đã ký." : approval?.signingStarted ? "Đang chờ Sếp ký trong hàng đợi Ký phía công ty." : "Sau khi Hành chính duyệt bản chốt, Sếp tạo phiên ký và ký.", done: companySigned, current: record.status === 3 && !companySigned },
     { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? (prospect ? "Công ty đã ký. Khách mở link trong email, xác minh OTP rồi ký." : "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký.") : prospect ? "Sau khi công ty ký, khách ký ngay trên link đã nhận qua email." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned }],
   ];
@@ -148,7 +153,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
 
   const decideApproval = (approve: boolean) => ask({
     title: approve ? "Hành chính duyệt bản chốt" : "Từ chối bản chốt",
-    action: approve ? "Duyệt, chuyển Sếp ký" : "Từ chối bản chốt",
+    action: approve ? (business ? "Duyệt, chuyển ký giấy" : "Duyệt, chuyển Sếp ký") : "Từ chối bản chốt",
     description: approve
       ? `Xác nhận đã kiểm tra bản khách đồng ý của hợp đồng ${record.code}, phiên bản ${record.versionNo}. Hồ sơ chuyển sang chờ Sếp ký.`
       : "Ghi rõ lý do để lưu vào nhật ký hồ sơ.",
@@ -181,7 +186,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
   }
   return <section className={ui.card} style={{ margin: "0 0 16px" }} aria-label="Gửi khách xem">
     <div className={s.workflowGuide} aria-label="Các bước ký hợp đồng">
-      <div className={s.workflowGuideHeader}><div><strong>Quy trình ký hợp đồng</strong><p>{business ? "Khách hàng doanh nghiệp: Sale trình → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → in hợp đồng, Sếp ký và doanh nghiệp đóng dấu đỏ → tải bản scan lên." : "Khách hàng cá nhân: Sale trình → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → Sếp ký → khách hàng ký."}</p></div>{approval?.signingStarted && !signingComplete && <Link className={ui.secondaryButton} href="/workspace/contracts/company-signing">Mở hàng đợi ký công ty</Link>}</div>
+      <div className={s.workflowGuideHeader}><div><strong>Quy trình ký hợp đồng</strong><p>{business ? "Khách hàng doanh nghiệp: Sale trình → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → hai bên ký giấy và đóng dấu → Hành chính xác nhận bản scan." : "Khách hàng cá nhân: Sale trình → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → Sếp ký → khách hàng ký."}</p></div>{!business && approval?.signingStarted && !signingComplete && <Link className={ui.secondaryButton} href="/workspace/contracts/company-signing">Mở hàng đợi ký công ty</Link>}</div>
       <ol className={s.workflowSteps}>{workflowSteps.map((step, index) => <li key={step.title} className={`${s.workflowStep} ${step.done ? s.workflowStepDone : step.current ? s.workflowStepCurrent : ""}`}>
         <span className={s.workflowStepNumber}>{step.done ? <Check size={14}/> : index + 1}</span><div><strong>{step.title}</strong><p>{step.detail}</p></div>
       </li>)}</ol>
@@ -189,7 +194,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <strong style={{ fontSize: 14 }}>Phiên bản {record.versionNo}</strong>
-        <span className={s.badge}>{documentStatusLabel[record.status] ?? record.status}</span>
+        <span className={s.badge}>{paperWaiting ? (paperPending ? "Chờ xác nhận bản ký giấy" : "Chờ nộp bản ký giấy") : documentStatusLabel[record.status] ?? record.status}</span>
         {latest && <span className={`${s.badge} ${["CHANGES_REQUESTED", "REJECTED"].includes(latest.status) ? s.warning : ""}`}>{reviewStatusLabel[latest.status] ?? latest.status}</span>}
         {record.locked && <span className={s.muted}>Đã khóa — chỉ xem</span>}
       </div>
@@ -204,14 +209,14 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
         {user.canWrite && linkUsable && latest && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách không kịp nhập mã, nhập sai quá nhiều lần hoặc bị khóa đăng nhập"
           onClick={() => void act(() => internalApi(`/contract-reviews/${latest.id}/resend-otp`, "POST"), `Đã gửi mã OTP mới tới ${record.customerPhoneMasked} và mở khóa cho khách. Khách mở link trong email, chọn “Đã có mã” và nhập mã (hiệu lực 5 phút).`)}><KeyRound size={16}/>Gửi lại mã OTP</button>}
         {canDecideFinal && <>
-          <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>Duyệt, chuyển Sếp ký</button>
+          <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>{business ? "Duyệt, chuyển ký giấy" : "Duyệt, chuyển Sếp ký"}</button>
           <button className={ui.secondaryButton} disabled={busy || dirty} onClick={() => decideApproval(false)}><XCircle size={16}/>Từ chối</button>
         </>}
         {canStartSigning && <button className={ui.primaryButton} disabled={busy || dirty || signerName.trim().length < 2 || !signerPhone.trim()} onClick={() => void startSigning()}>
           <Send size={16}/>Tạo phiên ký
         </button>}
         {canPrint && <><button className={ui.primaryButton} disabled={busy} onClick={() => void printContract()}><Printer size={16}/>In hợp đồng (PDF)</button>
-          <Link className={ui.secondaryButton} href={`/workspace/signed-contracts/${encodeURIComponent(record.id)}`}><Upload size={16}/>Tải bản ký giấy</Link></>}
+          {user.permissions.includes("contract.signed_evidence.view") && <Link className={ui.secondaryButton} href={`/workspace/signed-contracts/${encodeURIComponent(record.id)}`}><Upload size={16}/>{paperPending ? "Kiểm tra bản ký giấy" : "Mở hồ sơ ký giấy"}</Link>}</>}
         {(user.canWrite || user.canCheck) && prospect && (signingComplete || latest?.status === "APPROVED") && <button className={ui.primaryButton} disabled={busy}
           title="Gửi email cho khách: tên đăng nhập là SĐT, kèm mật khẩu tạm; khách đổi mật khẩu ở lần đăng nhập đầu"
           onClick={() => void issueCustomerPassword(true)}><UserPlus size={16}/>Tạo tài khoản khách</button>}

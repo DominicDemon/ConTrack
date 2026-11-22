@@ -97,7 +97,7 @@ public sealed record SigningSignerProgress(long Id, long VersionNo, string Party
 public sealed record SigningArtifactInfo(string FileName, string ContentType, long Size, string Sha256, int Role, bool Primary, DateTime AddedAt);
 public sealed record DraftRecord(long Id, string Code, long EmployeeId, string EmployeeName, string RowVersion, string VersionRowVersion, DateTime UpdatedAt, DraftContent Content,
     int Status, long VersionNo, bool Locked, bool CanEdit, string CustomerName, string CustomerPhoneMasked, string? LatestReviewStatus, string? SendBlockedReason,
-    List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null, bool CustomerHasAccount = false);
+    List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null, bool CustomerHasAccount = false, bool PaperEvidencePending = false);
 public sealed record CarriedDraftComment(long Id, string? TermKey, string Content, long? SourceCommentId, long? SourceVersionId, bool Resolved);
 public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion, string? WordPreviewToken = null);
 public sealed record SigningDemoDraftResult(DraftRecord Draft, string CustomerPortalPhone, string CustomerPortalPassword);

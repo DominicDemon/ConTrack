@@ -5,7 +5,7 @@ import {internalApi,dateTime,type EmployeeOption} from "@/services/internal-api"
 import {useInternalUser} from "./internal-shell";
 import {internalStyles as ui} from "./internal-theme";
 import s from "./workspace.module.css";
-const stages:Record<string,string>={DRAFT:"Chuẩn bị",OFFICE:"Hành chính kiểm tra",RETURNED:"Trả lại chỉnh sửa",APPROVED:"Chờ Sale gửi",CUSTOMER:"Chờ khách phản hồi",CHANGES:"Khách yêu cầu xử lý",FINAL_CHECK:"Hành chính duyệt bản chốt",SIGNATURE:"Chờ Sếp ký",CLOSED:"Đã đóng"};
+const stages:Record<string,string>={DRAFT:"Chuẩn bị",OFFICE:"Hành chính kiểm tra",RETURNED:"Trả lại chỉnh sửa",APPROVED:"Chờ Sale gửi",CUSTOMER:"Chờ khách phản hồi",CHANGES:"Khách yêu cầu xử lý",FINAL_CHECK:"Hành chính duyệt bản chốt",SIGNATURE:"Chờ Sếp ký",PAPER_SIGNATURE:"Chờ nộp bản ký giấy",PAPER_REVIEW:"Chờ xác nhận bản ký giấy",CLOSED:"Đã đóng"};
 type Row={id:string;code:string;name:string;customer:string;ownerId:string;owner:string;stage:string;department:string;enteredAt:string|null;lastActor:string|null;warningCount:number;configured:boolean;needsMe:boolean;inspectionError:string|null};
 type Page={items:Row[];total:number;page:number;pageSize:number;counts:Record<string,number>;serverTime:string};
 export default function ProgressList(){

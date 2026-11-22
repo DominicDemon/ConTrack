@@ -44,6 +44,7 @@ public static class InternalHost
             throw new InvalidOperationException("Internal mode requires ConnectionStrings:MasterDatabase.");
         builder.Services.AddMasterDatabase(builder.Configuration);
         builder.Services.AddScoped<InternalRepository>();
+        builder.Services.AddScoped<ContractNumberRules>();
         builder.Services.AddScoped<IInternalRepository>(services => services.GetRequiredService<InternalRepository>());
         builder.Services.AddScoped<InternalDraftService>();
         builder.Services.AddScoped<InternalSigningDemoService>();
@@ -382,6 +383,15 @@ public static class InternalHost
         // Bên A of a draft refilled from the customer record (the person, or the legal entity chosen in the draft).
         secured.MapGet("/customers/{id:long}/profile", async (long id, long? businessId, InternalRepository repository, CancellationToken ct) =>
             await repository.CustomerProfileFor(id, businessId, ct) is { } profile ? Results.Ok(profile) : Results.NotFound());
+        secured.MapGet("/number-rules/{owner:long}", async (long owner, long? customerId, HttpContext c, ContractNumberRules rules, CancellationToken ct) => {
+            if (!Current(c).CanWrite && !Current(c).CanCheck) throw new InternalAppException(403, "Bạn không có quyền xem quy tắc.");
+            await rules.CheckOwner(owner, customerId, ct);
+            return Results.Ok(new { rule = await rules.Read(owner, ct) });
+        });
+        secured.MapPost("/number-rules/{owner:long}", async (long owner, long? customerId, NumberRule input, HttpContext c, ContractNumberRules rules, CancellationToken ct) =>
+            Results.Ok(await rules.Save(owner, customerId, input, Current(c), false, ct)));
+        secured.MapPut("/number-rules/{owner:long}", async (long owner, long? customerId, NumberRule input, HttpContext c, ContractNumberRules rules, CancellationToken ct) =>
+            Results.Ok(await rules.Save(owner, customerId, input, Current(c), true, ct)));
         secured.MapGet("/customers/lookup", async (string? search, InternalRepository repository, CancellationToken ct) =>
             Results.Ok(await repository.LookupCustomers(search, ct)));
         secured.MapGet("/customers", async (string? search, IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Customers(search, ct)));
@@ -403,8 +413,17 @@ public static class InternalHost
         secured.MapGet("/contract-signing-demo/availability", (IHostEnvironment environment) => Results.Ok(new { available = environment.IsDevelopment() }));
         secured.MapPost("/contract-signing-demo", async (HttpContext c, InternalSigningDemoService demo, CancellationToken ct) =>
             Results.Ok(await demo.Create(Current(c), ct)));
-        secured.MapGet("/signed-contracts", async (string? search, int? page, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
-            Results.Ok(await signing.SignedContracts(Current(c), search, page ?? 1, ct)));
+        secured.MapGet("/signed-contracts", async (string? search, int? page, long? documentId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.SignedContracts(Current(c), search, page ?? 1, ct, documentId)));
+        var signedPayments = secured.MapGroup("/signed-contracts/{documentId:long}/versions/{versionId:long}/payments");
+        signedPayments.MapGet("", async (long documentId, long versionId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.SignedPayments(Current(c), documentId, versionId, ct)));
+        signedPayments.MapPost("/{installmentId:long}/confirm", async (long documentId, long versionId, long installmentId,
+            HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+        {
+            await signing.ConfirmSignedPayment(Current(c), documentId, versionId, installmentId, ct);
+            return Results.NoContent();
+        });
         secured.MapGet("/signed-contracts/{documentId:long}/versions/{versionId:long}/pdf", async (long documentId, long versionId,
             HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
         {

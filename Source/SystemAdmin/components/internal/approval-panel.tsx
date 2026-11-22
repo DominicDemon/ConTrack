@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { internalApi, dateTime, type DraftRecord } from "@/services/internal-api";
 import { useInternalUser } from "./internal-shell";
@@ -18,11 +19,13 @@ export default function ApprovalPanel({ record, dirty, onChanged }: { record: Dr
   const [comments, setComments] = useState<{ id: string; termKey: string; text: string }[]>(() => [{ id: crypto.randomUUID(), termKey: "", text: "" }]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => onNotificationRefresh(() => setRefresh(value => value + 1)), []);
   useEffect(() => {
     let active = true;
     internalApi<Approval>(`/contract-drafts/${record.id}/approval`).then(value => { if (active) setApproval(value); }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
-  }, [record.id, record.rowVersion]);
+  }, [record.id, record.rowVersion, refresh]);
   const base = () => ({ rowVersion: record.rowVersion, versionRowVersion: record.versionRowVersion, approvalRowVersion: approval?.rowVersion });
   async function act(action: string, resolveId?: string) {
     setBusy(true); setError("");

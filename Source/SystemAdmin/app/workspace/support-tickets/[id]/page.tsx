@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { onNotificationRefresh } from "../../../../../Shared/notification-navigation";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -383,8 +384,9 @@ export default function AdminSupportTicketDetailPage() {
           }
           if (!initializedResolutionRef.current && data.ticketResolution) {
             initializedResolutionRef.current = true;
-            setHeadResolution(data.ticketResolution);
-            setStaffResolution(data.ticketResolution);
+            const resolution = data.ticketResolution;
+            setHeadResolution(current => current || resolution);
+            setStaffResolution(current => current || resolution);
           }
           if (!initializedTabRef.current) {
             initializedTabRef.current = true;
@@ -430,6 +432,8 @@ export default function AdminSupportTicketDetailPage() {
   useEffect(() => {
     void loadTicket(false);
   }, [loadTicket]);
+
+  useEffect(() => onNotificationRefresh(() => void loadTicket(true)), [loadTicket]);
 
   useEffect(() => {
     const timer = setInterval(() => {

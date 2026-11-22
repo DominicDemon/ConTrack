@@ -22,6 +22,8 @@ public sealed class DraftContent
     public string PaymentMode { get; set; } = "PERCENT";
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? ContractNumber { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? NumberingBusinessId { get; set; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? PaymentMethod { get; set; }
     public List<DraftMilestone> Milestones { get; set; } = [];

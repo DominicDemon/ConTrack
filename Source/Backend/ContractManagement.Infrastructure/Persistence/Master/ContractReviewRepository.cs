@@ -542,13 +542,16 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
 
     public async Task<List<CustomerReviewSummary>> Reviews(long customerId, CancellationToken ct)
     {
+        var signedVersions = CustomerSigningService.CompletedVersions(db);
         var rows = await (from r in db.ContractReviewRequests.AsNoTracking()
             join d in db.ContractDocuments on r.ContractDocumentId equals d.ContractDocumentId
-            join v in db.ContractVersions on r.ContractVersionId equals v.ContractVersionId
+            join v in db.ContractVersions on new { r.ContractDocumentId, r.ContractVersionId } equals new { v.ContractDocumentId, v.ContractVersionId }
             where r.CustomerId == customerId
-            select new CustomerReviewSummary(r.ContractReviewRequestId, d.ContractDocumentName, v.ContractVersionVersionNo, r.ContractReviewRequestStatus, r.SentAt, r.RespondedAt, r.FirstViewedAt))
+            let signed = signedVersions.Any(s => s.ContractDocumentId == r.ContractDocumentId && s.ContractVersionId == r.ContractVersionId)
+            select new CustomerReviewSummary(r.ContractReviewRequestId, d.ContractDocumentName, v.ContractVersionVersionNo, r.ContractReviewRequestStatus,
+                r.SentAt, r.RespondedAt, r.FirstViewedAt, signed))
             .ToListAsync(ct);
-        return rows.OrderByDescending(r => ContractReviewStatus.IsOpen(r.Status)).ThenByDescending(r => r.SentAt).ToList();
+        return rows.OrderByDescending(r => !r.IsSigned && ContractReviewStatus.IsOpen(r.Status)).ThenByDescending(r => r.SentAt).ToList();
     }
 
     public async Task<CustomerReviewDetail> Review(long customerId, long reviewId, CancellationToken ct)
@@ -704,9 +707,11 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
         content.CustomerId = 0; content.TemplateId = 0; // internal ids stay internal
         var comments = await ReviewData.Comments(db, [review.ContractReviewRequestId], ct);
+        var signed = await CustomerSigningService.CompletedVersions(db)
+            .AnyAsync(v => v.ContractDocumentId == review.ContractDocumentId && v.ContractVersionId == review.ContractVersionId, ct);
         return new(review.ContractReviewRequestId, doc.ContractDocumentName, versionNo, review.ContractReviewRequestStatus, review.SentAt, review.ContractReviewRequestMessage,
             review.ContractReviewRequestCustomerNote, review.RespondedAt, review.ContractReviewRequestDocumentHash, Convert.ToBase64String(review.Rowversion), content,
-            comments.GetValueOrDefault(review.ContractReviewRequestId) ?? []);
+            comments.GetValueOrDefault(review.ContractReviewRequestId) ?? [], signed);
     }
 }
 

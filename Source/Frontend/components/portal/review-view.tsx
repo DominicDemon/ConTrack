@@ -14,6 +14,7 @@ import PortalHeader from "./portal-header";
 import PortalSigningPanel from "./portal-signing-panel";
 import { dateTime } from "@/services/internal-api";
 import { CustomerApiError, customerApi, customerStatusLabel, handleAuthError, isOpenReview, type CustomerReviewDetail, type ReviewComment } from "@/services/customer-api";
+import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 
 type Decision = "APPROVE" | "REQUEST_CHANGES" | "REJECT";
 const decisions: Record<Decision, { title: string; description: string; note: string; required: boolean }> = {
@@ -38,9 +39,18 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
     if (onAuthLost && e instanceof CustomerApiError && [401, 403, 410].includes(e.status)) { onAuthLost(); return; }
     if (handleAuthError(e, router.replace)) setError((e as Error).message);
   }, [router, onAuthLost]);
-  useEffect(() => { void customerApi<CustomerReviewDetail>(`/reviews/${id}`).then(setReview).catch(fail); }, [id, fail]);
+  const [revision, setRevision] = useState(0);
+  const markSigned = useCallback(() => setReview(current => current && { ...current, isSigned: true }), []);
+  useEffect(() => onNotificationRefresh(() => { if (!busy) setRevision(value => value + 1); }), [busy]);
+  useEffect(() => {
+    let active = true;
+    void customerApi<CustomerReviewDetail>(`/reviews/${id}`).then(value => {
+      if (active) { setReview(value); setError(""); }
+    }).catch(e => { if (active) fail(e); });
+    return () => { active = false; };
+  }, [id, fail, revision]);
   if (!review) return <><PortalHeader onLogout={onAuthLost}/><div className={s.empty}>{error ? <p role="alert">{error}</p> : "Đang tải hợp đồng…"}{!onAuthLost && <Link href="/portal/contracts">Về danh sách</Link>}</div></>;
-  const open = isOpenReview(review.status);
+  const open = !review.isSigned && isOpenReview(review.status);
   async function sendComment() {
     setBusy(true); setError("");
     try { const c = await customerApi<ReviewComment>(`/reviews/${id}/comments`, "POST", { termKey: term.startsWith("term:") ? term.slice(5) : null,
@@ -80,13 +90,13 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
   return <><PortalHeader onLogout={onAuthLost}/><div className={s.page}>
     <div className={s.titleRow}><div>{!onAuthLost && <Link href="/portal/contracts" className={s.muted} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><ArrowLeft size={16}/>Hợp đồng của bạn</Link>}
       <h1>{review.contractName}</h1><p className={s.muted}>Phiên bản {review.versionNo} · gửi lúc {dateTime(review.sentAt)}</p></div>
-      <span className={`${s.badge} ${open ? s.warning : ""}`}>{customerStatusLabel[review.status] ?? review.status}</span></div>
+      <span className={`${s.badge} ${open ? s.warning : ""}`}>{review.isSigned ? "Đã ký" : customerStatusLabel[review.status] ?? review.status}</span></div>
     {review.message && <p className={ui.notice} style={{ marginBottom: 16 }}>Lời nhắn của nhân viên: {review.message}</p>}
     {error && <p role="alert" className={ui.error} style={{ marginBottom: 16 }}>{error}</p>}
     {!open && <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>{review.respondedAt ? `Bạn đã phản hồi lúc ${dateTime(review.respondedAt)}.` : "Lần gửi này không còn nhận phản hồi."}{review.customerNote ? ` Ghi chú: ${review.customerNote}` : ""}</p>}
     {review.status === "APPROVED" && (review.content.partyType === "BUSINESS"
-      ? <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>Hợp đồng doanh nghiệp được ký trên giấy: sau khi công ty duyệt, nhân viên sẽ gửi bản in để đại diện doanh nghiệp ký và đóng dấu đỏ. Bạn không cần ký điện tử trên Portal.</p>
-      : <PortalSigningPanel key={id} reviewId={id}>{preview}</PortalSigningPanel>)}
+      ? <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>{review.isSigned ? "Công ty đã xác nhận bản ký giấy của hợp đồng này." : "Sau khi công ty duyệt, nhân viên sẽ gửi bản in để đại diện doanh nghiệp ký và đóng dấu."}</p>
+      : <PortalSigningPanel key={id} reviewId={id} onSigned={markSigned}>{preview}</PortalSigningPanel>)}
     {open && <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
       {mine === 0 && <button className={ui.primaryButton} disabled={busy} onClick={() => { setDecision("APPROVE"); setNote(""); }}><Check size={16}/>Đồng ý</button>}
       <button className={ui.secondaryButton} disabled={busy || mine === 0} title={mine === 0 ? "Thêm góp ý cho mục cần sửa trước" : undefined}

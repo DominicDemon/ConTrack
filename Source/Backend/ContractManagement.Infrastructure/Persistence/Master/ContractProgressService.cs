@@ -48,6 +48,13 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
             .ToDictionaryAsync(x => x.VersionId!.Value, ct);
         var approvals = await db.ContractApprovalRequests.AsNoTracking().Where(x => ids.Contains(x.ContractDocumentId) && x.InternalStage != null).ToListAsync(ct);
         var reviews = await db.ContractReviewRequests.AsNoTracking().Where(x => versions.Contains(x.ContractVersionId)).ToListAsync(ct);
+        var pendingPaper = await (from file in db.ContractDocumentFiles
+            join evidence in db.ContractSignedEvidences on file.ContractDocumentFileId equals evidence.ContractDocumentFileId
+            where file.ContractVersionId.HasValue && versions.Contains(file.ContractVersionId.Value)
+                && file.ContractDocumentFileRole == Domain.Internal.Scans.ContractDocumentFileRoles.SignedPaper
+                && evidence.ContractSignedEvidenceStatus == (int)Domain.Internal.Scans.SignedEvidenceStatus.PendingReview
+            group evidence by (file.ContractVersionId ?? 0L) into files
+            select new { Version = files.Key, Uploaded = files.Max(e => e.UploadedAt) }).ToDictionaryAsync(x => x.Version, x => x.Uploaded, ct);
         var stringIds = ids.Select(x => x.ToString()).ToArray();
         var events = await (from audit in db.AuditLogs.AsNoTracking()
                             join employee in db.Employees on audit.ActorId equals (long?)employee.EmployeeId
@@ -67,7 +74,12 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
                 && x.audit.NewData != null && JsonDocument.Parse(x.audit.NewData).RootElement.TryGetProperty("version", out var number) && number.GetInt64() == version.ContractVersionVersionNo).MaxBy(x => x.audit.AuditLogId);
             DateTime? entered = transition?.audit.CreatedAt;
             string? lastActor = transition?.EmployeeDisplayName;
-            if (stage == "DRAFT") entered = version.ContractVersionVersionNo > 1 || doc.ContractDocumentCode?.StartsWith("HD-") == true ? version.ContractVersionCreatedDate : null;
+            if (stage == "DRAFT")
+            {
+                var hasIssuedNumber = doc.ContractDocumentCode?.StartsWith("HD-") == true
+                    || snapshots.GetValueOrDefault(version.ContractVersionId)?.Contains("\"contractNumber\":", StringComparison.Ordinal) == true;
+                entered = version.ContractVersionVersionNo > 1 || hasIssuedNumber ? version.ContractVersionCreatedDate : null;
+            }
             if (review is not null && version.ContractVersionIslocked)
             {
                 stage = review.ContractReviewRequestStatus switch { "SENT" or "VIEWED" => "CUSTOMER", "CHANGES_REQUESTED" or "REJECTED" => "CHANGES", "APPROVED" => doc.ContractDocumentStatus == ContractDocumentStatus.PendingApproval
@@ -75,8 +87,22 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
                 entered = stage == "CUSTOMER" ? review.SentAt : review.RespondedAt;
             }
             if (doc.ContractDocumentStatus is 4 or 5 or 6) { stage = "CLOSED"; entered = null; }
+            if (stage == "SIGNATURE" && snapshots.GetValueOrDefault(version.ContractVersionId)?
+                    .Contains(InternalDraftPolicy.PartyTypeMarker("BUSINESS")!, StringComparison.Ordinal) == true)
+            {
+                stage = "PAPER_SIGNATURE";
+                if (pendingPaper.TryGetValue(version.ContractVersionId, out var uploaded))
+                {
+                    stage = "PAPER_REVIEW";
+                    entered = uploaded;
+                }
+            }
             var department = stage switch { "OFFICE" or "FINAL_CHECK" => "Hành chính", "CUSTOMER" => "Khách hàng", "SIGNATURE" => "Sếp ký, rồi khách ký", "CLOSED" => "Đã đóng", _ => "Sale" };
+            if (stage == "PAPER_SIGNATURE") department = "Hai bên ký giấy";
+            if (stage == "PAPER_REVIEW") department = "Hành chính";
             var mine = stage switch { "OFFICE" or "FINAL_CHECK" => actor.CanCheck, "SIGNATURE" => actor.CanApprove, "DRAFT" or "RETURNED" or "APPROVED" or "CHANGES" => actor.CanWrite && doc.EmployeeId == actor.Id, _ => false };
+            if (stage == "PAPER_SIGNATURE") mine = actor.CanCheck || actor.CanApprove || (actor.CanWrite && doc.EmployeeId == actor.Id);
+            if (stage == "PAPER_REVIEW") mine = actor.CanCheck;
             if (filter.Mine && !mine || filter.WaitingDays.HasValue && (entered is null || now - entered < TimeSpan.FromDays(filter.WaitingDays.Value))) continue;
             var config = checklists.GetValueOrDefault(version.ContractVersionId);
             var configured = config?.Configured ?? false;

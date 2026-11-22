@@ -67,14 +67,14 @@ public class ContractReviewTests
     }
     private static string Token(EmailMessage mail) => System.Text.RegularExpressions.Regex.Match(mail.TextBody, "/review/([0-9a-f]{64})").Groups[1].Value;
 
-    private static ReviewLinkOtp Otp(IMemoryCache cache, StubSender sms) => new(cache, sms, Microsoft.Extensions.Options.Options.Create(new EsmsOptions()), new ConfigurationBuilder().Build(), new HostingEnvironment { EnvironmentName = "Production" });
-    private static string Code(StubSender sms) => System.Text.RegularExpressions.Regex.Match(sms.Sent[^1].Content, "\\d{6}").Value;
+    private static ReviewLinkOtp Otp(IMemoryCache cache, StubOtpMail mail) => new(cache, mail, new ConfigurationBuilder().Build(), new HostingEnvironment { EnvironmentName = "Production" });
+    private static string Code(StubOtpMail mail) => mail.Sent[^1].Otp;
     private static readonly ReviewLinkAccess Link = new(1, 77, 1, "0901234484", DateTime.UtcNow.AddHours(1));
 
     [Fact]
     public async Task OtpRejectsWrongPhoneThenLocks()
     {
-        var sms = new StubSender(); var otp = Otp(new MemoryCache(new MemoryCacheOptions()), sms);
+        var sms = new StubOtpMail(); var otp = Otp(new MemoryCache(new MemoryCacheOptions()), sms);
         for (var i = 0; i < ReviewLinkOtp.MaxPhoneFailures; i++)
             Assert.Equal(422, (await Assert.ThrowsAsync<InternalAppException>(() => otp.Issue(Link, "0909999999", default))).Status);
         Assert.Equal(429, (await Assert.ThrowsAsync<InternalAppException>(() => otp.Issue(Link, Link.Phone, default))).Status);
@@ -84,7 +84,7 @@ public class ContractReviewTests
     [Fact]
     public async Task OtpWorksOnceAndDiesAfterTooManyWrongTries()
     {
-        var sms = new StubSender(); var cache = new MemoryCache(new MemoryCacheOptions()); var otp = Otp(cache, sms);
+        var sms = new StubOtpMail(); var cache = new MemoryCache(new MemoryCacheOptions()); var otp = Otp(cache, sms);
         await otp.Issue(Link, "+84 901 234 484", default);
         Assert.Equal(429, (await Assert.ThrowsAsync<InternalAppException>(() => otp.Issue(Link, Link.Phone, default))).Status); // cooldown
         var code = Code(sms); var wrong = code == "000000" ? "000001" : "000000";
@@ -103,25 +103,36 @@ public class ContractReviewTests
     [Fact]
     public async Task EmployeeResendLiftsCustomerLocksAndSendsANewCode()
     {
-        var sms = new StubSender(); var cache = new MemoryCache(new MemoryCacheOptions()); var otp = Otp(cache, sms);
+        var sms = new StubOtpMail(); var cache = new MemoryCache(new MemoryCacheOptions()); var otp = Otp(cache, sms);
         for (var i = 0; i < ReviewLinkOtp.MaxPhoneFailures; i++)
             await Assert.ThrowsAsync<InternalAppException>(() => otp.Issue(Link, "0909999999", default));
         cache.Set(ReviewLinkOtp.LoginFailureKey(Link.Phone), 5);
         Assert.Equal(429, (await Assert.ThrowsAsync<InternalAppException>(() => otp.Issue(Link, Link.Phone, default))).Status); // customer locked
 
         await otp.ResendByEmployee(Link, default);
-        Assert.Equal(Link.Phone, sms.Sent.Single().Phone);
+        Assert.Equal(Link.ReviewId, sms.Sent.Single().ReviewId);
         Assert.False(cache.TryGetValue(ReviewLinkOtp.LoginFailureKey(Link.Phone), out _));
-        Assert.Equal(429, (await Assert.ThrowsAsync<InternalAppException>(() => otp.ResendByEmployee(Link, default))).Status); // no double SMS
+        Assert.Equal(429, (await Assert.ThrowsAsync<InternalAppException>(() => otp.ResendByEmployee(Link, default))).Status); // no double email
         otp.Verify(77, Code(sms));
     }
 
     [Fact]
-    public async Task OtpFailsClosedWhenSmsIsRejected()
+    public async Task OtpFailsClosedWhenEmailFails()
     {
-        var sms = new StubSender { Reply = (_, _) => new("104", null, "Brand name code is not exist") }; var otp = Otp(new MemoryCache(new MemoryCacheOptions()), sms);
+        var sms = new StubOtpMail { Fail = true }; var otp = Otp(new MemoryCache(new MemoryCacheOptions()), sms);
         Assert.Equal(503, (await Assert.ThrowsAsync<InternalAppException>(() => otp.Issue(Link, Link.Phone, default))).Status);
         Assert.Equal(422, Assert.Throws<InternalAppException>(() => otp.Verify(77, Code(sms))).Status);
+    }
+
+    private sealed class StubOtpMail : ICustomerOtpMail
+    {
+        public bool Fail; public List<(long ReviewId, string Otp)> Sent = [];
+        public Task<string> Send(long documentId, string otp, DateTime expiresAt, CancellationToken ct) => throw new NotSupportedException();
+        public Task<string> SendForReview(long reviewId, string otp, DateTime expiresAt, CancellationToken ct)
+        {
+            Sent.Add((reviewId, otp));
+            return Fail ? throw new InternalAppException(503, "Không gửi được mã xác nhận qua email.") : Task.FromResult("an***@example.com");
+        }
     }
 
     private sealed class StubSender : ISmsSender

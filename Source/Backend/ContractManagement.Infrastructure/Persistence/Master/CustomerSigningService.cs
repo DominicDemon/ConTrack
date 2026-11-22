@@ -21,11 +21,10 @@ public sealed class CustomerSigningService(
     MasterDbContext db,
     InternalTemplateStorage storage,
     IElectronicSigningPdfService signatures,
-    SmsOutboxWriter sms,
+    ICustomerOtpMail otpMail,
     IDataProtectionProvider protection,
     IHostEnvironment environment,
     ILogger<CustomerSigningService> logger,
-    IOptions<EsmsOptions> smsOptions,
     CustomerContractMailer? customerMail = null) : ICustomerSigningService
 {
     private const int CustomerParty = 2;
@@ -59,8 +58,6 @@ public sealed class CustomerSigningService(
 
     public async Task<CustomerSigningOtpResult> RequestPortalOtp(long customerId, long reviewId, CancellationToken ct)
     {
-        if (!environment.IsDevelopment() && !smsOptions.Value.Enabled)
-            throw new InternalAppException(503, "Dịch vụ gửi OTP chưa được cấu hình.");
         var link = await ResolvePortalLink(customerId, reviewId, ct);
         var now = DateTime.UtcNow;
         // Opening the review link also sets ActivatedAt. Only a previous signing OTP starts the resend cooldown.
@@ -80,21 +77,12 @@ public sealed class CustomerSigningService(
             ContractElectronicSignatureId = await CustomerSignatureId(link.ContractDocumentId, link.ContractVersionId, ct),
             PublicChallengeId = challengeId, ProtectedOtp = otpProtector.Protect(otp), ExpiresAt = expires, FailedAttemptCount = 0, CreatedAt = now
         });
-        var phone = await db.ContractPhoneVerifies.AsNoTracking().SingleAsync(x => x.ContractPhoneVerifyId == link.ContractAccessLinkVerificationPhoneId, ct);
-        var document = await db.ContractDocuments.AsNoTracking().SingleAsync(x => x.ContractDocumentId == link.ContractDocumentId, ct);
         if (environment.IsDevelopment())
-        {
-            logger.LogWarning("DEVELOPMENT ONLY: customer signing OTP {Otp} for customer {CustomerId}, contract {ContractId}, phone ending {PhoneSuffix}",
-                otp, document.CustomerId, document.ContractDocumentId,
-                phone.ContractPhoneVerifyPhoneNumberNormalized.Length <= 4 ? phone.ContractPhoneVerifyPhoneNumberNormalized : phone.ContractPhoneVerifyPhoneNumberNormalized[^4..]);
-        }
-        else
-        {
-            sms.Enqueue(db, SmsPurpose.ElectronicSigningOtp, document.CustomerId, document.ContractDocumentId, phone.ContractPhoneVerifyPhoneNumberNormalized,
-                $"ConTrack: Ma OTP ky hop dong cua ban la {otp}. Ma het han sau 5 phut.", now);
-        }
+            logger.LogWarning("DEVELOPMENT ONLY: customer signing OTP {Otp} for contract {ContractId}", otp, link.ContractDocumentId);
+        // Send before saving: a code that never reached the customer must not start the one-minute cooldown.
+        await otpMail.Send(link.ContractDocumentId, otp, expires, ct);
         await db.SaveChangesAsync(ct);
-        return new CustomerSigningOtpResult(challengeId, expires, environment.IsDevelopment() ? "CONSOLE" : "SMS", environment.IsDevelopment() ? otp : null);
+        return new CustomerSigningOtpResult(challengeId, expires, "EMAIL", environment.IsDevelopment() ? otp : null);
     }
 
     public async Task VerifyPortalOtp(long customerId, long reviewId, CustomerSigningOtpVerification request, CancellationToken ct)

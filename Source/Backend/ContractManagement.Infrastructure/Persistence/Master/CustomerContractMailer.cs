@@ -43,7 +43,7 @@ public sealed class CustomerContractMailer(MasterDbContext db, IEmailTransport e
             if (!await ReviewData.HasAccount(db, target.CustomerId, ct))
             {
                 // A prospect has no portal login: the raw link token is not stored, so point them back to the link email.
-                var hint = "Mở lại link xem hợp đồng trong email chúng tôi đã gửi (xác minh bằng mã OTP gửi về số điện thoại). Nếu link đã hết hạn, vui lòng liên hệ nhân viên phụ trách để nhận link mới.";
+                var hint = "Mở lại link xem hợp đồng trong email chúng tôi đã gửi (xác minh bằng mã OTP gửi qua email). Nếu link đã hết hạn, vui lòng liên hệ nhân viên phụ trách để nhận link mới.";
                 await email.SendAsync(new EmailMessage(address, subject, $"{greeting}\n\n{contract}\n{prospectMessage ?? message}\n\n{hint}",
                     $"<p>{WebUtility.HtmlEncode(greeting)}</p><p><strong>{WebUtility.HtmlEncode(contract)}</strong></p><p>{WebUtility.HtmlEncode(prospectMessage ?? message)}</p><p>{WebUtility.HtmlEncode(hint)}</p>"), ct);
                 return true;

@@ -28,7 +28,7 @@ public sealed class ContractReviewRepository(
     {
         if (!actor.CanWrite) throw new InternalAppException(403, "Chỉ kinh doanh được gửi khách.");
         var doc = await OwnedDocument(documentId, actor, ct);
-        // A customer with a portal account logs in to read it; a prospect gets a one-contract link opened by SMS OTP.
+        // A customer with a portal account logs in to read it; a prospect gets a one-contract link opened by phone check plus an emailed OTP.
         var hasAccount = await ReviewData.HasAccount(db, doc.CustomerId, ct);
         var expires = hasAccount ? DateTime.MaxValue : ReviewLink.Expiry(request.LinkExpiresAt, DateTime.UtcNow) ?? throw new ArgumentException("Chọn thời gian hết hạn link sau thời điểm hiện tại.");
         ReviewData.Expect(doc.RowVersion, request.RowVersion);

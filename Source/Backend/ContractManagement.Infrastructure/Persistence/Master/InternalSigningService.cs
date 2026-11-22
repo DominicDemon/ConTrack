@@ -205,23 +205,29 @@ public sealed class InternalSigningService(
     {
         using var pdf = PdfPigDocument.Open(pdfBytes);
         var expectedName = Tokens(signerName);
-        for (var pageNumber = pdf.NumberOfPages; pageNumber >= 1; pageNumber--)
-        {
-            var page = pdf.GetPage(pageNumber);
-            var words = page.GetWords().ToList();
-            var nameBounds = FindSequence(words, expectedName);
-            if (nameBounds is not null)
-                return Placement(pageNumber, page.Width, page.Height, nameBounds, aboveName: true);
-        }
-
+        // The signature block's party label comes first: the signer's name also appears in the parties section
+        // ("Đại diện: ..."), and matching it there stamped the signature over page one.
         var expectedLabel = Tokens(partyLabel);
         for (var pageNumber = pdf.NumberOfPages; pageNumber >= 1; pageNumber--)
         {
             var page = pdf.GetPage(pageNumber);
-            var bounds = FindSequence(page.GetWords().ToList(), expectedLabel);
-            if (bounds is not null)
-                return Placement(pageNumber, page.Width, page.Height, bounds, aboveName: false);
+            var words = page.GetWords().ToList();
+            var label = FindSequence(words, expectedLabel);
+            if (label is null) continue;
+            // A name printed under the label, in the same column, is where the signer signs above.
+            var column = words.Where(w => w.BoundingBox.Top < label.Bottom
+                && w.BoundingBox.Right > label.Left - 60 && w.BoundingBox.Left < label.Right + 60).ToList();
+            var name = FindSequence(column, expectedName);
+            return name is not null && label.Bottom - name.Top < 200
+                ? Placement(pageNumber, page.Width, page.Height, name, aboveName: true)
+                : Placement(pageNumber, page.Width, page.Height, label, aboveName: false);
         }
+
+        // No label: a name on the last page can only be the signature block.
+        var last = pdf.GetPage(pdf.NumberOfPages);
+        var lastName = FindSequence(last.GetWords().ToList(), expectedName);
+        if (lastName is not null)
+            return Placement(pdf.NumberOfPages, last.Width, last.Height, lastName, aboveName: true);
 
         var lastPage = pdf.GetPage(pdf.NumberOfPages);
         var width = Math.Min(174m, (decimal)lastPage.Width * 0.42m);
@@ -478,7 +484,7 @@ public sealed class InternalSigningService(
         // After the commit: it is now the customer's turn to sign on the portal.
         if (customerMail is not null)
             await customerMail.Send(result.DocumentId, "Công ty đã ký hợp đồng, mời bạn ký",
-                "Đại diện công ty đã ký hợp đồng. Bạn mở hợp đồng trên Cổng khách hàng, xác nhận mã OTP gửi tới số điện thoại và ký để hoàn tất.", ct);
+                "Đại diện công ty đã ký hợp đồng. Bạn mở hợp đồng trên Cổng khách hàng, xác nhận mã OTP gửi qua email và ký để hoàn tất.", ct);
         return result;
     }
 
@@ -777,7 +783,9 @@ public sealed class InternalSigningService(
             AddParagraph(term.Content, bodyFont, new XSolidBrush(navy), indent: 8, spaceAfter: 9);
         }
 
-        const double signatureBlockHeight = 110;
+        // Label (18) · signature box (gap 2 + 48) · name (gap 4 + 20): the stamped box is painted white,
+        // so it must start below the label or it hides the label's lower half.
+        const double signatureBlockHeight = 120, signatureBoxOffset = 20, signatureBoxHeight = 48, signerNameOffset = 72;
         EnsureSpace(signatureBlockHeight);
         var signatureTop = y + 12;
         var slotWidth = (innerWidth - 24) / 2;
@@ -789,7 +797,7 @@ public sealed class InternalSigningService(
             var fullName = party.Contains("BÊN A", StringComparison.OrdinalIgnoreCase)
                 ? Field("CUSTOMER_CONTACT_NAME", customer.CustomerDisplayName)
                 : Field("PROVIDER_REPRESENTATIVE_NAME", Field("PROVIDER_LEGAL_NAME", "[THÔNG TIN CẦN BỔ SUNG]"));
-            graphics.DrawString(fullName, labelFont, new XSolidBrush(navy), new XRect(x, signatureTop + 68, slotWidth, 20), XStringFormats.TopCenter);
+            graphics.DrawString(fullName, labelFont, new XSolidBrush(navy), new XRect(x, signatureTop + signerNameOffset, slotWidth, 20), XStringFormats.TopCenter);
         }
         DrawSignatureSlot(customerX, bilingual ? "PARTY A / ĐẠI DIỆN BÊN A" : "ĐẠI DIỆN BÊN A");
         DrawSignatureSlot(companyX, bilingual ? "PARTY B / ĐẠI DIỆN BÊN B" : "ĐẠI DIỆN BÊN B");
@@ -808,7 +816,7 @@ public sealed class InternalSigningService(
         pdf.Save(stream);
         return new RenderedContractPdf(stream.ToArray(), pages.Count,
             (int)(companyX + (slotWidth - 190) / 2), (int)(customerX + (slotWidth - 190) / 2),
-            (int)(signatureTop + 8), 190, 56);
+            (int)Math.Ceiling(signatureTop + signatureBoxOffset), 190, (int)signatureBoxHeight);
     }
 
     private static string FormatMoney(decimal amount) => amount.ToString("#,##0.##", System.Globalization.CultureInfo.GetCultureInfo("vi-VN"));

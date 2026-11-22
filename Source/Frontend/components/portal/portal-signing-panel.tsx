@@ -85,7 +85,7 @@ export default function PortalSigningPanel({ reviewId, children, onSigned }: { r
       const result = await customerApi<CustomerSigningOtpResult>(`${base}/otp/request`, "POST");
       setChallengeId(result.challengeId);
       setOtp(result.developmentOtp ?? "");
-      setNotice(result.developmentOtp ? `Mã OTP thử nghiệm: ${result.developmentOtp}` : "Mã OTP đã được gửi đến số điện thoại đăng ký với hợp đồng.");
+      setNotice(result.developmentOtp ? `Mã OTP thử nghiệm: ${result.developmentOtp}` : "Mã OTP đã được gửi đến email ghi trong hợp đồng.");
     } catch (e) { if (handleAuthError(e, router.replace)) setError((e as Error).message); }
     finally { setBusy(false); }
   }

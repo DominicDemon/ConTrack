@@ -94,6 +94,7 @@ public static class InternalHost
         builder.Services.AddScoped<CustomerContractMailer>();
         builder.Services.AddHostedService<ContractExpiryReminderWorker>();
         builder.Services.AddScoped<ReviewLinkMailer>();
+        builder.Services.AddScoped<ICustomerOtpMail, CustomerOtpMailer>();
         builder.Services.AddScoped<ReviewLinkOtp>();
         builder.Services.AddMemoryCache();
         ScanEndpoints.Register(builder.Services, builder.Configuration);

@@ -3,13 +3,13 @@ using System.Text;
 using ContractManagement.Application.Features.Internal;
 using ContractManagement.Domain.Internal;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Options;
+using ContractManagement.Infrastructure.Persistence.Master;
 
 namespace ContractManagement.Infrastructure.Sms;
 
-/// <summary>Phone check and one-time code for the review link.</summary>
+/// <summary>Phone check, then a one-time code emailed to the contract's customer email, for the review link.</summary>
 // shortcut: challenges live in this process's memory, so a restart cancels pending codes; move to a table before running more than one API instance.
-public sealed class ReviewLinkOtp(IMemoryCache cache, ISmsSender sms, IOptions<EsmsOptions> options, IConfiguration config, IHostEnvironment environment)
+public sealed class ReviewLinkOtp(IMemoryCache cache, ICustomerOtpMail mail, IConfiguration config, IHostEnvironment environment)
 {
     public const int MaxAttempts = 5, MaxSendsPerHour = 5, MaxPhoneFailures = 5;
     public static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(5), Cooldown = TimeSpan.FromSeconds(60);
@@ -34,7 +34,7 @@ public sealed class ReviewLinkOtp(IMemoryCache cache, ISmsSender sms, IOptions<E
     }
 
     /// <summary>
-    /// The sale resends the code to the phone in the contract: the customer's locks for this review (wrong phone, too many sends,
+    /// The sale resends the code to the customer email: the customer's locks for this review (wrong phone, too many sends,
     /// too many wrong codes) and the password-login lock of that phone are lifted, so the customer is never stuck waiting.
     /// </summary>
     public async Task ResendByEmployee(ReviewLinkAccess link, CancellationToken ct)
@@ -49,7 +49,7 @@ public sealed class ReviewLinkOtp(IMemoryCache cache, ISmsSender sms, IOptions<E
     /// <summary>Wrong-password counter of the portal login (CustomerPortalEndpoints), keyed by normalized phone.</summary>
     public static string LoginFailureKey(string phone) => "customer-login-fail:" + phone;
 
-    // Also stops a double click (customer or sale) from sending two SMS.
+    // Also stops a double click (customer or sale) from sending two emails.
     private void CheckCooldown(long reviewId)
     {
         if (cache.TryGetValue(Key(reviewId), out Challenge? previous) && DateTime.UtcNow - previous!.SentAt < Cooldown)
@@ -67,10 +67,8 @@ public sealed class ReviewLinkOtp(IMemoryCache cache, ISmsSender sms, IOptions<E
             Console.WriteLine($"[DEV] OTP review {link.ReviewId} ({PhoneNumber.Mask(link.Phone)}): {code} - het han sau {Lifetime.TotalMinutes:0} phut");
             return;
         }
-        var result = await sms.SendAsync(link.Phone, options.Value.ReviewOtpTemplate.Replace("{otp}", code), Guid.NewGuid().ToString("N"), ct);
-        if (result.CodeResult == "100") return;
-        cache.Remove(key);
-        throw new InternalAppException(503, "Không gửi được mã xác nhận. Vui lòng thử lại sau.");
+        try { await mail.SendForReview(link.ReviewId, code, now + Lifetime, ct); }
+        catch { cache.Remove(key); throw; }
     }
 
     /// <summary>Throws unless the code matches. A code works once and dies after MaxAttempts wrong tries.</summary>

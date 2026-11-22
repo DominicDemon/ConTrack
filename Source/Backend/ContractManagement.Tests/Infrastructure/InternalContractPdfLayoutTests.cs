@@ -74,6 +74,16 @@ public sealed class InternalContractPdfLayoutTests
             letter => Assert.Contains(expectedFont, letter.FontName?.Replace(" ", "") ?? "", StringComparison.OrdinalIgnoreCase));
         Assert.InRange(rendered.CustomerSignatureX + rendered.SignatureWidth, 0, 595 - 44);
         Assert.InRange(rendered.CompanySignatureX + rendered.SignatureWidth, 0, 595 - 44);
+
+        // The stamped box is painted white: no printed text (the party labels above, the names below) may sit inside it.
+        var signaturePage = pdf.GetPage(rendered.SignaturePage);
+        foreach (var x in new[] { rendered.CustomerSignatureX, rendered.CompanySignatureX })
+        {
+            double top = signaturePage.Height - rendered.SignatureY, bottom = top - rendered.SignatureHeight;
+            Assert.DoesNotContain(signaturePage.Letters, letter => letter.Value.Any(char.IsLetter)
+                && letter.GlyphRectangle.Left < x + rendered.SignatureWidth && letter.GlyphRectangle.Right > x
+                && letter.GlyphRectangle.Bottom < top && letter.GlyphRectangle.Top > bottom);
+        }
     }
 
 }

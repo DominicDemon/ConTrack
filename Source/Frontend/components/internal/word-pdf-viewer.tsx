@@ -12,8 +12,10 @@ export default function WordPdfViewer({ url }: { url: string }) {
     host?.replaceChildren();
 
     void (async () => {
-      const pdfjs = await import("pdfjs-dist");
-      const worker = new Worker(new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url), { type: "module" });
+      // Legacy build: the modern build of pdf.js 6.5 mis-maps the glyphs of LibreOffice subset fonts in Chrome
+      // (Vietnamese text shows as `H ! " Đ#NG`); the same file renders correctly with the legacy build.
+      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      const worker = new Worker(new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url), { type: "module" });
       const pdfWorker = pdfjs.PDFWorker.create({ port: worker });
       const task = pdfjs.getDocument({ url, worker: pdfWorker });
       dispose = () => { void task.destroy(); worker.terminate(); };

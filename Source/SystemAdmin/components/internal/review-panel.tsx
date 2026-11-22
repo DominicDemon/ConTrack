@@ -2,6 +2,7 @@
 import { sendIssues as validateSend, focusIssue } from "../../../Shared/draft-validation";
 import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 import DraftPreview from "./draft-preview";
+import WordDraftPreview from "./word-draft-preview";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -140,7 +141,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
   const mailed = (r: ReviewSummary) => { if (r.linkEmailSent) setNotice(prospect ? "Đã gửi email có link xem hợp đồng cho khách." : "Đã gửi email mời khách đăng nhập Cổng khách hàng để xem."); else setError(prospect ? "Chưa gửi được email cho khách. Kiểm tra email trong hợp đồng hoặc cấu hình SMTP rồi bấm Gửi lại link." : "Đã gửi hợp đồng lên Cổng khách hàng nhưng chưa gửi được email báo khách. Kiểm tra email hoặc cấu hình SMTP."); };
   const send = () => ask({ title: "Gửi khách xem", action: "Gửi khách xem",
     description: prospect
-      ? `Gửi phiên bản ${record.versionNo} cho khách tiềm năng ${record.customerName} (${record.customerPhoneMasked}). Phiên bản sẽ bị khóa; khách không cần tài khoản: nhận email có link, xác minh số điện thoại bằng mã OTP rồi xem, góp ý và ký ngay trên link.`
+      ? `Gửi phiên bản ${record.versionNo} cho khách tiềm năng ${record.customerName} (${record.customerPhoneMasked}). Phiên bản sẽ bị khóa; khách không cần tài khoản: nhận email có link, nhập số điện thoại và mã OTP gửi qua email rồi xem, góp ý và ký ngay trên link.`
       : `Gửi phiên bản ${record.versionNo} cho ${record.customerName} (${record.customerPhoneMasked}). Phiên bản sẽ bị khóa; khách đã có tài khoản nên nhận email mời đăng nhập Cổng khách hàng để xem và phản hồi.`,
     note: { label: "Lời nhắn cho khách (tùy chọn)", max: 1000 }, expiry: prospect,
     run: (n, linkExpiresAt) => internalApi<ReviewSummary>(`/contract-drafts/${record.id}/send-review`, "POST", { message: n || null, rowVersion: record.rowVersion, versionRowVersion: record.versionRowVersion, contentConfirmed: true, linkExpiresAt: linkExpiresAt || null }).then(mailed) });
@@ -206,7 +207,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
           <button className={ui.secondaryButton} disabled={busy} onClick={() => followup("CLOSE")}><XCircle size={16}/>Đóng draft</button></>}
         {user.canWrite && linkUsable && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
         {user.canWrite && linkUsable && latest && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách không kịp nhập mã, nhập sai quá nhiều lần hoặc bị khóa đăng nhập"
-          onClick={() => void act(() => internalApi(`/contract-reviews/${latest.id}/resend-otp`, "POST"), `Đã gửi mã OTP mới tới ${record.customerPhoneMasked} và mở khóa cho khách. Khách mở link trong email, chọn “Đã có mã” và nhập mã (hiệu lực 5 phút).`)}><KeyRound size={16}/>Gửi lại mã OTP</button>}
+          onClick={() => void act(() => internalApi(`/contract-reviews/${latest.id}/resend-otp`, "POST"), `Đã gửi mã OTP mới tới email của khách và mở khóa cho khách. Khách mở link trong email, chọn “Đã có mã” và nhập mã (hiệu lực 5 phút).`)}><KeyRound size={16}/>Gửi lại mã OTP</button>}
         {canDecideFinal && <>
           <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>{business ? "Duyệt, chuyển ký giấy" : "Duyệt và gửi Sếp ký"}</button>
           <button className={ui.secondaryButton} disabled={busy || dirty} onClick={() => decideApproval(false)}><XCircle size={16}/>Từ chối</button>
@@ -234,7 +235,7 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
     {(record.carriedComments?.length ?? 0) > 0 && <section className={ui.notice}><strong>Góp ý chuyển tiếp sang phiên bản này</strong>{record.carriedComments?.map(c => <div key={c.id}><p>{c.content} · chuyển từ bản trước · {c.resolved ? "Đã xử lý" : "Chưa xử lý"}</p>{!c.resolved && <button type="button" disabled={busy} className={ui.secondaryButton} onClick={() => void act(async () => { await internalApi(`/contract-comments/${c.id}/resolve`,"POST"); onChanged(); })}>Đánh dấu đã xử lý</button>}</div>)}</section>}
     {latest && <div className={s.customerPortalAccess}>
       {prospect
-        ? <div><strong>Cách khách mở hợp đồng</strong><p>Khách tiềm năng chưa có tài khoản: khách mở link riêng trong email, xác minh số điện thoại bằng mã OTP rồi xem, góp ý, đồng ý và ký ngay trên link đó. Link chỉ mở được hợp đồng này.</p><p className={s.muted}>Khi khách đồng ý lần đầu, hệ thống tự cấp tài khoản và gửi hướng dẫn đăng nhập qua email.</p></div>
+        ? <div><strong>Cách khách mở hợp đồng</strong><p>Khách tiềm năng chưa có tài khoản: khách mở link riêng trong email, nhập số điện thoại và mã OTP gửi qua email rồi xem, góp ý, đồng ý và ký ngay trên link đó. Link chỉ mở được hợp đồng này.</p><p className={s.muted}>Khi khách đồng ý lần đầu, hệ thống tự cấp tài khoản và gửi hướng dẫn đăng nhập qua email.</p></div>
         : <div><strong>Cách khách mở hợp đồng</strong><p>Khách đã có tài khoản: khách đăng nhập Cổng khách hàng bằng số điện thoại và mật khẩu, rồi chọn hợp đồng trong mục “Hợp đồng của bạn”. Khách nhận email báo có hợp đồng mới.</p></div>}
       {!prospect && <a href={customerPortalLoginUrl} target="_blank" rel="noreferrer">Mở Portal khách hàng</a>}
     </div>}
@@ -285,7 +286,10 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
 
     <Dialog open={!!confirm} onOpenChange={v => { if (!busy && !v) setConfirm(null); }}><DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
       <DialogHeader><DialogTitle>{confirm?.title}</DialogTitle><DialogDescription>{confirm?.description}</DialogDescription></DialogHeader>
-      {(confirm?.action === "Gửi khách xem" || confirm?.action === "Duyệt, chuyển Sếp ký") && <><DraftPreview content={record.content} code={record.code}/><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>{confirm.action === "Gửi khách xem" ? "Tôi đã kiểm tra bên giao dịch, số tiền, lịch thanh toán và các nội dung viết cố định trong mẫu." : "Tôi đã mở và kiểm tra chi tiết bản khách đã đồng ý; xác nhận duyệt và tạo phiên ký cho Sếp."}</label></>}{confirm?.expiry && <label className="grid gap-2 text-sm font-medium">Link hết hạn lúc *<input required type="datetime-local" className={ui.field} value={expiry} disabled={busy} onChange={e => setExpiry(e.target.value)}/></label>}{confirm?.note && <label className="grid gap-2 text-sm font-medium">{confirm.note.label}<Textarea maxLength={confirm.note.max} value={note} disabled={busy} onChange={e => setNote(e.target.value)}/></label>}
+      {(confirm?.action === "Gửi khách xem" || confirm?.action === "Duyệt, chuyển Sếp ký") && <>{/* A Word-template contract is checked on its real PDF, as the editor shows it: the HTML layout would re-split the Word text into numbered clauses. */}
+        {record.content.templateSnapshot?.wordStorageKey
+          ? <WordDraftPreview content={record.content} draftId={String(record.id)} dirty={dirty}/>
+          : <DraftPreview content={record.content} code={record.code}/>}<label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)}/>{confirm.action === "Gửi khách xem" ? "Tôi đã kiểm tra bên giao dịch, số tiền, lịch thanh toán và các nội dung viết cố định trong mẫu." : "Tôi đã mở và kiểm tra chi tiết bản khách đã đồng ý; xác nhận duyệt và tạo phiên ký cho Sếp."}</label></>}{confirm?.expiry && <label className="grid gap-2 text-sm font-medium">Link hết hạn lúc *<input required type="datetime-local" className={ui.field} value={expiry} disabled={busy} onChange={e => setExpiry(e.target.value)}/></label>}{confirm?.note && <label className="grid gap-2 text-sm font-medium">{confirm.note.label}<Textarea maxLength={confirm.note.max} value={note} disabled={busy} onChange={e => setNote(e.target.value)}/></label>}
       <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setConfirm(null)}>Hủy</Button>
         <Button type="button" disabled={busy || (!!confirm?.expiry && !expiry) || ((confirm?.action === "Gửi khách xem" || confirm?.action === "Duyệt, chuyển Sếp ký") && !confirmed) || (!!confirm?.note?.required && !note.trim())} onClick={() => void run()}>{busy ? "Đang xử lý…" : confirm?.action}</Button></DialogFooter>
     </DialogContent></Dialog>

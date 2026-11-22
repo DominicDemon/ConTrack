@@ -10,6 +10,7 @@ import { imagesToPdf } from "@/components/signed-scans/images-to-pdf";
 import { MAX_SCAN_BYTES, pageCountLabel, ScanPagesPicker, type ScanPages } from "@/components/signed-scans/scan-pages-picker";
 import { StatusBadge } from "@/components/signed-scans/status-badge";
 import { ScanFileButtons } from "./scan-file-buttons";
+import { ListPager } from "./list-pager";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,10 +25,13 @@ import {
   scannedContractsApi,
   type ScannedBatch,
   type ScannedContract,
+  type ScanPage,
 } from "@/services/scans/scanned-contracts";
 
 const MAX_FILES = 20;
 const POLL_MS = 3000;
+const BATCHES_PER_PAGE = 10;
+const CONTRACTS_PER_PAGE = 20;
 
 export const scannedJobHref = (jobId: string) => `/workspace/scanned-contracts/jobs/${jobId}`;
 
@@ -313,30 +317,40 @@ function ContractTable({ contracts }: { contracts: ScannedContract[] }) {
 /** Old paper contracts brought into the system by scanning (CONTRACTS.source_type = SCANNED). */
 export function ScannedContractsPage() {
   const { can } = useScanAccess();
-  const [batches, setBatches] = useState<ScannedBatch[] | null>(null);
-  const [contracts, setContracts] = useState<ScannedContract[] | null>(null);
+  const [batches, setBatches] = useState<ScanPage<ScannedBatch> | null>(null);
+  const [contracts, setContracts] = useState<ScanPage<ScannedContract> | null>(null);
+  const [batchPage, setBatchPage] = useState(1);
+  const [contractPage, setContractPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const [nextBatches, nextContracts] = await Promise.all([
-        scannedContractsApi.listBatches(),
-        scannedContractsApi.listContracts(),
+        scannedContractsApi.listBatches(batchPage, BATCHES_PER_PAGE),
+        scannedContractsApi.listContracts(contractPage, CONTRACTS_PER_PAGE),
       ]);
+      // A page that emptied (e.g. the last row moved on) falls back to the last page that has rows.
+      const lastBatchPage = Math.max(1, Math.ceil(nextBatches.total / BATCHES_PER_PAGE));
+      const lastContractPage = Math.max(1, Math.ceil(nextContracts.total / CONTRACTS_PER_PAGE));
+      if (batchPage > lastBatchPage) setBatchPage(lastBatchPage);
+      if (contractPage > lastContractPage) setContractPage(lastContractPage);
       setBatches(nextBatches);
       setContracts(nextContracts);
       setError(null);
     } catch (loadError) {
       setError(getScanErrorMessage(loadError, "Không tải được danh sách."));
     }
-  }, []);
+  }, [batchPage, contractPage]);
 
+  // Loaded from a timer callback, not in the effect body itself (react-hooks/set-state-in-effect).
   useEffect(() => {
-    void load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   // While OCR is reading a file, ask again every few seconds.
-  const reading = batches?.some((batch) => batch.jobs.some((job) => job.jobStatus === "QUEUED" || job.jobStatus === "PROCESSING"));
+  // Only the shown page is asked again: older pages hold finished batches.
+  const reading = batches?.items.some((batch) => batch.jobs.some((job) => job.jobStatus === "QUEUED" || job.jobStatus === "PROCESSING"));
   useEffect(() => {
     if (!reading) return;
     const timer = window.setInterval(() => void load(), POLL_MS);
@@ -363,21 +377,47 @@ export function ScannedContractsPage() {
         </Alert>
       )}
 
-      {can(SCANNED_PERMISSIONS.upload) && <UploadCard onUploaded={() => void load()} />}
+      {can(SCANNED_PERMISSIONS.upload) && (
+        <UploadCard
+          onUploaded={() => {
+            // The new batch is the newest: show the first page, where it is.
+            if (batchPage === 1) void load();
+            else setBatchPage(1);
+          }}
+        />
+      )}
 
       <Card>
         <CardHeader>
           <CardTitle>Lượt scan gần đây</CardTitle>
           <CardDescription>Mở bản scan để xem tệp, sửa từ khóa hoặc tạo hợp đồng từ nó.</CardDescription>
         </CardHeader>
-        <CardContent>{batches ? <BatchList batches={batches} /> : <Skeleton className="h-24 w-full" />}</CardContent>
+        <CardContent>
+          {batches ? (
+            <>
+              <BatchList batches={batches.items} />
+              <ListPager page={batchPage} pageSize={BATCHES_PER_PAGE} total={batches.total} onPage={setBatchPage} label="lượt scan" />
+            </>
+          ) : (
+            <Skeleton className="h-24 w-full" />
+          )}
+        </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>Hợp đồng đã tạo từ bản scan</CardTitle>
         </CardHeader>
-        <CardContent>{contracts ? <ContractTable contracts={contracts} /> : <Skeleton className="h-24 w-full" />}</CardContent>
+        <CardContent>
+          {contracts ? (
+            <>
+              <ContractTable contracts={contracts.items} />
+              <ListPager page={contractPage} pageSize={CONTRACTS_PER_PAGE} total={contracts.total} onPage={setContractPage} label="hợp đồng" />
+            </>
+          ) : (
+            <Skeleton className="h-24 w-full" />
+          )}
+        </CardContent>
       </Card>
     </>
   );

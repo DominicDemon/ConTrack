@@ -150,13 +150,15 @@ public sealed class ScanKeywordJobRunner(MasterDbContext db, IFileStore files, I
             await db.SaveChangesAsync(cancellationToken);
 
             // Every kind of keyword found: SUCCESS. Something missing: the checker has to look for it on the paper.
-            var foundAll = Enum.GetValues<ScanKeywordType>().All(type => result.Keywords.Any(keyword => keyword.Type == type));
+            var foundAll = ContractScanKeywordExtractor.ExpectedTypes.All(type => result.Keywords.Any(keyword => keyword.Type == type));
             var status = foundAll ? OcrJobStatuses.Success : OcrJobStatuses.NeedReview;
             await db.OcrJobs
                 .Where(candidate => candidate.OcrJobId == job.OcrJobId)
                 .ExecuteUpdateAsync(setters => setters
                         .SetProperty(candidate => candidate.OcrJobProcessingStatus, status)
-                        .SetProperty(candidate => candidate.OcrText, result.Text)
+                        // Only the keywords are kept. The full text would let anyone who reads the database read
+                        // the contract without a key, and nothing uses it.
+                        .SetProperty(candidate => candidate.OcrText, (string?)null)
                         .SetProperty(candidate => candidate.PageCount, result.PageCount)
                         .SetProperty(candidate => candidate.ErrorMessage, (string?)null)
                         .SetProperty(candidate => candidate.CompletedAt, now),

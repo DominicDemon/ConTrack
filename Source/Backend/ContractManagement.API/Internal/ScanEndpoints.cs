@@ -41,6 +41,12 @@ public static class ScanEndpoints
 
     public sealed record AddKeywordRequest(string? Type, string? Value);
 
+    public sealed record SendKeyCodeRequest(string? Password);
+
+    public sealed record SetKeyRequest(string? Password, string? Code, string? NewKey);
+
+    public sealed record ChangeKeyRequest(string? CurrentKey, string? NewKey);
+
     /// <summary>Addresses to send a scan to (each entry may hold several, as pasted) and an optional note.</summary>
     public sealed record EmailRequest(List<string?>? Recipients, string? Note);
 
@@ -107,8 +113,8 @@ public static class ScanEndpoints
             .Need(SigningPermissions.View, SigningPermissions.Upload)
             .AcceptsUpload(MaxSingleUploadBytes);
 
-        routes.MapGet("/signed-evidence/search", async (string? q, string? type, ScanSearchService service, CancellationToken ct) =>
-            Results.Ok(await service.SearchAsync(q, type, ct))).NeedAny(SigningPermissions.View, ScannedContractPermissions.View);
+        routes.MapGet("/signed-evidence/search", async (string? q, string? type, string? from, string? to, ScanSearchService service, CancellationToken ct) =>
+            Results.Ok(await service.SearchAsync(q, type, from, to, ct))).NeedAny(SigningPermissions.View, ScannedContractPermissions.View);
 
         routes.MapGet("/signed-evidence/{evidenceId:long}/file", async (long evidenceId, HttpContext context, SignedEvidenceService service, CancellationToken ct) =>
         {
@@ -118,8 +124,17 @@ public static class ScanEndpoints
 
         // Sends the evidence file as a PDF attachment; opened with the sender's own key, like "View".
         routes.MapPost("/signed-evidence/{evidenceId:long}/email", async (long evidenceId, EmailRequest request, HttpContext context, ScanEmailService service, CancellationToken ct) =>
-            Results.Ok(await service.SendEvidenceAsync(evidenceId, request.Recipients, request.Note, FileKey(context), ct)))
+            Results.Accepted(value: await service.SendEvidenceAsync(evidenceId, request.Recipients, request.Note, FileKey(context), ct)))
             .Need(SigningPermissions.View);
+
+        // Staff who send scans see their own sendings; the director (audit.security) and the head of legal (keys) see everyone's.
+        routes.MapGet("/scan-emails", async (ScanEmailService service, CancellationToken ct) => Results.Ok(await service.HistoryAsync(ct)))
+            .NeedAny(SigningPermissions.View, ScannedContractPermissions.View, ScanEmailService.AuditPermission, EncryptionKeyPermissions.Manage);
+
+        // Progress of a sending the caller started (emails go out in the background).
+        routes.MapGet("/scan-emails/{jobId}", (string jobId, ScanEmailService service) =>
+            service.Progress(jobId) is { } progress ? Results.Ok(progress) : throw new InternalAppException(404, "Không tìm thấy lượt gửi email."))
+            .NeedAny(SigningPermissions.View, ScannedContractPermissions.View);
 
         routes.MapPost("/signed-evidence/{evidenceId:long}/accept", async (long evidenceId, AcceptRequest request, SignedEvidenceService service, CancellationToken ct) =>
         {
@@ -179,8 +194,8 @@ public static class ScanEndpoints
             .Need(ScannedContractPermissions.View, ScannedContractPermissions.Upload)
             .AcceptsUpload(MaxBatchUploadBytes);
 
-        routes.MapGet("/scanned-contracts/batches", async (ScannedContractService service, CancellationToken ct) =>
-            Results.Ok(await service.ListBatchesAsync(ct))).Need(ScannedContractPermissions.View);
+        routes.MapGet("/scanned-contracts/batches", async (int? page, int? pageSize, ScannedContractService service, CancellationToken ct) =>
+            Results.Ok(await service.ListBatchesAsync(page, pageSize, ct))).Need(ScannedContractPermissions.View);
 
         routes.MapGet("/scanned-contracts/batches/{batchId:long}", async (long batchId, ScannedContractService service, CancellationToken ct) =>
             Results.Ok(await service.GetBatchAsync(batchId, ct))).Need(ScannedContractPermissions.View);
@@ -200,7 +215,7 @@ public static class ScanEndpoints
 
         // Sends the scan as a PDF attachment; opened with the sender's own key, like "View".
         routes.MapPost("/scanned-contracts/jobs/{jobId:long}/email", async (long jobId, EmailRequest request, HttpContext context, ScanEmailService service, CancellationToken ct) =>
-            Results.Ok(await service.SendScannedJobAsync(jobId, request.Recipients, request.Note, FileKey(context), ct)))
+            Results.Accepted(value: await service.SendScannedJobAsync(jobId, request.Recipients, request.Note, FileKey(context), ct)))
             .Need(ScannedContractPermissions.View);
 
         // A keyword OCR missed or read wrong; the scan is found by it at once.
@@ -221,8 +236,8 @@ public static class ScanEndpoints
             return Results.Ok(await service.GetJobAsync(jobId, ct));
         }).Need(ScannedContractPermissions.View, ScannedContractPermissions.Confirm);
 
-        routes.MapGet("/scanned-contracts", async (ScannedContractService service, CancellationToken ct) =>
-            Results.Ok(await service.ListContractsAsync(ct))).Need(ScannedContractPermissions.View);
+        routes.MapGet("/scanned-contracts", async (int? page, int? pageSize, ScannedContractService service, CancellationToken ct) =>
+            Results.Ok(await service.ListContractsAsync(page, pageSize, ct))).Need(ScannedContractPermissions.View);
 
         routes.MapGet("/scanned-contracts/{contractId:long}/file", async (long contractId, HttpContext context, ScannedContractService service, CancellationToken ct) =>
         {
@@ -242,9 +257,12 @@ public static class ScanEndpoints
         routes.MapGet("/encryption-keys", async (FileProtectionService protection, CancellationToken ct) =>
             Results.Ok(await protection.ListKeysAsync(ct))).Need(EncryptionKeyPermissions.Manage);
 
-        // The answer holds the key, shown once; the internal host already sends no-store on every response.
-        routes.MapPost("/encryption-keys/{employeeId:long}", async (long employeeId, FileProtectionService protection, CancellationToken ct) =>
-            Results.Ok(await protection.IssueKeyAsync(employeeId, ct))).Need(EncryptionKeyPermissions.Manage);
+        // Employees set their own key; the administrator only stops one (an employee who leaves, a key someone else knows).
+        routes.MapPost("/encryption-keys/{employeeId:long}/revoke", async (long employeeId, FileProtectionService protection, CancellationToken ct) =>
+        {
+            await protection.RevokeKeyAsync(employeeId, ct);
+            return Results.NoContent();
+        }).Need(EncryptionKeyPermissions.Manage);
 
         // Reopens the employee's old files for their current key with the company recovery private key: the file sent
         // with this request only and never kept, or, without a file, the key the server keeps.
@@ -261,13 +279,18 @@ public static class ScanEndpoints
             return Results.Ok(await protection.RecoverFilesAsync(employeeId, pem, ct));
         }).AcceptsUpload(64 * 1024).Need(EncryptionKeyPermissions.Manage);
 
-        routes.MapGet("/encryption-keys/me", async (FileProtectionService protection, ICurrentEmployee employee, CancellationToken ct) =>
-            Results.Ok(new
-            {
-                hasKey = await protection.HasActiveKeyAsync(employee.EmployeeId, ct),
-                encryptionEnabled = protection.Enabled,
-                serverKeepsRecoveryKey = protection.ServerKeepsRecoveryKey,
-            }));
+        routes.MapGet("/encryption-keys/me", async (FileKeyOwnerService owner, CancellationToken ct) =>
+            Results.Ok(await owner.MineAsync(ct)));
+
+        // Creating a key, or a new one after forgetting the old: login password, then the code sent by email.
+        routes.MapPost("/encryption-keys/me/code", async (SendKeyCodeRequest request, FileKeyOwnerService owner, CancellationToken ct) =>
+            Results.Ok(new { sentTo = await owner.SendCodeAsync(request.Password, ct) }));
+
+        routes.MapPost("/encryption-keys/me", async (SetKeyRequest request, FileKeyOwnerService owner, CancellationToken ct) =>
+            Results.Ok(await owner.SetAsync(request.Password, request.Code, request.NewKey, ct)));
+
+        routes.MapPost("/encryption-keys/me/change", async (ChangeKeyRequest request, FileKeyOwnerService owner, CancellationToken ct) =>
+            Results.Ok(await owner.ChangeAsync(request.CurrentKey, request.NewKey, ct)));
     }
 
     /// <summary>The employee, active, with the permissions of their roles and all those they depend on (guide 2.1).</summary>

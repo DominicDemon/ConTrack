@@ -15,6 +15,7 @@ import {
   Clock,
   Copy,
   FileText,
+  Headset,
   History,
   ImagePlus,
   ListChecks,
@@ -289,16 +290,17 @@ export default function AdminSupportTicketDetailPage() {
   const initializedResolutionRef = useRef<boolean>(false);
   const initializedTabRef = useRef<boolean>(false);
 
+  const canAccess = Boolean(user?.canAccess);
   const isSysAdmin =
     user?.supportRole === "SYSADMIN" ||
     user?.username?.toLowerCase() === "sysadmin" ||
     user?.username?.toLowerCase() === "admin";
 
   useEffect(() => {
-    if (isSysAdmin) {
+    if (!canAccess || isSysAdmin) {
       router.replace("/workspace");
     }
-  }, [isSysAdmin, router]);
+  }, [canAccess, isSysAdmin, router]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -349,7 +351,7 @@ export default function AdminSupportTicketDetailPage() {
   }, [activeTab]);
 
   const loadStaffList = useCallback(async () => {
-    if (!ticketId || isSysAdmin) return;
+    if (!canAccess || !ticketId || isSysAdmin) return;
     setLoadingStaff(true);
     try {
       const staff = await ticketApi.getDepartmentStaff(ticketId);
@@ -359,11 +361,11 @@ export default function AdminSupportTicketDetailPage() {
     } finally {
       setLoadingStaff(false);
     }
-  }, [ticketId, isSysAdmin]);
+  }, [ticketId, isSysAdmin, canAccess]);
 
   const loadTicket = useCallback(
     async (silent = false) => {
-      if (!Number.isFinite(ticketId) || ticketId <= 0 || isSysAdmin) return;
+      if (!canAccess || !Number.isFinite(ticketId) || ticketId <= 0 || isSysAdmin) return;
       if (!silent) setLoading(true);
       try {
         const data = await ticketApi.getById(ticketId);
@@ -394,8 +396,8 @@ export default function AdminSupportTicketDetailPage() {
             const savedTab =
               typeof window !== "undefined"
                 ? (window.sessionStorage.getItem(
-                    "contrack_support_ticket_tab",
-                  ) as AdminTabType | null)
+                  "contrack_support_ticket_tab",
+                ) as AdminTabType | null)
                 : null;
             if (role !== "DEPARTMENT_HEAD") {
               setActiveTab(savedTab === "history" ? "history" : "resolve");
@@ -426,7 +428,7 @@ export default function AdminSupportTicketDetailPage() {
         if (!silent) setLoading(false);
       }
     },
-    [ticketId, isSysAdmin, user?.supportRole],
+    [ticketId, isSysAdmin, canAccess, user?.supportRole],
   );
 
   useEffect(() => {
@@ -844,6 +846,22 @@ export default function AdminSupportTicketDetailPage() {
     );
   };
 
+  if (!canAccess || isSysAdmin) {
+    return (
+      <div className="grow overflow-y-auto bg-slate-50/50 p-4 lg:p-8 dark:bg-background">
+        <div className="mx-auto max-w-2xl py-16 text-center">
+          <Headset className="mx-auto mb-3 size-12 text-muted-foreground/40" />
+          <h2 className="text-lg font-semibold text-foreground mb-1">
+            Không có quyền truy cập
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Chức năng Hỗ trợ khách hàng chỉ dành cho nhân sự thuộc Phòng Kỹ Thuật & Hỗ Trợ, Phòng Kế Toán - Tài Chính và Phòng Hành Chính - Pháp Chế.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="grow overflow-y-auto bg-slate-50/50 p-4 lg:p-8 dark:bg-background">
@@ -1081,7 +1099,7 @@ export default function AdminSupportTicketDetailPage() {
                                         ? "border-blue-600 bg-blue-50/80 ring-1 ring-blue-600 dark:border-blue-400 dark:bg-blue-950/50"
                                         : "border-border bg-card hover:border-blue-300 hover:bg-slate-50 dark:hover:bg-slate-900",
                                       isTicketResolved &&
-                                        "cursor-not-allowed opacity-60",
+                                      "cursor-not-allowed opacity-60",
                                     )}
                                   >
                                     <div
@@ -1110,7 +1128,7 @@ export default function AdminSupportTicketDetailPage() {
                                           : staff.employeeCode
                                             ? `Mã NV: ${staff.employeeCode}`
                                             : staff.employeeEmail ||
-                                              "Nhân viên phòng ban"}
+                                            "Nhân viên phòng ban"}
                                       </p>
                                       <div className="mt-1 flex flex-wrap gap-1">
                                         {isActiveAssignee && (

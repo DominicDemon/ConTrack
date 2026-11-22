@@ -37,20 +37,28 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 && (department.DepartmentCode == "KD" || department.DepartmentName.Contains("Kinh Doanh"))
             select assignment.EmployeeId).AnyAsync(ct);
         var departmentRow = await (from ed in db.EmployeeDepartments join d in db.Departments on ed.DepartmentId equals d.DepartmentId
-            where ed.EmployeeId == id select new { d.DepartmentName, d.DepartmentManagerEmployeeId }).FirstOrDefaultAsync(ct);
-        var isManager = departmentRow?.DepartmentManagerEmployeeId == id
-            || employee.EmployeeUsername.StartsWith("head.")
-            || permissions.Contains("ticket.manage.all");
+            where ed.EmployeeId == id select new { d.DepartmentId, d.DepartmentName, d.DepartmentManagerEmployeeId }).FirstOrDefaultAsync(ct);
+        var isManager = departmentRow?.DepartmentManagerEmployeeId == id;
         var isSysAdmin = employee.EmployeeCode == "ADM-SYSADMIN" || employee.EmployeeUsername == "sysadmin";
+
+        // Chỉ nhân viên/trưởng phòng thuộc 3 phòng ban hỗ trợ (2: Kỹ thuật, 4: Kế toán, 5: Hành chính) mới có màn hỗ trợ khách hàng
+        var isSupportDepartment = departmentRow != null && (departmentRow.DepartmentId == 2 || departmentRow.DepartmentId == 4 || departmentRow.DepartmentId == 5);
 
         if (isSalesEmployee)
             permissions = permissions.Append("draft.write").Distinct().ToArray();
         if (isSysAdmin)
-            permissions = permissions.Concat(["draft.write", "draft.manage.all", "customer.manage", "product.read", "product.manage", "ticket.handle", "ticket.manage.all"]).Distinct().ToArray();
-        if (isManager)
-            permissions = permissions.Concat(["ticket.manage.all", "ticket.handle"]).Distinct().ToArray();
-        else if (departmentRow != null)
-            permissions = permissions.Append("ticket.handle").Distinct().ToArray();
+            permissions = permissions.Concat(["draft.write", "draft.manage.all", "customer.manage", "product.read", "product.manage"]).Distinct().ToArray();
+        if (isSupportDepartment)
+        {
+            if (isManager)
+                permissions = permissions.Concat(["ticket.manage.all", "ticket.handle"]).Distinct().ToArray();
+            else
+                permissions = permissions.Append("ticket.handle").Distinct().ToArray();
+        }
+        else
+        {
+            permissions = permissions.Where(p => p != "ticket.handle" && p != "ticket.manage.all").Distinct().ToArray();
+        }
 
         return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions, employee.EmployeeMustChangePassword,
             departmentRow?.DepartmentName, isManager || isSysAdmin);
@@ -113,9 +121,9 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         return name;
     }
 
-    public async Task<List<CustomerOption>> Customers(string? search, CancellationToken ct)
+    public async Task<List<CustomerOption>> Customers(string? search, CancellationToken ct, long? owner = null)
     {
-        var query = db.Customers.AsNoTracking().Where(c => c.CustomerStatus == 1);
+        var query = db.Customers.AsNoTracking().Where(c => c.CustomerStatus == 1 && (owner == null || c.CustomerOwnerEmployeeId == owner));
         if (!string.IsNullOrWhiteSpace(search)) query = query.Where(c => c.CustomerDisplayName.Contains(search) || c.CustomerPersonalPhone.Contains(search));
         var ids = await query.OrderBy(c => c.CustomerDisplayName).Select(c => c.CustomerId).Take(100).ToListAsync(ct);
         var results = new List<CustomerOption>();
@@ -201,13 +209,14 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var tax = InternalDraftPolicy.Text(input.TaxCode, 20);
         if (company.Length > 0 && tax.Length == 0) throw new ArgumentException("Thông tin doanh nghiệp cần mã số thuế.");
         if (await db.Customers.AnyAsync(c => c.CustomerPersonalPhone == phone || c.CustomerDisplayName == name || (email != "" && c.CustomerEmail == email), ct))
-            throw new InternalAppException(409, "Tên hiển thị, SĐT hoặc email đã tồn tại. Hãy tìm và chọn khách có sẵn.");
+            throw new InternalAppException(409, "Khách hàng đã có trong hệ thống (trùng tên, SĐT hoặc email). Không thấy trong danh sách của bạn thì liên hệ Phòng Hành Chính - Pháp Chế để được chuyển khách.");
         return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
             db.ChangeTracker.Clear();
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             var customer = new Customer { CustomerDisplayName = name, CustomerPersonalPhone = phone, CustomerEmail = email.Length == 0 ? null : email,
-                CustomerAddress = InternalDraftPolicy.Text(input.Address, 1000), CustomerStatus = 1, CreatedAt = DateTime.UtcNow, CreatedBy = actor };
+                CustomerAddress = InternalDraftPolicy.Text(input.Address, 1000), CustomerStatus = 1, CreatedAt = DateTime.UtcNow, CreatedBy = actor,
+                CustomerOwnerEmployeeId = actor };
             customer.CustomerPasswordHash = new PasswordHasher<Customer>().HashPassword(customer, Convert.ToBase64String(RandomNumberGenerator.GetBytes(48)));
             db.Customers.Add(customer);
             await db.SaveChangesAsync(ct);
@@ -274,20 +283,24 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     private IQueryable<ContractDocument> OfParty(string? party) => party == null ? db.ContractDocuments.AsNoTracking()
         : db.ContractDocuments.AsNoTracking().Where(d => db.ContractDynamicValues.Any(v => v.ContractDocumentId == d.ContractDocumentId
             && v.ContractVersionId == d.ContractDocumentCurrentVersionId && v.FieldKey == SnapshotKey && v.FieldValue.Contains(party)));
-    public async Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct, string? partyType = null)
+    public async Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct, string? partyType = null,
+        DateTime? createdFrom = null, DateTime? createdTo = null, int limit = 200)
     {
         var query = from d in OfParty(InternalDraftPolicy.PartyTypeMarker(partyType))
             join e in db.Employees.AsNoTracking() on d.EmployeeId equals e.EmployeeId
             join c in db.Customers.AsNoTracking() on d.CustomerId equals c.CustomerId
             join v in db.ContractVersions.AsNoTracking() on d.ContractDocumentCurrentVersionId equals v.ContractVersionId
             where d.TenantId == null && (!status.HasValue || d.ContractDocumentStatus == status)
+                && (!createdFrom.HasValue || d.CreatedDate >= createdFrom.Value)
+                && (!createdTo.HasValue || d.CreatedDate <= createdTo.Value)
                 && (search == null || d.ContractDocumentName.Contains(search)
                     || (d.ContractDocumentCode != null && d.ContractDocumentCode.Contains(search))
                     || c.CustomerDisplayName.Contains(search))
             orderby d.UpdatedDate ?? d.CreatedDate descending
             select new { d, e.EmployeeDisplayName, c.CustomerDisplayName, v.ContractVersionVersionNo,
-                v.ContractVersionIslocked };
-        var rows = await query.Take(200).ToListAsync(ct);
+                v.ContractVersionIslocked, v.ContractVersionTotalamount, v.ContractVersionCurrencycode,
+                v.ContractVersionEffectiveDate, v.ContractVersionExpireDate };
+        var rows = await query.Take(Math.Clamp(limit, 1, 5000)).ToListAsync(ct);
         var ids = rows.Select(x => x.d.ContractDocumentId).ToArray();
         var signatures = await db.ContractElectronicSignatures.AsNoTracking()
             .Where(s => ids.Contains(s.ContractDocumentId))
@@ -299,8 +312,10 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             signatures.TryGetValue(x.d.ContractDocumentId, out var signing);
             return new ContractArchiveEntry(x.d.ContractDocumentId, x.d.ContractDocumentCode ?? "",
                 x.d.ContractDocumentName, x.CustomerDisplayName, x.d.EmployeeId, x.EmployeeDisplayName,
-                x.d.UpdatedDate ?? x.d.CreatedDate, x.d.ContractDocumentStatus, x.ContractVersionVersionNo,
-                x.ContractVersionIslocked, signing?.Count ?? 0, signing?.LastSignedAt);
+                x.d.CreatedDate, x.d.UpdatedDate ?? x.d.CreatedDate, x.d.ContractDocumentStatus, x.ContractVersionVersionNo,
+                x.ContractVersionIslocked, signing?.Count ?? 0, signing?.LastSignedAt,
+                x.ContractVersionTotalamount, x.ContractVersionCurrencycode,
+                x.ContractVersionEffectiveDate, x.ContractVersionExpireDate);
         }).ToList();
     }
     public async Task<List<SigningMonitorEntry>> SigningMonitor(string? search, int? status, CancellationToken ct, string? partyType = null)

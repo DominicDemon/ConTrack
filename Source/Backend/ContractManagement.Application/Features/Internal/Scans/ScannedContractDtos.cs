@@ -2,6 +2,9 @@ using ContractManagement.Domain.Internal.Scans;
 namespace ContractManagement.Application.Features.Internal.Scans;
 
 /// <summary>One upload of old paper contracts: an OCR_BATCH with one OCR_JOB per file.</summary>
+/// <summary>One page of a list; <see cref="Total"/> counts every row the employee may see.</summary>
+public sealed record ScanPageDto<T>(IReadOnlyList<T> Items, int Total, int Page, int PageSize);
+
 public sealed record ScannedBatchDto(
     long BatchId,
     string Status,

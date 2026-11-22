@@ -19,8 +19,45 @@ public partial class MasterDbContext
 
     public virtual DbSet<FileEncryptionKey> FileEncryptionKeys { get; set; }
 
+    public virtual DbSet<CustomerEncryptionKey> CustomerEncryptionKeys { get; set; }
+
+    public virtual DbSet<CustomerFileKey> CustomerFileKeys { get; set; }
+
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<CustomerEncryptionKey>(entity =>
+        {
+            entity.ToTable("CUSTOMER_ENCRYPTION_KEY");
+            entity.HasIndex(e => e.CustomerId, "UX_CustomerEncryptionKey_ActiveCustomer")
+                .IsUnique()
+                .HasFilter("([customer_encryption_key_status]='ACTIVE')");
+            entity.Property(e => e.CustomerEncryptionKeyId).HasColumnName("customer_encryption_key_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.CustomerEncryptionKeyPublickey).HasColumnName("customer_encryption_key_publickey");
+            entity.Property(e => e.CustomerEncryptionKeyPrivatekey).HasColumnName("customer_encryption_key_privatekey");
+            entity.Property(e => e.CustomerEncryptionKeySalt).HasMaxLength(32).HasColumnName("customer_encryption_key_salt");
+            entity.Property(e => e.CustomerEncryptionKeyIterations).HasColumnName("customer_encryption_key_iterations");
+            entity.Property(e => e.CustomerEncryptionKeyStatus)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasDefaultValue("ACTIVE")
+                .HasColumnName("customer_encryption_key_status");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())").HasColumnName("created_at");
+            entity.Property(e => e.RevokedAt).HasColumnName("revoked_at");
+        });
+
+        modelBuilder.Entity<CustomerFileKey>(entity =>
+        {
+            entity.ToTable("CUSTOMER_FILE_KEY");
+            entity.HasIndex(e => new { e.FileStorageFileid, e.CustomerEncryptionKeyId }, "UX_CustomerFileKey_File_Key").IsUnique();
+            entity.HasIndex(e => e.CustomerEncryptionKeyId, "IX_CustomerFileKey_Key");
+            entity.Property(e => e.CustomerFileKeyId).HasColumnName("customer_file_key_id");
+            entity.Property(e => e.FileStorageFileid).HasColumnName("file_storage_fileid");
+            entity.Property(e => e.CustomerEncryptionKeyId).HasColumnName("customer_encryption_key_id");
+            entity.Property(e => e.CustomerFileKeyWrappedkey).HasColumnName("customer_file_key_wrappedkey");
+            entity.Property(e => e.GrantedAt).HasDefaultValueSql("(sysutcdatetime())").HasColumnName("granted_at");
+        });
+
         modelBuilder.Entity<Contract>(entity =>
         {
             entity.HasKey(e => e.ContractId).HasName("PK__CONTRACT__F8D66423920D9C63");

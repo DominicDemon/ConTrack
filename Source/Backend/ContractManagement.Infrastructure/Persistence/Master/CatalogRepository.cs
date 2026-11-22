@@ -8,22 +8,24 @@ public sealed class CatalogRepository(MasterDbContext db) : ICatalogAdmin
 {
     private const int CustomerActive = 1, CustomerLocked = 0;
 
-    public async Task<List<CustomerRow>> Customers(string? search, CancellationToken ct)
+    public async Task<List<CustomerRow>> Customers(string? search, long? owner, CancellationToken ct)
     {
         var term = search?.Trim();
-        var query = db.Customers.AsNoTracking();
+        var query = db.Customers.AsNoTracking().Where(c => owner == null || c.CustomerOwnerEmployeeId == owner);
         if (!string.IsNullOrEmpty(term)) query = query.Where(c => c.CustomerDisplayName.Contains(term) || c.CustomerPersonalPhone.Contains(term) || (c.CustomerEmail != null && c.CustomerEmail.Contains(term)));
         // shortcut: first 500 by name, no paging; add server paging when customer lists grow past that.
         return await query.OrderBy(c => c.CustomerDisplayName).Take(500)
             .Select(c => new CustomerRow(c.CustomerId, c.CustomerDisplayName, c.CustomerPersonalPhone, c.CustomerEmail, c.CustomerAddress, c.CustomerPersonalTaxIdentifier,
-                c.CustomerStatus == CustomerActive, db.CustomerBusinesses.Count(b => b.CustomerId == c.CustomerId), c.CreatedAt, c.CustomerLastLoginAt))
+                c.CustomerStatus == CustomerActive, db.CustomerBusinesses.Count(b => b.CustomerId == c.CustomerId), c.CreatedAt, c.CustomerLastLoginAt,
+                c.CustomerOwnerEmployeeId, db.Employees.Where(e => e.EmployeeId == c.CustomerOwnerEmployeeId).Select(e => e.EmployeeDisplayName).FirstOrDefault()))
             .ToListAsync(ct);
     }
 
     public async Task<CustomerRow> CustomerRow(long id, CancellationToken ct) =>
         await db.Customers.AsNoTracking().Where(c => c.CustomerId == id)
             .Select(c => new CustomerRow(c.CustomerId, c.CustomerDisplayName, c.CustomerPersonalPhone, c.CustomerEmail, c.CustomerAddress, c.CustomerPersonalTaxIdentifier,
-                c.CustomerStatus == CustomerActive, db.CustomerBusinesses.Count(b => b.CustomerId == c.CustomerId), c.CreatedAt, c.CustomerLastLoginAt))
+                c.CustomerStatus == CustomerActive, db.CustomerBusinesses.Count(b => b.CustomerId == c.CustomerId), c.CreatedAt, c.CustomerLastLoginAt,
+                c.CustomerOwnerEmployeeId, db.Employees.Where(e => e.EmployeeId == c.CustomerOwnerEmployeeId).Select(e => e.EmployeeDisplayName).FirstOrDefault()))
             .SingleOrDefaultAsync(ct) ?? throw new InternalAppException(404, "Không tìm thấy khách hàng.");
 
     public async Task<CustomerRow> UpdateCustomer(long id, CustomerUpdateInput input, InternalUser actor, CancellationToken ct)

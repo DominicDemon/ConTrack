@@ -58,6 +58,21 @@ public class InternalDraftTests
         InternalDraftService.RequireAccess(new(1, "Office", "office", ["draft.write", "draft.manage.all"]), 2);
     }
 
+    [Fact]
+    public void LegalCanReviewAllContractsWithoutReceivingManagerOrCompanySigningPermissions()
+    {
+        var legal = new InternalUser(10, "Legal", "legal", ["legal.manage", "contract.read"]);
+
+        Assert.True(legal.CanManageContractWorkflow);
+        Assert.False(legal.CanManageAll);
+        Assert.False(legal.CanSignCompany);
+        Assert.True(legal.CanAccessCompanySigning);
+        InternalDraftService.RequireAccess(legal, 20);
+
+        var admin = new InternalUser(1, "Admin", "admin", ["contract.approve"]);
+        Assert.True(admin.CanSignCompany);
+    }
+
     [MasterDatabaseFact]
     public async Task LiveDraftRoundTripConcurrencyAuthorizationAndSnapshot()
     {

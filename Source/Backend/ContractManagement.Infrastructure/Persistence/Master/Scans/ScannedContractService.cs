@@ -12,7 +12,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 /// <summary>
 /// Old paper contracts brought into the system by scanning (CONTRACTS.source_type = SCANNED, MasterDB-Optimize_v1):
 /// 1. upload one or more scans: one OCR_BATCH, one FILE_STORAGE and one OCR_JOB per file;
-/// 2. OCR runs in the background (ScanKeywordJobRunner) and keeps the text and the keywords;
+/// 2. OCR runs in the background (ScanKeywordJobRunner) and keeps the keywords (not the full text);
 /// 3. once read, the scan is kept and found by search; staff fix keywords OCR read wrong;
 /// 4. optionally, the checker creates a CONTRACTS row from it, to manage it with the other contracts.
 /// Not in Master_Database_HuongDan (written for the older script): inferred from the tables, see ScannedContractCodes.
@@ -58,15 +58,30 @@ public sealed class ScannedContractService(
         var now = DateTime.UtcNow;
         var stored = new List<(string FileName, byte[] Content, string Key, string Extension, string ContentType, byte[]? FileKey)>();
         var staged = new List<long>();
+        // The same bytes are stored once: a second copy would be found twice and could be filed under the wrong contract.
+        var seen = new Dictionary<string, string>();
+        foreach (var (fileName, content) in scans)
+        {
+            var sha256 = ScanDuplicates.Hash(content);
+            if (seen.TryGetValue(sha256, out var twin))
+            {
+                throw new InternalAppException(409, $"Tệp \"{fileName}\" trùng nội dung với \"{twin}\" trong cùng lượt tải. Hãy bỏ bớt một tệp.");
+            }
+
+            seen[sha256] = fileName;
+            await ScanDuplicates.EnsureNewAsync(db, fileName, sha256, cancellationToken);
+        }
+
         foreach (var (fileName, content) in scans)
         {
             // Any file is kept; OCR reads PDF, JPG and PNG, anything else ends FAILED and is checked by eye.
             var (extension, contentType) = ScanFileKinds.Detect(content) is { } kind
                 ? Kinds[kind]
                 : (Path.GetExtension(fileName) is { Length: > 1 and <= 10 } own ? own.ToLowerInvariant() : ".bin", "application/octet-stream");
-            var key = $"scanned-contracts/{now:yyyyMM}/{Guid.NewGuid():N}{extension}";
             // The stored copy is encrypted; OCR reads a plain copy that is deleted once it is read.
             var (storedBytes, fileKey) = protection.Protect(content);
+            // ".pdf.enc": the file on disk is not a PDF any viewer opens, and its name says so.
+            var key = $"scanned-contracts/{now:yyyyMM}/{Guid.NewGuid():N}{extension}{(fileKey is null ? "" : ".enc")}";
             await files.SaveAsync(key, storedBytes, cancellationToken);
             stored.Add((fileName, content, key, extension, contentType, fileKey));
         }
@@ -105,7 +120,7 @@ public sealed class ScannedContractService(
                         FileStorageStoragekey = scan.Key,
                         FileStorageContenttype = scan.ContentType,
                         FileStorageFilesize = scan.Content.LongLength,
-                        FileStorageSha256 = Convert.ToHexString(SHA256.HashData(scan.Content)).ToLowerInvariant(),
+                        FileStorageSha256 = ScanDuplicates.Hash(scan.Content),
                         FileStorageUploadedbyemployeeid = employeeId,
                         FileStorageUploadeddate = now,
                     };
@@ -155,19 +170,30 @@ public sealed class ScannedContractService(
     // 2. Reading
     // ---------------------------------------------------------------------------------------------
 
-    public async Task<IReadOnlyList<ScannedBatchDto>> ListBatchesAsync(CancellationToken cancellationToken)
+    public const int MaxPageSize = 50;
+
+    /// <summary>Newest first, one page at a time: the list grows with every upload and is asked for again while OCR reads.</summary>
+    public async Task<ScanPageDto<ScannedBatchDto>> ListBatchesAsync(int? page, int? pageSize, CancellationToken cancellationToken)
     {
+        var (number, size) = Paging(page, pageSize, 10);
         var me = currentEmployee.EmployeeId;
         var seesAll = SeesAll;
-        var batches = await db.OcrBatches.AsNoTracking()
+        var query = db.OcrBatches.AsNoTracking()
             .Where(batch => seesAll || batch.UploadedByEmployeeId == me)
             // Only batches of scanned contracts: their jobs have no CONTRACT_DOCUMENTS row.
-            .Where(batch => db.OcrJobs.Any(job => job.OcrBatchId == batch.OcrPatchId && job.ContractDocumentId == null))
+            .Where(batch => db.OcrJobs.Any(job => job.OcrBatchId == batch.OcrPatchId && job.ContractDocumentId == null));
+        var total = await query.CountAsync(cancellationToken);
+        var batches = await query
             .OrderByDescending(batch => batch.OcrPatchId)
-            .Take(50)
+            .Skip((number - 1) * size)
+            .Take(size)
             .ToListAsync(cancellationToken);
-        return await ToBatchDtosAsync(batches, cancellationToken);
+        return new ScanPageDto<ScannedBatchDto>(await ToBatchDtosAsync(batches, cancellationToken), total, number, size);
     }
+
+    /// <summary>Page from 1, size from 1 to <see cref="MaxPageSize"/>; a page past the end comes back empty.</summary>
+    private static (int Page, int Size) Paging(int? page, int? pageSize, int defaultSize) =>
+        (Math.Max(1, page ?? 1), Math.Clamp(pageSize ?? defaultSize, 1, MaxPageSize));
 
     public async Task<ScannedBatchDto> GetBatchAsync(long batchId, CancellationToken cancellationToken)
     {
@@ -211,11 +237,14 @@ public sealed class ScannedContractService(
         return await ReadFileAsync(file, fileKey, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<ScannedContractDto>> ListContractsAsync(CancellationToken cancellationToken)
+    public async Task<ScanPageDto<ScannedContractDto>> ListContractsAsync(int? page, int? pageSize, CancellationToken cancellationToken)
     {
+        var (number, size) = Paging(page, pageSize, 20);
+        var total = await ScopedContracts().CountAsync(cancellationToken);
         var contracts = await ScopedContracts()
             .OrderByDescending(contract => contract.ContractId)
-            .Take(200)
+            .Skip((number - 1) * size)
+            .Take(size)
             .ToListAsync(cancellationToken);
         var result = new List<ScannedContractDto>(contracts.Count);
         foreach (var contract in contracts)
@@ -223,7 +252,7 @@ public sealed class ScannedContractService(
             result.Add(await ToContractDtoAsync(contract, cancellationToken));
         }
 
-        return result;
+        return new ScanPageDto<ScannedContractDto>(result, total, number, size);
     }
 
     public async Task<ScannedFileDto> GetContractFileAsync(long contractId, string? fileKey, CancellationToken cancellationToken)
@@ -380,6 +409,7 @@ public sealed class ScannedContractService(
             .ToDictionary(group => group.Key, group => ToCustomerOption(group.First().customer, group.First().business).Name);
         var people = await PeopleAsync(rows.Select(row => row.FileStorageUploadedbyemployeeid), cancellationToken);
         var byFile = found.ToLookup(keyword => keyword.FileStorageFileid);
+        var emails = await SignedEvidenceService.EmailsAsync(db, rows.Select(row => row.FileStorageFileid).ToList(), cancellationToken);
 
         return rows.Select(row =>
             {
@@ -397,7 +427,8 @@ public sealed class ScannedContractService(
                     byFile[row.FileStorageFileid]
                         .DistinctBy(keyword => keyword.ContractScanKeywordId)
                         .Select(SignedEvidenceService.ToMatchDto)
-                        .ToList());
+                        .ToList(),
+                    emails[row.FileStorageFileid].ToList());
             })
             .ToList();
     }
@@ -410,9 +441,9 @@ public sealed class ScannedContractService(
     public async Task<long> RetryAsync(long jobId, string? fileKey, CancellationToken cancellationToken)
     {
         var (job, file) = await GetJobRowAsync(jobId, cancellationToken);
-        if (job.OcrJobProcessingStatus != OcrJobStatuses.Failed)
+        if (job.OcrJobProcessingStatus is OcrJobStatuses.Queued or OcrJobStatuses.Processing)
         {
-            throw new InternalAppException(409, "Chỉ đọc lại được bản scan bị lỗi đọc nội dung.");
+            throw new InternalAppException(409, "Hệ thống đang đọc bản scan này. Hãy chờ đọc xong.");
         }
 
         if (await staging.ReadAsync(file.FileStorageFileid, cancellationToken) is null)
@@ -421,7 +452,8 @@ public sealed class ScannedContractService(
         }
 
         await db.OcrJobs
-            .Where(candidate => candidate.OcrJobId == jobId && candidate.OcrJobProcessingStatus == OcrJobStatuses.Failed)
+            .Where(candidate => candidate.OcrJobId == jobId
+                && candidate.OcrJobProcessingStatus != OcrJobStatuses.Queued && candidate.OcrJobProcessingStatus != OcrJobStatuses.Processing)
             .ExecuteUpdateAsync(setters => setters
                     .SetProperty(candidate => candidate.OcrJobProcessingStatus, OcrJobStatuses.Queued)
                     .SetProperty(candidate => candidate.ErrorMessage, (string?)null)

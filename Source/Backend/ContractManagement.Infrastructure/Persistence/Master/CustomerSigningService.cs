@@ -107,7 +107,7 @@ public sealed class CustomerSigningService(
     {
         var link = await ResolvePortalLink(customerId, reviewId, ct);
         await RequireVerifiedChallenge(link.ContractAccessLinkId, challengeId, ct);
-        return (await BuildPortalSigningPdf(link, customerId, ct)).Content;
+        return await BuildPortalSigningPdf(link, customerId, ct);
     }
 
     public async Task<byte[]> PortalFinalDocument(long customerId, long reviewId, CancellationToken ct)
@@ -246,16 +246,14 @@ public sealed class CustomerSigningService(
         if (document.ContractDocumentCurrentVersionId != version.ContractVersionId || !version.ContractVersionIslocked
             || document.ContractDocumentStatus != ContractDocumentStatus.PendingSignature)
             throw new InternalAppException(409, "Phiên bản hợp đồng đã thay đổi hoặc không còn được phép ký.");
-        var prepared = await BuildPortalSigningPdf(link, customerId, ct);
-        var source = prepared.Content;
-        var placement = new PdfSignaturePlacement(prepared.SignaturePage, prepared.CustomerSignatureX,
-            prepared.SignatureY, prepared.SignatureWidth, prepared.SignatureHeight);
+        var source = await BuildPortalSigningPdf(link, customerId, ct);
+        var placement = new PdfSignaturePlacement(signer.ContractElectronicPagenumber ?? 1,
+            signer.ContractElectronicPositionx ?? 50, signer.ContractElectronicPositiony ?? 680,
+            signer.ContractElectronicWidth ?? 190, signer.ContractElectronicHeight ?? 54);
         var signed = signatures.StampSignature(source, png, placement);
         var signedKey = $"{link.ContractDocumentId}-{link.ContractVersionId}-final-{Guid.NewGuid():N}.pdf";
-        var companySignedLayoutKey = $"{link.ContractDocumentId}-{link.ContractVersionId}-company-layout-{Guid.NewGuid():N}.pdf";
         Directory.CreateDirectory(root);
         await File.WriteAllBytesAsync(Path.Combine(root, signedKey), signed, ct);
-        await File.WriteAllBytesAsync(Path.Combine(root, companySignedLayoutKey), source, ct);
         try
         {
             var result = await InTransaction(async () =>
@@ -270,11 +268,6 @@ public sealed class CustomerSigningService(
                 signer.ContractElectronicSignatureimagestoragekey = "embedded-in-signed-pdf";
                 signer.ContractElectronicIpaddress = Cut(ipAddress, 45);
                 signer.ContractElectronicUseragent = Cut(userAgent, 1000);
-                signer.ContractElectronicPagenumber = prepared.SignaturePage;
-                signer.ContractElectronicPositionx = prepared.CustomerSignatureX;
-                signer.ContractElectronicPositiony = prepared.SignatureY;
-                signer.ContractElectronicWidth = prepared.SignatureWidth;
-                signer.ContractElectronicHeight = prepared.SignatureHeight;
                 signer.ContractElectronicDocumentHashAtSigning = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant();
                 challenge.UsedAt = now;
                 document.ContractDocumentStatus = ContractDocumentStatus.Signed;
@@ -282,17 +275,7 @@ public sealed class CustomerSigningService(
                 version.ContractVersionSigndate = now;
                 link.RevokedAt = now;
                 link.ContractAccessLinkRevocationReason = "CUSTOMER_SIGNED";
-                ReviewData.Audit(db, "CUSTOMER_SIGNING_PDF_REFORMATTED", "CONTRACT_DOCUMENTS", document.ContractDocumentId, "CUSTOMER", customerId, now);
-                var companySignedLayout = new FileStorage
-                {
-                    FileStorageObjectid = document.ContractDocumentId, FileStorageObjecttype = "CONTRACT_SIGNING",
-                    FileStorageFiletype = "COMPANY_SIGNED_PDF_REFORMATTED", FileStorageFilename = (document.ContractDocumentCode ?? $"contract-{document.ContractDocumentId}") + "-company-approved-layout.pdf",
-                    FileStorageFilepath = companySignedLayoutKey, FileStorageStoragekey = companySignedLayoutKey, FileStorageContenttype = "application/pdf",
-                    FileStorageFilesize = source.Length, FileStorageSha256 = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant(),
-                    FileStorageUploadedbyemployeeid = document.EmployeeId, FileStorageUploadeddate = now
-                };
-                db.FileStorages.Add(companySignedLayout);
-                await db.SaveChangesAsync(ct);
+                ReviewData.Audit(db, "CUSTOMER_SIGNED_PDF", "CONTRACT_DOCUMENTS", document.ContractDocumentId, "CUSTOMER", customerId, now);
                 // The customer signs last, so both sides have now signed: the Sale in charge and Hành chính are told at once,
                 // and a prospect (no portal account yet) is flagged so they create the account.
                 var prospect = !await ReviewData.HasAccount(db, customerId, ct);
@@ -300,9 +283,6 @@ public sealed class CustomerSigningService(
                     prospect ? "Hai bên đã ký · tạo tài khoản cho khách" : "Hai bên đã ký hợp đồng",
                     $"{document.ContractDocumentCode} · {document.ContractDocumentName}" + (prospect ? " · Khách tiềm năng chưa có tài khoản: mở hợp đồng và bấm “Tạo tài khoản khách”." : ""),
                     await ReviewData.WithPermission(db, "contract.check", ct), now, ct);
-                db.ContractDocumentFiles.Add(new ContractDocumentFile { ContractDocumentId = document.ContractDocumentId, ContractVersionId = version.ContractVersionId,
-                    FileStorageFileid = companySignedLayout.FileStorageFileid, ContractDocumentFileRole = 1, IsPrimary = false, CreatedDate = now, CreatedEmployeeId = document.EmployeeId });
-                await db.SaveChangesAsync(ct);
                 var file = new FileStorage
                 {
                     FileStorageObjectid = document.ContractDocumentId, FileStorageObjecttype = "CONTRACT_SIGNING", FileStorageFiletype = "FULLY_SIGNED_PDF",
@@ -333,52 +313,28 @@ public sealed class CustomerSigningService(
         catch
         {
             File.Delete(Path.Combine(root, signedKey));
-            File.Delete(Path.Combine(root, companySignedLayoutKey));
             throw;
         }
     }
 
-    private async Task<PreparedCustomerSigningPdf> BuildPortalSigningPdf(ContractAccessLink link, long customerId, CancellationToken ct)
+    private async Task<byte[]> BuildPortalSigningPdf(ContractAccessLink link, long customerId, CancellationToken ct)
     {
         var document = await db.ContractDocuments.AsNoTracking().SingleAsync(x => x.ContractDocumentId == link.ContractDocumentId
             && x.CustomerId == customerId && x.TenantId == null, ct);
         var version = await db.ContractVersions.AsNoTracking().SingleAsync(x => x.ContractVersionId == link.ContractVersionId
             && x.ContractDocumentId == document.ContractDocumentId, ct);
-        var customer = await db.Customers.AsNoTracking().SingleAsync(x => x.CustomerId == document.CustomerId, ct);
         var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleOrDefaultAsync(x => x.ContractDocumentId == document.ContractDocumentId
             && x.ContractVersionId == version.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct)
             ?? throw new InternalAppException(409, "Không tìm thấy bản chụp hợp đồng để dựng PDF.");
         if (!SnapshotHash.Compute(snapshot.FieldValue).Equals(version.ContractVersionSnapshothash, StringComparison.OrdinalIgnoreCase))
             throw new InternalAppException(409, "Bản chụp hợp đồng không khớp hash đã duyệt.");
-        var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)
+        _ = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)
             ?? throw new InternalAppException(409, "Bản chụp hợp đồng không hợp lệ.");
         var companySigner = await db.ContractElectronicSignatures.AsNoTracking().SingleOrDefaultAsync(x => x.ContractDocumentId == document.ContractDocumentId
             && x.ContractVersionId == version.ContractVersionId && x.ContractElectronicPartytype == 1 && x.ContractElectronicStatus == Signed, ct)
             ?? throw new InternalAppException(409, "Công ty chưa ký hợp đồng.");
-        var companySignedPdf = await CurrentPdf(document.ContractDocumentId, version.ContractVersionId, ct);
-        var companySignature = ExtractCompanySignature(companySignedPdf, companySigner.ContractElectronicPagenumber ?? 1);
-        var layout = InternalSigningService.RenderContractPdf(document, version, customer, content);
-        var companyPlacement = new PdfSignaturePlacement(layout.SignaturePage, layout.CompanySignatureX, layout.SignatureY,
-            layout.SignatureWidth, layout.SignatureHeight);
-        var companySignedLayout = signatures.StampSignature(layout.Content, companySignature, companyPlacement);
-        return new PreparedCustomerSigningPdf(companySignedLayout, layout.SignaturePage, layout.CompanySignatureX, layout.CustomerSignatureX,
-            layout.SignatureY, layout.SignatureWidth, layout.SignatureHeight);
+        return await CurrentPdf(document.ContractDocumentId, version.ContractVersionId, ct);
     }
-
-    internal static byte[] ExtractCompanySignature(byte[] pdfBytes, int pageNumber)
-    {
-        using var pdf = PdfDocument.Open(pdfBytes);
-        if (pageNumber < 1 || pageNumber > pdf.NumberOfPages)
-            throw new InternalAppException(409, "Không tìm thấy trang có chữ ký công ty trong bản PDF đã ký.");
-        var images = pdf.GetPage(pageNumber).GetImages();
-        var signatures = images.Where(image => image.TryGetPng(out _)).ToList();
-        if (signatures.Count != 1 || !signatures[0].TryGetPng(out var png))
-            throw new InternalAppException(409, "Không thể lấy chữ ký công ty từ bản PDF hiện tại để dựng lại bố cục.");
-        return png;
-    }
-
-    private sealed record PreparedCustomerSigningPdf(byte[] Content, int SignaturePage, int CompanySignatureX, int CustomerSignatureX,
-        int SignatureY, int SignatureWidth, int SignatureHeight);
 
     private async Task VerifyOtpForLink(ContractAccessLink link, CustomerSigningOtpVerification request, CancellationToken ct)
     {

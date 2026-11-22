@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
@@ -40,17 +41,18 @@ public interface IRecoveryPublicKey
     RSA? CreatePrivateKey();
 }
 
+/// <summary>
+/// An employee on the administrator's key page. <see cref="MayHoldKey"/>: they can see scans, so they may set a key.
+/// <see cref="SetAt"/>: when the current key was set or last changed (by the employee themselves).
+/// </summary>
 public sealed record EmployeeKeyStatusDto(
     long EmployeeId,
     string Username,
     string DisplayName,
+    bool MayHoldKey,
     bool HasKey,
-    DateTime? IssuedAt,
-    string? IssuedBy,
+    DateTime? SetAt,
     int FilesToRecover);
-
-/// <summary><see cref="RecoveredFiles"/>: old files the new key opens at once (null when the server keeps no recovery key).</summary>
-public sealed record IssuedKeyDto(long EmployeeId, string DisplayName, string Key, DateTime IssuedAt, int? RecoveredFiles);
 
 /// <summary>
 /// Result of reopening an employee's old files for their current key. <see cref="NotRecoverable"/> files were
@@ -67,7 +69,8 @@ public sealed class FileProtectionService(
     ICurrentEmployee currentEmployee,
     IOptions<FileEncryptionOptions> options,
     IRecoveryPublicKey recovery,
-    FileKeyAttemptTracker attempts)
+    FileKeyAttemptTracker attempts,
+    ILogger<FileProtectionService> logger)
 {
     public const string ActiveStatus = "ACTIVE";
     public const string RevokedStatus = "REVOKED";
@@ -79,33 +82,23 @@ public sealed class FileProtectionService(
     public bool Enabled => options.Value.Enabled;
 
     /// <summary>The server keeps the recovery private key, so old files come back without an administrator giving it.</summary>
-    public bool ServerKeepsRecoveryKey => !string.IsNullOrWhiteSpace(options.Value.RecoveryPrivateKeyPath);
+    public bool ServerKeepsRecoveryKey => !string.IsNullOrWhiteSpace(options.Value.RecoveryPrivateKeyPath)
+        || recovery is PemRecoveryPublicKey { UsesDevelopmentKey: true };
 
     // ---------------------------------------------------------------------------------------------
     // Keys of employees
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Gives the employee a new 12-character key, shown this once. An older key stops working. When the server keeps
-    /// the recovery private key, the files the older key opened are granted to the new key right away; otherwise they
-    /// are granted when someone who can open them does so (see OpenAsync) or by RecoverFilesAsync.
+    /// Makes <paramref name="pair"/> the employee's key; an older key of theirs stops working. Each employee sets their
+    /// own key (FileKeyOwnerService); nobody else ever knows it. When the server keeps the recovery private key, the
+    /// files the older key opened are granted to the new key at once; otherwise they are granted when someone who can
+    /// open them does so (see OpenAsync) or by RecoverFilesAsync. Returns those files, null without a server key.
     /// </summary>
-    public async Task<IssuedKeyDto> IssueKeyAsync(long employeeId, CancellationToken cancellationToken)
+    public async Task<int?> InstallKeyAsync(long employeeId, FileCrypto.UserKeyPair pair, CancellationToken cancellationToken)
     {
-        var employee = await db.Employees.AsNoTracking()
-            .Where(candidate => candidate.EmployeeId == employeeId)
-            .Select(candidate => new { candidate.EmployeeId, candidate.EmployeeDisplayName, candidate.EmployeeStatus })
-            .SingleOrDefaultAsync(cancellationToken)
-            ?? throw new InternalAppException(404, "Không tìm thấy nhân viên.");
-        if (employee.EmployeeStatus != ActiveStatus)
-        {
-            throw new InternalAppException(409, "Tài khoản nhân viên này đã bị khóa.");
-        }
-
-        var userKey = FileCrypto.GenerateUserKey();
-        var pair = FileCrypto.CreateUserKeyPair(userKey);
         var now = DateTime.UtcNow;
-        var issued = new EmployeeEncryptionKey
+        var installed = new EmployeeEncryptionKey
         {
             EmployeeId = employeeId,
             EmployeeEncryptionKeyPublickey = pair.PublicKey,
@@ -124,26 +117,57 @@ public sealed class FileProtectionService(
                         .SetProperty(key => key.EmployeeEncryptionKeyStatus, RevokedStatus)
                         .SetProperty(key => key.RevokedAt, now),
                     cancellationToken);
-            db.EmployeeEncryptionKeys.Add(issued);
-            db.AuditLogs.Add(Audit("EncryptionKeyIssued", KeyEntity, employeeId, new { replacedOldKey = revoked > 0 }));
+            db.EmployeeEncryptionKeys.Add(installed);
+            db.AuditLogs.Add(Audit(revoked > 0 ? "EncryptionKeyResetByOwner" : "EncryptionKeyCreatedByOwner", KeyEntity, employeeId, null));
             await db.SaveChangesAsync(cancellationToken);
         }, cancellationToken);
         attempts.Reset(employeeId);
 
-        int? recovered = null;
-        using (var recoveryKey = recovery.CreatePrivateKey())
+        // The key is set: a recovery key the server cannot use now only delays the old files (RecoverFilesAsync later).
+        try
         {
-            if (recoveryKey is not null)
-            {
-                recovered = (await RegrantAsync(employeeId, recoveryKey, cancellationToken)).Granted;
-            }
+            using var recoveryKey = recovery.CreatePrivateKey();
+            return recoveryKey is null ? null : (await RegrantAsync(employeeId, recoveryKey, cancellationToken)).Granted;
         }
-
-        return new IssuedKeyDto(employeeId, employee.EmployeeDisplayName, userKey, DateTime.SpecifyKind(now, DateTimeKind.Utc), recovered);
+        catch (InternalAppException exception) when (exception.Status == 503)
+        {
+            logger.LogWarning("Old files of employee {EmployeeId} were not reopened for their new key: {Reason}", employeeId, exception.Message);
+            return null;
+        }
     }
 
+    /// <summary>
+    /// Stops the employee's key from opening anything, e.g. when they leave or their key may be known to someone else.
+    /// Files stay readable for everyone else and through the recovery key; the employee can set a new key later.
+    /// </summary>
+    public async Task RevokeKeyAsync(long employeeId, CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        await db.ExecuteInTransactionAsync(async () =>
+        {
+            var revoked = await db.EmployeeEncryptionKeys
+                .Where(key => key.EmployeeId == employeeId && key.EmployeeEncryptionKeyStatus == ActiveStatus)
+                .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(key => key.EmployeeEncryptionKeyStatus, RevokedStatus)
+                        .SetProperty(key => key.RevokedAt, now),
+                    cancellationToken);
+            if (revoked == 0)
+            {
+                throw new InternalAppException(409, "Nhân viên này chưa có key.");
+            }
+
+            db.AuditLogs.Add(Audit("EncryptionKeyRevoked", KeyEntity, employeeId, null));
+            await db.SaveChangesAsync(cancellationToken);
+        }, cancellationToken);
+        attempts.Reset(employeeId);
+    }
+
+    /// <summary>The employees who hold a key or may set one (they can see scans).</summary>
     public async Task<IReadOnlyList<EmployeeKeyStatusDto>> ListKeysAsync(CancellationToken cancellationToken)
     {
+        var mayHold = (await EmployeesWithPermissionAsync(SigningPermissions.View, cancellationToken))
+            .Concat(await EmployeesWithPermissionAsync(ScannedContractPermissions.View, cancellationToken))
+            .ToHashSet();
         var rows = await (
                 from employee in db.Employees.AsNoTracking()
                 join key in db.EmployeeEncryptionKeys.Where(key => key.EmployeeEncryptionKeyStatus == ActiveStatus)
@@ -153,18 +177,16 @@ public sealed class FileProtectionService(
                 orderby employee.EmployeeDisplayName
                 select new { employee.EmployeeId, employee.EmployeeUsername, employee.EmployeeDisplayName, key })
             .ToListAsync(cancellationToken);
-        var issuers = rows.Where(row => row.key != null).Select(row => row.key!.IssuedByEmployeeId).Distinct().ToList();
-        var names = await db.Employees.AsNoTracking()
-            .Where(employee => issuers.Contains(employee.EmployeeId))
-            .ToDictionaryAsync(employee => employee.EmployeeId, employee => employee.EmployeeDisplayName, cancellationToken);
         var lost = await LostFilesAsync(null, cancellationToken);
-        return rows.Select(row => new EmployeeKeyStatusDto(
+        return rows
+            .Where(row => row.key != null || mayHold.Contains(row.EmployeeId))
+            .Select(row => new EmployeeKeyStatusDto(
                 row.EmployeeId,
                 row.EmployeeUsername,
                 row.EmployeeDisplayName,
+                mayHold.Contains(row.EmployeeId),
                 row.key != null,
                 row.key is null ? null : DateTime.SpecifyKind(row.key.IssuedAt, DateTimeKind.Utc),
-                row.key is null ? null : names.GetValueOrDefault(row.key.IssuedByEmployeeId),
                 row.key is null ? 0 : lost.GetValueOrDefault(row.EmployeeId)?.Count ?? 0))
             .ToList();
     }
@@ -208,7 +230,7 @@ public sealed class FileProtectionService(
     {
         var employeeKey = await db.EmployeeEncryptionKeys.AsNoTracking()
             .SingleOrDefaultAsync(key => key.EmployeeId == employeeId && key.EmployeeEncryptionKeyStatus == ActiveStatus, cancellationToken)
-            ?? throw new InternalAppException(409, "Nhân viên này chưa có key: hãy cấp key trước.");
+            ?? throw new InternalAppException(409, "Nhân viên này chưa tạo key.");
 
         var candidates = (await CandidateFilesAsync(employeeId, cancellationToken)).Count;
         var lostFiles = (await LostFilesAsync(employeeId, cancellationToken)).GetValueOrDefault(employeeId) ?? [];
@@ -318,6 +340,13 @@ public sealed class FileProtectionService(
     /// context; the caller saves them with the file's other rows. Employees without a key yet are granted later.
     /// </summary>
     public async Task GrantAsync(long fileId, byte[]? fileKey, IEnumerable<long> employeeIds, CancellationToken cancellationToken)
+        => await GrantCoreAsync(fileId, fileKey, employeeIds, currentEmployee.EmployeeId, cancellationToken);
+
+    /// <summary>Grants employee readers without attributing their key grants to an employee request.</summary>
+    public Task GrantForCustomerUploadAsync(long fileId, byte[]? fileKey, IEnumerable<long> employeeIds, CancellationToken cancellationToken)
+        => GrantCoreAsync(fileId, fileKey, employeeIds, null, cancellationToken);
+
+    private async Task GrantCoreAsync(long fileId, byte[]? fileKey, IEnumerable<long> employeeIds, long? grantorEmployeeId, CancellationToken cancellationToken)
     {
         if (fileKey is null)
         {
@@ -356,7 +385,7 @@ public sealed class FileProtectionService(
                 FileStorageFileid = fileId,
                 EmployeeEncryptionKeyId = key.EmployeeEncryptionKeyId,
                 FileEncryptionKeyWrappedkey = FileCrypto.Wrap(fileKey, key.EmployeeEncryptionKeyPublickey),
-                GrantedByEmployeeId = currentEmployee.EmployeeId,
+                GrantedByEmployeeId = grantorEmployeeId,
                 GrantedAt = now,
             });
         }
@@ -382,17 +411,19 @@ public sealed class FileProtectionService(
         var me = currentEmployee.EmployeeId;
         if (string.IsNullOrWhiteSpace(userKey))
         {
-            throw new InternalAppException(400, "Tệp đã được mã hóa. Hãy nhập key 12 ký tự của bạn.", FileKeyCodes.KeyRequired);
+            throw new InternalAppException(400, "Tệp đã được mã hóa. Hãy nhập key của bạn.", FileKeyCodes.KeyRequired);
         }
 
-        if (attempts.IsLocked(me))
+        if (attempts.RemainingLock(me) is { } remaining)
         {
-            throw new InternalAppException(429, $"Nhập sai key quá {FileKeyAttemptTracker.MaxFailures} lần. Thử lại sau {FileKeyAttemptTracker.LockDuration.TotalMinutes:0} phút.", FileKeyCodes.KeyLocked);
+            throw new InternalAppException(429,
+                $"Nhập sai key quá {FileKeyAttemptTracker.MaxFailures} lần. Thử lại sau {Math.Max(1, (int)Math.Ceiling(remaining.TotalMinutes))} phút.",
+                FileKeyCodes.KeyLocked);
         }
 
         var key = await db.EmployeeEncryptionKeys.AsNoTracking()
             .SingleOrDefaultAsync(candidate => candidate.EmployeeId == me && candidate.EmployeeEncryptionKeyStatus == ActiveStatus, cancellationToken)
-            ?? throw new InternalAppException(403, "Bạn chưa được cấp key để mở tệp. Hãy liên hệ quản trị.", FileKeyCodes.NoKeyIssued);
+            ?? throw new InternalAppException(403, "Bạn chưa tạo key mở tệp. Vào mục \"Key của tôi\" để tạo.", FileKeyCodes.NoKeyIssued);
 
         using var privateKey = FileCrypto.UnlockPrivateKey(
             key.EmployeeEncryptionKeyPrivatekey, key.EmployeeEncryptionKeySalt, key.EmployeeEncryptionKeyIterations, userKey.Trim());
@@ -422,6 +453,8 @@ public sealed class FileProtectionService(
         }
 
         await GrantAsync(fileId, fileKey, eligible, cancellationToken);
+        // The customers the scan belongs to who set a key get it too (017), so they can open it on the portal.
+        await CustomerScans.GrantToCustomersAsync(db, fileId, fileKey, cancellationToken);
         db.AuditLogs.Add(Audit("EncryptedFileOpened", FileEntity, fileId, null));
         await db.SaveChangesAsync(cancellationToken);
         CryptographicOperations.ZeroMemory(fileKey);
@@ -534,6 +567,12 @@ public sealed class FileKeyAttemptTracker
 
     public bool IsLocked(long employeeId) =>
         _counters.TryGetValue(employeeId, out var counter) && counter.LockedUntil > DateTimeOffset.UtcNow;
+
+    /// <summary>How long the employee stays locked; null when not locked.</summary>
+    public TimeSpan? RemainingLock(long employeeId) =>
+        _counters.TryGetValue(employeeId, out var counter) && counter.LockedUntil - DateTimeOffset.UtcNow is { } left && left > TimeSpan.Zero
+            ? left
+            : null;
 
     public void RecordFailure(long employeeId) =>
         _counters.AddOrUpdate(

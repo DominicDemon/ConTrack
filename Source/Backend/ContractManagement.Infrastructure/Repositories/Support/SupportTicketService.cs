@@ -1280,6 +1280,33 @@ public sealed class SupportTicketService : ISupportTicketService
                 var notifBody = $"{currentEmployeeName} ({ticket.Department}): {TruncatePreview(customerNotice, 160)}";
                 AddCustomerNotification(state, ticket, notifTitle, notifBody, request.CloseTicket ? "ticket-resolved" : "ticket-updated");
 
+                // Thông báo trên phần mềm cho các nhân viên được phân công
+                if (ticket.AssignedEmployeeIds is { Count: > 0 })
+                {
+                    foreach (var staffId in ticket.AssignedEmployeeIds.Where(id => id != currentEmployeeId))
+                    {
+                        state.AdminNotifications.Insert(0, new AdminNotificationDto
+                        {
+                            NotificationId = state.NextNotificationId++,
+                            Title = request.CloseTicket
+                                ? $"Yêu cầu [{ticket.TicketCode}] đã hoàn thành"
+                                : $"Yêu cầu [{ticket.TicketCode}] có cập nhật kết quả",
+                            Body = $"Trưởng phòng {currentEmployeeName} đã {(request.CloseTicket ? "gửi kết quả và đóng phiếu" : "cập nhật kết quả")}: {ticket.TicketSubject}",
+                            SubjectType = "SupportTicket",
+                            SubjectId = ticket.TicketSupportId,
+                            TicketCode = ticket.TicketCode,
+                            TenantName = ticket.TenantName,
+                            TenantCode = ticket.TenantCode,
+                            Priority = ticket.TicketPriority,
+                            DepartmentId = ticket.DepartmentId,
+                            Department = ticket.Department,
+                            TargetEmployeeId = staffId,
+                            ActionKey = request.CloseTicket ? "ticket-resolved" : "ticket-updated",
+                            CreatedAtUtc = DateTime.UtcNow
+                        });
+                    }
+                }
+
                 await SaveStateAsync(state, cancellationToken);
                 resolvedTicket = ticket;
                 noticeToEmail = customerNotice;
@@ -1434,11 +1461,7 @@ public sealed class SupportTicketService : ISupportTicketService
             StoreLock.Release();
         }
 
-        if (updatedTicket != null && createdMsg != null)
-        {
-            await SendCustomerReplyEmailsSafeAsync(updatedTicket, createdMsg);
-        }
-
+        // Gửi mail chỉ áp dụng cho 3 trường hợp nghiệp vụ chính theo yêu cầu (Khách tạo ticket, Phân công nhân viên, Gửi kết quả xử lý)
         return createdMsg;
     }
 
@@ -1569,11 +1592,7 @@ public sealed class SupportTicketService : ISupportTicketService
             StoreLock.Release();
         }
 
-        if (!isInternalNote && updatedTicket != null && createdMsg != null)
-        {
-            await SendResolutionNoticeToCustomerAsync(updatedTicket, createdMsg.TicketMessageContent, employeeName, isClosed: false);
-        }
-
+        // Gửi mail chỉ áp dụng khi Trưởng phòng gửi kết quả chính thức (HeadResolveAsync), không gửi mail ở chat nội bộ / trao đổi tin nhắn
         return createdMsg;
     }
 
@@ -2007,7 +2026,8 @@ public sealed class SupportTicketService : ISupportTicketService
         string role,
         int? departmentId)
     {
-        if (role == "SYSADMIN")
+        // Chỉ nhân sự thuộc 3 phòng ban tiếp nhận (2: Kỹ thuật, 4: Kế toán, 5: Hành chính) mới có thông báo ticket
+        if (role == "SYSADMIN" || !departmentId.HasValue || (departmentId.Value != 2 && departmentId.Value != 4 && departmentId.Value != 5))
         {
             return [];
         }
@@ -2065,9 +2085,15 @@ public sealed class SupportTicketService : ISupportTicketService
             return false;
         }
 
+        // Chỉ nhân sự thuộc 3 phòng ban tiếp nhận (2: Kỹ thuật, 4: Kế toán, 5: Hành chính) mới được xem và xử lý ticket
+        if (!employeeDeptId.HasValue || (employeeDeptId.Value != 2 && employeeDeptId.Value != 4 && employeeDeptId.Value != 5))
+        {
+            return false;
+        }
+
         if (role == "SYSADMIN")
         {
-            return true;
+            return false;
         }
 
         if (role == "DEPARTMENT_HEAD")
@@ -2117,12 +2143,7 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         var defaultServices = new List<SupportServiceItemDto>
         {
-            new() { ServiceId = 1, ServiceName = "Triển khai & Chuẩn hóa Mẫu hợp đồng", Description = "Thiết lập biểu mẫu và trường dữ liệu động" },
-            new() { ServiceId = 2, ServiceName = "Gói Hỗ trợ Kỹ thuật Ưu tiên 24/7", Description = "Hỗ trợ kỹ thuật và bảo trì SLA 24/7" },
-            new() { ServiceId = 3, ServiceName = "Phần mềm Quản lý Hợp đồng ConTrack Pro (SaaS)", Description = "Quản trị vòng đời hợp đồng điện tử" },
-            new() { ServiceId = 4, ServiceName = "Dịch vụ Chữ ký số & Xác thực OTP (eSign CA)", Description = "Ký số hợp đồng và xác thực khách hàng" },
-            new() { ServiceId = 5, ServiceName = "Server VPS / Hạ tầng Lưu trữ Hợp đồng Riêng", Description = "Máy chủ lưu trữ tài liệu và cơ sở dữ liệu riêng" },
-            new() { ServiceId = 6, ServiceName = "Module Quét & Bóc tách Hợp đồng AI OCR", Description = "Nhận diện và số hóa văn bản hợp đồng PDF/Scan" }
+            new() { ServiceId = 1, ServiceName = "Phần mềm quản lý hợp đồng", Description = "Phần mềm quản lý hợp đồng toàn diện" }
         };
 
         try
@@ -2184,7 +2205,7 @@ public sealed class SupportTicketService : ISupportTicketService
         cmd.Parameters.Add(p);
     }
 
-    /// <summary>Phòng ban và trưởng phòng lấy từ dữ liệu (005-department-roles.sql): EMPLOYEE_DEPARTMENT + DEPARTMENT.department_manager_employee_id / department_manager_role_id.</summary>
+    /// <summary>Phòng ban và trưởng phòng lấy từ dữ liệu: EMPLOYEE_DEPARTMENT + DEPARTMENT.department_manager_employee_id.</summary>
     private static async Task<Dictionary<int, (int DepartmentId, bool IsHead)>> LoadEmployeeDepartmentMapAsync(MasterDbContext db, CancellationToken ct)
     {
         var map = new Dictionary<int, (int DepartmentId, bool IsHead)>();
@@ -2194,9 +2215,7 @@ public sealed class SupportTicketService : ISupportTicketService
             {
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = "SELECT CAST(ed.[employee_id] AS INT), CAST(ed.[department_id] AS INT), "
-                    + "CAST(CASE WHEN d.[department_manager_employee_id] = ed.[employee_id] "
-                    + "OR EXISTS (SELECT 1 FROM [EMPLOYEE_ROLE] er WHERE er.[employee_id] = ed.[employee_id] AND er.[system_role_id] = d.[department_manager_role_id]) "
-                    + "THEN 1 ELSE 0 END AS BIT) "
+                    + "CAST(CASE WHEN d.[department_manager_employee_id] = ed.[employee_id] THEN 1 ELSE 0 END AS BIT) "
                     + "FROM [EMPLOYEE_DEPARTMENT] ed JOIN [DEPARTMENT] d ON d.[department_id] = ed.[department_id]";
                 using var reader = await cmd.ExecuteReaderAsync(ct);
                 while (await reader.ReadAsync(ct))
@@ -2342,12 +2361,25 @@ public sealed class SupportTicketService : ISupportTicketService
             return ("SYSADMIN", null);
         }
 
-        var isHead = membership.IsHead || emp.EmployeeUsername.StartsWith("head.");
+        var isHead = membership.IsHead;
         return (isHead ? "DEPARTMENT_HEAD" : "STAFF", membership.DepartmentId);
     }
 
     private static async Task<Employee?> FindDepartmentHeadAsync(MasterDbContext db, int departmentId, CancellationToken ct)
     {
+        var dept = await db.Departments.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.DepartmentId == departmentId, ct);
+
+        if (dept?.DepartmentManagerEmployeeId.HasValue == true)
+        {
+            var manager = await db.Employees.AsNoTracking()
+                .FirstOrDefaultAsync(e => e.EmployeeId == dept.DepartmentManagerEmployeeId.Value && e.EmployeeStatus == "ACTIVE", ct);
+            if (manager != null)
+            {
+                return manager;
+            }
+        }
+
         var allEmps = await db.Employees
             .AsNoTracking()
             .Where(e => e.EmployeeStatus == "ACTIVE")
@@ -2370,13 +2402,12 @@ public sealed class SupportTicketService : ISupportTicketService
 
     private static int ResolveDepartmentIdFromInput(int? departmentId, string? departmentText)
     {
-        if (departmentId.HasValue && departmentId.Value is >= 2 and <= 5)
+        if (departmentId.HasValue && (departmentId.Value == 2 || departmentId.Value == 4 || departmentId.Value == 5))
         {
             return departmentId.Value;
         }
 
         var d = (departmentText ?? string.Empty).Trim().ToUpperInvariant();
-        if (d.Contains("BÁN HÀNG") || d.Contains("KINH DOANH") || d.Contains("SALE")) return 3;
         if (d.Contains("KẾ TOÁN") || d.Contains("TÀI CHÍNH") || d.Contains("ACCOUNT")) return 4;
         if (d.Contains("GÓP Ý") || d.Contains("PHÁP CHẾ") || d.Contains("HÀNH CHÍNH") || d.Contains("LEGAL")) return 5;
         return 2; // Mặc định: Phòng Kỹ Thuật & Hỗ Trợ (2)
@@ -2963,16 +2994,18 @@ public sealed class SupportTicketService : ISupportTicketService
         }).ToList()
     };
 
-    // ---------- Notifications (Strict Department Head & Assigned Staff Only; Never SysAdmin) ----------
+    // ---------- Notifications & Email Dispatch (Strictly 3 Business Flows: Customer Create Ticket, Staff Assignment, Head Resolution) ----------
 
     private async Task SendNewTicketNotificationAsync(SupportTicketDto ticket, string senderName, Employee? head)
     {
         try
         {
-            // Chỉ gửi thông báo cho Trưởng phòng của phòng ban được khách hàng chọn (fallback HandlerEmail nếu trưởng phòng chưa có email hợp lệ)
-            var recipient = head != null && SmtpEmailOptions.IsEmailAddress(head.EmployeeEmail)
-                ? head.EmployeeEmail!
-                : _configuration["SupportTicket:HandlerEmail"];
+            var headEmail = head?.EmployeeEmail;
+            var fallbackEmail = _configuration["SupportTicket:HandlerEmail"];
+            // Ưu tiên gửi tới email thực của Trưởng phòng; nếu là email mẫu @contrack.vn hoặc thiếu, fallback về HandlerEmail để luôn gửi mail thành công
+            var recipient = (headEmail != null && SmtpEmailOptions.IsEmailAddress(headEmail) && !headEmail.EndsWith("@contrack.vn", StringComparison.OrdinalIgnoreCase))
+                ? headEmail
+                : (SmtpEmailOptions.IsEmailAddress(headEmail) ? headEmail : fallbackEmail);
 
             if (!SmtpEmailOptions.IsEmailAddress(recipient))
             {
@@ -3004,7 +3037,14 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         try
         {
-            if (!SmtpEmailOptions.IsEmailAddress(staff.EmployeeEmail))
+            var staffEmail = staff.EmployeeEmail;
+            var fallbackEmail = _configuration["SupportTicket:HandlerEmail"];
+            // Ưu tiên gửi tới email của nhân viên; nếu là email mẫu @contrack.vn hoặc chưa có, fallback về HandlerEmail
+            var recipient = (staffEmail != null && SmtpEmailOptions.IsEmailAddress(staffEmail) && !staffEmail.EndsWith("@contrack.vn", StringComparison.OrdinalIgnoreCase))
+                ? staffEmail
+                : (SmtpEmailOptions.IsEmailAddress(staffEmail) ? staffEmail : fallbackEmail);
+
+            if (!SmtpEmailOptions.IsEmailAddress(recipient))
             {
                 _logger.LogWarning("Bỏ qua gửi email phân công ticket {Code}: Nhân viên #{EmpId} chưa có email hợp lệ.", ticket.TicketCode, staff.EmployeeId);
                 return;
@@ -3012,7 +3052,7 @@ public sealed class SupportTicketService : ISupportTicketService
 
             var systemAdminUrl = BuildSystemAdminTicketUrl(ticket.TicketSupportId);
             var emailMsg = SupportTicketEmailTemplate.BuildStaffAssignmentEmail(
-                staff.EmployeeEmail!,
+                recipient!,
                 ticket,
                 staff.EmployeeDisplayName ?? staff.EmployeeUsername ?? "Nhân viên",
                 headName,
@@ -3020,7 +3060,7 @@ public sealed class SupportTicketService : ISupportTicketService
                 systemAdminUrl);
 
             await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
-            _logger.LogInformation("Đã gửi email phân công ticket {Code} tới nhân viên #{EmpId} ({Recipient}).", ticket.TicketCode, staff.EmployeeId, staff.EmployeeEmail);
+            _logger.LogInformation("Đã gửi email phân công ticket {Code} tới nhân viên #{EmpId} ({Recipient}).", ticket.TicketCode, staff.EmployeeId, recipient);
         }
         catch (Exception ex)
         {
@@ -3033,7 +3073,8 @@ public sealed class SupportTicketService : ISupportTicketService
         try
         {
             string? customerEmail = null;
-            if (ticket.CustomerId is { } customerId && customerId > 0)
+            var targetCustomerId = ticket.CustomerId ?? ticket.CreatedByEmployeeId;
+            if (targetCustomerId is { } customerId && customerId > 0)
             {
                 using var scope = _scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetService<MasterDbContext>();
@@ -3045,26 +3086,37 @@ public sealed class SupportTicketService : ISupportTicketService
                         .FirstOrDefaultAsync();
                 }
             }
-            if (!SmtpEmailOptions.IsEmailAddress(customerEmail))
+
+            var fallbackEmail = _configuration["SupportTicket:CustomerNotificationEmail"]
+                ?? _configuration["SupportTicket:HandlerEmail"];
+
+            var recipient = customerEmail;
+            if (string.IsNullOrWhiteSpace(recipient)
+                || !SmtpEmailOptions.IsEmailAddress(recipient)
+                || recipient.EndsWith("@abc-corp.vn", StringComparison.OrdinalIgnoreCase)
+                || recipient.EndsWith("@minhphat-group.vn", StringComparison.OrdinalIgnoreCase)
+                || recipient.EndsWith("@vietstar.vn", StringComparison.OrdinalIgnoreCase)
+                || recipient.EndsWith("@contrack.vn", StringComparison.OrdinalIgnoreCase))
             {
-                customerEmail = _configuration["SupportTicket:CustomerNotificationEmail"];
+                recipient = fallbackEmail ?? recipient;
             }
-            if (!SmtpEmailOptions.IsEmailAddress(customerEmail))
+
+            if (!SmtpEmailOptions.IsEmailAddress(recipient))
             {
-                _logger.LogWarning("Bỏ qua gửi email kết quả ticket {Code} cho khách hàng #{CustomerId}: chưa có email hợp lệ.", ticket.TicketCode, ticket.CustomerId);
+                _logger.LogWarning("Bỏ qua gửi email kết quả ticket {Code} cho khách hàng #{CustomerId}: chưa có email hợp lệ.", ticket.TicketCode, targetCustomerId);
                 return;
             }
 
             var portalUrl = BuildCustomerPortalTicketUrl(ticket.TicketSupportId);
             var emailMsg = SupportTicketEmailTemplate.BuildResolutionNoticeEmail(
-                customerEmail!,
+                recipient!,
                 ticket,
                 resolutionNotice,
                 senderName,
                 portalUrl,
                 isClosed);
             await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
-            _logger.LogInformation("Đã gửi email kết quả/phản hồi ticket {Code} tới khách hàng ({Recipient}).", ticket.TicketCode, customerEmail);
+            _logger.LogInformation("Đã gửi email kết quả/phản hồi ticket {Code} tới khách hàng ({Recipient}).", ticket.TicketCode, recipient);
         }
         catch (Exception ex)
         {

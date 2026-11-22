@@ -5,6 +5,11 @@ namespace ContractManagement.Application.Features.Internal;
 public sealed record InternalUser(long Id, string Name, string Username, string[] Permissions, bool MustChangePassword = false,
     string? Department = null, bool IsManager = false)
 {
+    public bool CanManageLegal => Permissions.Contains("legal.manage");
+    public bool CanReviewLegal => CanCheck || CanManageLegal;
+    public bool CanManageContractWorkflow => CanManageAll || CanManageLegal;
+    public bool CanAccessCompanySigning => CanManageContractWorkflow || CanSignCompany;
+    public bool CanSignCompany => CanApprove;
     public bool CanCheck => Permissions.Contains("contract.check");
     public bool CanApprove => Permissions.Contains("contract.approve");
     public bool CanManageTemplates => Permissions.Contains("template.manage");
@@ -83,7 +88,8 @@ public sealed record EmployeeOption(long Id, string Name);
 public sealed record DraftSummary(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName, DateTime UpdatedAt, int MissingCount,
     int Status, string? LatestReviewStatus);
 public sealed record ContractArchiveEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
-    DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, int SignatureCount, DateTime? LastSignedAt);
+    DateTime CreatedAt, DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, int SignatureCount, DateTime? LastSignedAt,
+    decimal TotalAmount, string CurrencyCode, DateTime? EffectiveDate, DateTime? ExpireDate);
 public sealed record SigningMonitorEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
     DateTime UpdatedAt, int Status, long VersionNo, int SignatureCount, int SignedCount, bool CompanySigned, bool CustomerSigned,
     string? LatestReviewStatus, DateTime? LastSignedAt, bool Paper = false);
@@ -100,7 +106,6 @@ public sealed record DraftRecord(long Id, string Code, long EmployeeId, string E
     List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null, bool CustomerHasAccount = false, bool PaperEvidencePending = false);
 public sealed record CarriedDraftComment(long Id, string? TermKey, string Content, long? SourceCommentId, long? SourceVersionId, bool Resolved);
 public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion, string? WordPreviewToken = null);
-public sealed record SigningDemoDraftResult(DraftRecord Draft, string CustomerPortalPhone, string CustomerPortalPassword);
 public sealed class InternalAppException(int status, string message, string? code = null) : Exception(message)
 {
     public int Status { get; } = status;
@@ -112,7 +117,7 @@ public interface IInternalRepository
     Task<InternalUser?> Authenticate(string username, string password, CancellationToken ct);
     Task<InternalUser?> GetUser(long id, CancellationToken ct);
     Task<List<TemplateDefinition>> Templates(CancellationToken ct);
-    Task<List<CustomerOption>> Customers(string? search, CancellationToken ct);
+    Task<List<CustomerOption>> Customers(string? search, CancellationToken ct, long? owner = null);
     Task<CustomerOption?> Customer(long id, CancellationToken ct);
     Task<CustomerOption> CreateCustomer(CustomerInput input, long actor, CancellationToken ct);
     Task<List<BusinessOption>> Businesses(long customerId, CancellationToken ct);
@@ -122,7 +127,8 @@ public interface IInternalRepository
     Task<List<EmployeeOption>> Employees(CancellationToken ct);
     /// <param name="partyType">PERSON or BUSINESS (the contract's party in its current version); null for both.</param>
     Task<List<DraftSummary>> Drafts(long? owner, string? search, int? status, CancellationToken ct, string? partyType = null);
-    Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct, string? partyType = null);
+    Task<List<ContractArchiveEntry>> ContractArchive(string? search, int? status, CancellationToken ct, string? partyType = null,
+        DateTime? createdFrom = null, DateTime? createdTo = null, int limit = 200);
     Task<List<SigningMonitorEntry>> SigningMonitor(string? search, int? status, CancellationToken ct, string? partyType = null);
     Task<SigningMonitorDetail?> SigningMonitorDetail(long id, CancellationToken ct);
     Task<DraftRecord?> Draft(long id, CancellationToken ct);
@@ -133,7 +139,7 @@ public sealed class InternalDraftService(IInternalRepository repository)
 {
     public static void RequireAccess(InternalUser user, long owner)
     {
-        if ((!user.CanWrite && !user.CanCheck && !user.CanApprove) || (!user.CanManageAll && user.Id != owner))
+        if ((!user.CanWrite && !user.CanCheck && !user.CanApprove && !user.CanManageLegal) || (!user.CanManageContractWorkflow && user.Id != owner))
             throw new InternalAppException(403, "Bạn không có quyền thao tác bản nháp này.");
     }
 

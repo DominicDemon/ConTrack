@@ -12,7 +12,6 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 public sealed class ContractReviewRepository(
     MasterDbContext db,
     IInternalRepository drafts,
-    SmsOutboxWriter sms,
     ReviewLinkMailer mailer,
     IConfiguration config,
     InternalApprovalService approval,
@@ -220,7 +219,7 @@ public sealed class ContractReviewRepository(
                 .Where(x => x.ApprovalWorkflowId == approval.ApprovalWorkflowId)
                 .Select(x => x.ApprovalWorkflowName).FirstOrDefaultAsync(ct) ?? "Kiểm tra nội bộ";
             return new InternalApprovalState(approval.ContractApprovalRequestId, approval.ContractApprovalRequestStatus,
-                approval.SubmittedAt, workflowName, approval.ContractApprovalRequestDecisioncomment, true);
+                approval.SubmittedAt, workflowName, approval.ContractApprovalRequestDecisioncomment, false);
         }, ct);
         // After the commit: tell the customer the company's decision on the version they agreed to.
         if (customerMail is not null)
@@ -336,13 +335,14 @@ public sealed class ContractReviewRepository(
 
     private async Task<ResetTemporaryPasswordResult> IssuePassword(long customerId, InternalUser actor, bool create, CancellationToken ct)
     {
-        if (!actor.CanManageAll && !actor.CanCheck && !await db.ContractDocuments.AnyAsync(d => d.CustomerId == customerId && d.EmployeeId == actor.Id && d.TenantId == null, ct))
-            throw new InternalAppException(403, "Bạn không phụ trách khách hàng này.");
+        if (!actor.CanManageAll && !actor.CanCheck)
+            throw new InternalAppException(403, "Chỉ phòng Hành chính - Pháp chế và Ban Giám Đốc mới có quyền cấp tài khoản khách hàng.");
         var customer = await db.Customers.SingleOrDefaultAsync(c => c.CustomerId == customerId && c.CustomerStatus == 1, ct) ?? throw new InternalAppException(404, "Không tìm thấy khách hàng.");
         var hasAccount = await ReviewData.HasAccount(db, customerId, ct);
         if (create && hasAccount) throw new InternalAppException(409, "Khách đã có tài khoản. Dùng “Cấp lại mật khẩu tạm” nếu khách chưa đăng nhập được.");
         if (!create && !hasAccount) throw new InternalAppException(409, "Khách chưa có tài khoản. Tạo tài khoản sau khi hai bên đã ký hợp đồng.");
-        if (customer.CustomerPersonalPhoneVerifiedAt is not null) throw new InternalAppException(409, "Khách đã đổi mật khẩu tạm; không cấp lại.");
+        // Also for a customer who set a password of their own and forgot it: they must change the new temporary one.
+        customer.CustomerPersonalPhoneVerifiedAt = null;
         var docs = db.ContractDocuments.AsNoTracking().Where(d => d.CustomerId == customerId && d.TenantId == null);
         var signed = docs.Where(d => d.ContractDocumentStatus == ContractDocumentStatus.Signed || d.ContractDocumentStatus == ContractDocumentStatus.Completed);
         if (create && !await signed.AnyAsync(ct) && !await db.ContractReviewRequests.AnyAsync(r => r.CustomerId == customerId && r.ContractReviewRequestStatus == ContractReviewStatus.Approved, ct)) throw new InternalAppException(409, "Khách cần đồng ý hợp đồng trước khi tạo tài khoản.");

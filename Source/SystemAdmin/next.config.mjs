@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import path from "node:path";
 
 const branding = JSON.parse(readFileSync(new URL("../Shared/application-branding.json", import.meta.url), "utf8"));
 if (typeof branding.name !== "string" || !branding.name.trim() || branding.name !== branding.name.trim() || /[\r\n]/.test(branding.name)) {
@@ -9,6 +10,8 @@ if (typeof branding.name !== "string" || !branding.name.trim() || branding.name 
 const nextConfig = {
   env: { NEXT_PUBLIC_APP_NAME: branding.name },
   output: "standalone",
+  // Shared TypeScript sources live beside this app in the monorepo.
+  turbopack: { root: path.resolve(process.cwd(), "..") },
   experimental: {
     agentUpgrade: "security",
     // Scans go through the /api/internal proxy: up to 20 MB each, and OCR-related calls can take a while.

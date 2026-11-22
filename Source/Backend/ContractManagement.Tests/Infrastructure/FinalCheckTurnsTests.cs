@@ -27,7 +27,7 @@ public sealed class FinalCheckTurnsTests
             ApprovalWorkflowId = 1, SubmittedByEmployeeId = 5, ContractApprovalRequestStatus = 0, ContractReviewRequestId = 20, ContractApprovalRequestRowversion = [1] });
         await db.SaveChangesAsync();
         // Only the members used by the final check are needed.
-        var repo = new ContractReviewRepository(db, null!, null!, null!, new ConfigurationBuilder().Build(), null!);
+        var repo = new ContractReviewRepository(db, null!, null!, new ConfigurationBuilder().Build(), null!);
 
         // Sếp only signs and cannot approve the agreed version.
         Assert.Equal(403, (await Assert.ThrowsAsync<InternalAppException>(() => repo.ResolveInternalApproval(1, new(true, null), Director, default))).Status);

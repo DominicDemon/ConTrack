@@ -1,5 +1,5 @@
 import { requiredPartyFields } from "../../Shared/draft-validation";
-export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canWrite: boolean; canCheck: boolean; canApprove: boolean; canManageTemplates: boolean; canManageEmployees: boolean; mustChangePassword: boolean; department: string | null; isManager: boolean };
+export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canManageLegal: boolean; canWrite: boolean; canCheck: boolean; canApprove: boolean; canManageTemplates: boolean; canManageEmployees: boolean; mustChangePassword: boolean; department: string | null; isManager: boolean };
 export type EmployeeAdminRow = { id: string; code: string; username: string; name: string; email: string | null; phone: string | null; status: "ACTIVE" | "LOCKED" | string; mustChangePassword: boolean; lastLoginAt: string | null; departmentId: string | null; isManager: boolean };
 /** staffPermissions is null when the department has a manager only (Ban Giám Đốc). */
 export type DepartmentOption = { id: string; code: string; name: string; staffPermissions: string[] | null; managerPermissions: string[]; managerId: string | null; managerName: string | null };
@@ -20,7 +20,7 @@ export type DraftIssue = { code: string; path: string; message: string };
 export type CarriedDraftComment = { id: string; termKey: string | null; content: string; sourceCommentId: string | null; sourceVersionId: string | null; resolved: boolean };
 export type DraftRecord = { paperEvidencePending?: boolean; issues?: DraftIssue[]; carriedComments?: CarriedDraftComment[]; id: string; code: string; employeeId: string; employeeName: string; rowVersion: string; versionRowVersion: string; updatedAt: string; content: DraftContent; status: number; versionNo: string; locked: boolean; canEdit: boolean; customerName: string; customerPhoneMasked: string; latestReviewStatus: string | null; sendBlockedReason: string | null; /** False for a prospect: no portal login yet, reads and signs through the emailed link. */ customerHasAccount?: boolean };
 export type DraftSummary = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; updatedAt: string; missingCount: number; status: number; latestReviewStatus: string | null };
-export type ContractArchiveEntry = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; updatedAt: string; status: number; versionNo: string; versionLocked: boolean; signatureCount: number; lastSignedAt: string | null };
+export type ContractArchiveEntry = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; createdAt: string; updatedAt: string; status: number; versionNo: string; versionLocked: boolean; signatureCount: number; lastSignedAt: string | null; totalAmount: number; currencyCode: string; effectiveDate: string | null; expireDate: string | null };
 export type SigningMonitorEntry = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; updatedAt: string; status: number; versionNo: string; signatureCount: number; signedCount: number; companySigned: boolean; customerSigned: boolean; latestReviewStatus: string | null; lastSignedAt: string | null; paper?: boolean };
 export type SigningTimelineEvent = { at: string; category: string; title: string; detail: string | null; state: string };
 export type SigningSignerProgress = { id: string; versionNo: string; party: string; role: string; name: string; title: string | null; email: string | null; status: number; signedAt: string | null; documentHash: string | null; rejectReason: string | null };
@@ -106,7 +106,8 @@ export function completePartyFields(template: TemplateDefinition): TemplateDefin
 
   return {...template,fields:[...template.fields,...requiredPartyFields.filter(f => !template.fields.some(x => x.key === f.key))]};
 }
-export type CustomerRow = { id: string; name: string; phone: string; email: string | null; address: string | null; taxIdentifier: string | null; active: boolean; businessCount: number; createdAt: string; lastLoginAt: string | null };
+export type CustomerRow = { id: string; name: string; phone: string; email: string | null; address: string | null; taxIdentifier: string | null; active: boolean; businessCount: number; createdAt: string; lastLoginAt: string | null; ownerId: string | null; ownerName: string | null };
+export type CustomerOwnerOption = { id: string; name: string };
 export type ProductRow = { id: string; code: string | null; name: string; unit: string | null; categoryId: number | null; categoryName: string | null; price: number | null; description: string | null };
 export type CategoryOption = { id: number; name: string };
 export type ServiceRow = { id: string; name: string; unit: string | null; price: number | null; typeName: string | null; active: boolean };

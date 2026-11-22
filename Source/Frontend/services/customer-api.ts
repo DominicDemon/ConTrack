@@ -26,6 +26,22 @@ export async function customerApi<T>(path: string, method = "GET", body?: unknow
   }
   return response.status === 204 ? undefined as T : response.json();
 }
+export async function customerApiForm<T>(path: string, form: FormData): Promise<T> {
+  if (!csrfToken) {
+    const tokenResponse = await fetch("/api/customer/auth/csrf", { credentials: "same-origin", cache: "no-store" });
+    if (!tokenResponse.ok) throw new CustomerApiError(tokenResponse.status, "Không kết nối được hệ thống. Vui lòng thử lại.");
+    csrfToken = (await tokenResponse.json()).token as string;
+  }
+  const token = csrfToken;
+  const response = await fetch(`/api/customer${path}`, { method: "POST", credentials: "same-origin", cache: "no-store",
+    headers: { "X-CSRF-TOKEN": token }, body: form });
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    if (response.status === 400) csrfToken = undefined;
+    throw new CustomerApiError(response.status, error?.message ?? "Không thể tải bản scan lên. Vui lòng thử lại.", error?.code);
+  }
+  return response.json();
+}
 export async function customerApiBlob(path: string, method = "GET", body?: unknown): Promise<Blob> {
   if (method !== "GET" && !csrfToken) {
     const response = await fetch("/api/customer/auth/csrf", { credentials: "same-origin", cache: "no-store" });

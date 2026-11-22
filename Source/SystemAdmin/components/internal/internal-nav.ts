@@ -4,10 +4,13 @@ import {
   Building2,
   Contact,
   FileSignature,
+  FileChartColumnIncreasing,
   Files,
   KeyRound,
+  LockKeyhole,
   LayoutDashboard,
   LifeBuoy,
+  Mail,
   Package,
   ScanLine,
   Search,
@@ -30,15 +33,31 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Hợp đồng đã ký", icon: FileSignature, href: "/workspace/contracts/signed", permissions: ["draft.write", "contract.check", "contract.approve"] },
   { label: "Theo dõi ký", icon: Activity, href: "/workspace/contracts/signing", permissions: ["draft.manage.all", "contract.approve"] },
   { label: "Kho hợp đồng", icon: Archive, href: "/workspace/contracts/archive", permissions: ["draft.manage.all"] },
+  { label: "Báo cáo hợp đồng", icon: FileChartColumnIncreasing, href: "/workspace/contract-reports", permissions: ["draft.manage.all"] },
   { label: "Bản ký giấy", icon: FileSignature, href: "/workspace/signed-contracts", permissions: ["contract.signed_evidence.view"], exclude: "/workspace/signed-contracts/search" },
   { label: "Hợp đồng giấy scan", icon: ScanLine, href: "/workspace/scanned-contracts", permissions: ["contract.scanned.view"] },
   { label: "Tìm hợp đồng", icon: Search, href: "/workspace/signed-contracts/search", permissions: ["contract.signed_evidence.view", "contract.scanned.view"] },
-  { label: "Key mở tệp", icon: KeyRound, href: "/workspace/encryption-keys", permissions: ["system.encryption_key.manage"] },
-  { label: "Khách hàng", icon: Contact, href: "/workspace/customers", permissions: ["customer.manage"] },
+  { label: "Lịch sử gửi email", icon: Mail, href: "/workspace/scan-emails", permissions: ["contract.signed_evidence.view", "contract.scanned.view", "audit.security", "system.encryption_key.manage"] },
+  { label: "Key của tôi", icon: LockKeyhole, href: "/workspace/my-key", permissions: ["contract.signed_evidence.view", "contract.scanned.view"] },
+  { label: "Quản lý key", icon: KeyRound, href: "/workspace/encryption-keys", permissions: ["system.encryption_key.manage"] },
+  { label: "Khách hàng", icon: Contact, href: "/workspace/customers", permissions: ["customer.manage", "customer.manage.all"] },
   { label: "Sản phẩm và dịch vụ", icon: Package, href: "/workspace/catalog", permissions: ["product.read", "product.manage"] },
   { label: "Hỗ trợ khách hàng", icon: LifeBuoy, href: "/workspace/support-tickets", permissions: ["ticket.handle", "ticket.manage.all"] },
 ];
 
+/** The legal role receives only existing contract workflow screens, based on its assigned permission. */
+const ADMIN_OFFICER_NAV_ITEMS: NavItem[] = [
+  { label: "Tổng quan", icon: LayoutDashboard, href: "/workspace", permissions: [] },
+  { label: "Hợp đồng cần xử lý", icon: Files, href: "/workspace/contracts/drafts", permissions: ["legal.manage"] },
+  { label: "Kho hợp đồng", icon: Archive, href: "/workspace/contracts/archive", permissions: ["contract.read", "legal.manage"] },
+  { label: "Theo dõi ký", icon: Activity, href: "/workspace/contracts/signing", permissions: ["contract.read", "legal.manage"] },
+  { label: "Chờ Admin ký", icon: FileSignature, href: "/workspace/contracts/company-signing", permissions: ["legal.manage"] },
+  { label: "Mẫu hợp đồng", icon: Files, href: "/workspace/templates", permissions: ["template.read", "template.manage"] },
+  { label: "Hỗ trợ khách hàng", icon: LifeBuoy, href: "/workspace/support-tickets", permissions: ["ticket.handle", "ticket.manage.all"] },
+];
+
 /** Screens a set of permissions opens, in menu order. */
-export const screensFor = (permissions: string[]) =>
-  NAV_ITEMS.filter(item => item.permissions.length === 0 || item.permissions.some(p => permissions.includes(p)));
+export const screensFor = (permissions: string[]) => {
+  const items = permissions.includes("legal.manage") ? ADMIN_OFFICER_NAV_ITEMS : NAV_ITEMS;
+  return items.filter(item => item.permissions.length === 0 || item.permissions.some(p => permissions.includes(p)));
+};

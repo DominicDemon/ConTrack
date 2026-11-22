@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/signed-scans/date-input";
 import Link from "next/link";
 import { useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { format } from "date-fns";
@@ -372,16 +373,16 @@ function ConfirmForm({ job, onConfirmed }: { job: ScannedJobDetail; onConfirmed:
               <Label htmlFor={ids.signed}>
                 Ngày ký <Required />
               </Label>
-              <Input id={ids.signed} type="date" value={form.signedDate} onChange={(e) => set("signedDate", e.target.value)} disabled={submitting} />
+              <DateInput id={ids.signed} value={form.signedDate} onChange={(iso) => set("signedDate", iso)} disabled={submitting} />
               {hint("signedDate")}
             </div>
             <div className="space-y-2">
               <Label htmlFor={ids.effective}>Ngày hiệu lực</Label>
-              <Input id={ids.effective} type="date" value={form.effectiveDate} onChange={(e) => set("effectiveDate", e.target.value)} disabled={submitting} />
+              <DateInput id={ids.effective} value={form.effectiveDate} onChange={(iso) => set("effectiveDate", iso)} disabled={submitting} />
             </div>
             <div className="space-y-2">
               <Label htmlFor={ids.expiration}>Ngày hết hạn</Label>
-              <Input id={ids.expiration} type="date" value={form.expirationDate} onChange={(e) => set("expirationDate", e.target.value)} disabled={submitting} />
+              <DateInput id={ids.expiration} value={form.expirationDate} onChange={(iso) => set("expirationDate", iso)} disabled={submitting} />
               {hint("expirationDate")}
             </div>
           </div>

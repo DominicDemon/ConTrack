@@ -3,7 +3,7 @@ using ContractManagement.Domain.Internal;
 namespace ContractManagement.Application.Features.Internal;
 
 public sealed record CustomerRow(long Id, string Name, string Phone, string? Email, string? Address, string? TaxIdentifier, bool Active,
-    int BusinessCount, DateTime CreatedAt, DateTime? LastLoginAt);
+    int BusinessCount, DateTime CreatedAt, DateTime? LastLoginAt, long? OwnerId = null, string? OwnerName = null);
 public sealed record CustomerUpdateInput(string? Name, string? Phone, string? Email, string? Address, string? TaxIdentifier);
 public sealed record ActiveInput(bool Active);
 public sealed record ProductRow(long Id, string? Code, string Name, string? Unit, int? CategoryId, string? CategoryName, decimal? Price, string? Description);
@@ -17,7 +17,8 @@ public sealed record DepartmentInput(string? Name, string? Description);
 /// <summary>Khách hàng, Sản phẩm và dịch vụ, Phòng ban on MASTER. Each endpoint group checks its own permission.</summary>
 public interface ICatalogAdmin
 {
-    Task<List<CustomerRow>> Customers(string? search, CancellationToken ct);
+    /// <param name="owner">Only the customers this employee looks after; null for every customer.</param>
+    Task<List<CustomerRow>> Customers(string? search, long? owner, CancellationToken ct);
     Task<CustomerRow> UpdateCustomer(long id, CustomerUpdateInput input, InternalUser actor, CancellationToken ct);
     Task<CustomerRow> SetCustomerStatus(long id, ActiveInput input, InternalUser actor, CancellationToken ct);
     Task<CustomerRow> CustomerRow(long id, CancellationToken ct);
@@ -31,6 +32,8 @@ public interface ICatalogAdmin
 
 public static class CatalogRules
 {
+    /// <summary>customer.manage: create customers and manage one's own; customer.manage.all: every customer and who looks after it.</summary>
+    public const string CustomerManageAll = "customer.manage.all";
     public const string CustomerManage = "customer.manage", ProductRead = "product.read", ProductManage = "product.manage", DepartmentManage = "department.manage";
 
     /// <returns>Trimmed text, null when blank; throws when longer than <paramref name="max"/>.</returns>

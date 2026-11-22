@@ -5,7 +5,8 @@ public sealed record PdfSignaturePlacement(
     decimal X,
     decimal Y,
     decimal Width,
-    decimal Height);
+    decimal Height,
+    string? SignerFullName = null);
 
 public interface IElectronicSigningPdfService
 {

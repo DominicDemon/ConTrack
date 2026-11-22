@@ -72,8 +72,7 @@ BEGIN
         [service_status], [service_datecreated]
     )
     VALUES
-        (1, N'Triển khai & Chuẩn hóa Mẫu hợp đồng', N'Contract Template Onboarding', N'Lần', N'One-time', 5000000, 1, 1, 0, 1, @NowDt),
-        (2, N'Gói Hỗ trợ Kỹ thuật Ưu tiên 24/7', N'24/7 Priority Technical Support', N'Năm', N'Year', 3600000, 2, 1, 0, 1, @NowDt);
+        (1, N'Phần mềm quản lý hợp đồng', N'Contract Management Software', N'Gói/Năm', N'Package/Year', 5000000, 1, 1, 0, 1, @NowDt);
     SET IDENTITY_INSERT [SERVICES] OFF;
 END;
 

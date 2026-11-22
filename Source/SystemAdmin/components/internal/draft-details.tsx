@@ -5,7 +5,7 @@ import { internalStyles as ui } from "./internal-theme";
 import s from "./workspace.module.css";
 import { paymentSummary, convertPayments, roundMoney } from "../../../Shared/draft-validation";
 type Props = { content: DraftContent; change: (fn: (old: DraftContent) => DraftContent) => void };
-export function PartyEditor({ content, change }: Props) {
+export function PartyEditor({ content, change, useDraftFields }: Props & {useDraftFields?: boolean}) {
   const currentCustomer = useRef(content.customerId); currentCustomer.current = content.customerId;
   const [retry, setRetry] = useState(0);
   const [businesses, setBusinesses] = useState<BusinessOption[]>([]), [error, setError] = useState("");
@@ -25,7 +25,7 @@ export function PartyEditor({ content, change }: Props) {
   }
   async function create() { const customerId=content.customerId; setBusy(true); setError(""); try { const b = await internalApi<BusinessOption>(`/customers/${content.customerId}/businesses`, "POST", form); if(currentCustomer.current!==customerId) return; setBusinesses(bs => [...bs,b]); setAdding(false); select(b); } catch(e) { if(currentCustomer.current===customerId) setError((e as Error).message); } finally { setBusy(false); } }
   return <div className={s.lineItem}><label className={s.label}>Bên giao dịch<select aria-label="Loại bên giao dịch" className={ui.field} disabled={!content.customerId || busy} value={content.partyType ?? ""} onChange={e => void chooseType(e.target.value)}><option value="">Chọn cá nhân hoặc doanh nghiệp</option><option value="PERSON">Cá nhân</option><option value="BUSINESS">Doanh nghiệp</option></select></label>
-    {content.partyType === "BUSINESS" && <><label className={s.label}>Pháp nhân<select className={ui.field} value={content.customerBusinessId ?? ""} onChange={e => { const b=businesses.find(x => x.id===e.target.value); if(b) select(b); }}><option value="">Chọn pháp nhân</option>{businesses.map(b => <option key={b.id} value={b.id}>{b.name} — {b.taxCode}</option>)}</select></label><button type="button" className={ui.secondaryButton} onClick={() => setAdding(!adding)}>Thêm pháp nhân</button>
+    {content.partyType === "BUSINESS" && (!useDraftFields || businesses.length > 0) && <><label className={s.label}>Pháp nhân<select className={ui.field} value={content.customerBusinessId ?? ""} onChange={e => { const b=businesses.find(x => x.id===e.target.value); if(b) select(b); }}><option value="">Chọn pháp nhân</option>{businesses.map(b => <option key={b.id} value={b.id}>{b.name} — {b.taxCode}</option>)}</select></label>{!useDraftFields && <button type="button" className={ui.secondaryButton} onClick={() => setAdding(!adding)}>Thêm pháp nhân</button>}
       {adding && <div className={s.fields}>{([['name','Tên pháp lý'],['taxCode','Mã số thuế'],['address','Địa chỉ'],['representative','Người đại diện']] as const).map(([key,label]) => <label className={s.label} key={key}>{label}<input className={ui.field} value={form[key]} onChange={e => setForm({...form,[key]:e.target.value})}/></label>)}<button type="button" className={ui.primaryButton} disabled={busy} onClick={() => void create()}>Lưu pháp nhân</button></div>}</>}
     {error && <div role="alert" className={ui.error}>{error}<button type="button" className={ui.secondaryButton} onClick={()=>setRetry(n=>n+1)}>Tải lại pháp nhân</button></div>}
   </div>;

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { internalApi, type BusinessOption, type CategoryOption, type CustomerRow, type DepartmentRow, type ProductRow } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
+import { CustomerCreateFields, customerCreateReady, newCustomer } from "./customer-create-fields";
 
 const field = "grid gap-2 text-sm font-medium";
 
@@ -25,29 +26,27 @@ function useSave<T>(onSaved: (result: T) => void) {
   return { busy, error, save };
 }
 
-/** Creates a customer (customer = null) or edits one; a new customer may come with a business (company + tax code). */
 export function CustomerFormDialog({ customer, onClose, onSaved }: { customer: CustomerRow | null; onClose: () => void; onSaved: (row: CustomerRow) => void }) {
   const [name, setName] = useState(customer?.name ?? ""); const [phone, setPhone] = useState(customer?.phone ?? ""); const [email, setEmail] = useState(customer?.email ?? "");
-  const [address, setAddress] = useState(customer?.address ?? ""); const [tax, setTax] = useState(customer?.taxIdentifier ?? ""); const [company, setCompany] = useState(""); const [companyTax, setCompanyTax] = useState("");
+  const [address, setAddress] = useState(customer?.address ?? ""); const [tax, setTax] = useState(customer?.taxIdentifier ?? "");
+  const [createForm, setCreateForm] = useState(newCustomer);
   const [businesses, setBusinesses] = useState<BusinessOption[] | null>(null);
   const { busy, error, save } = useSave(onSaved);
   const creating = customer === null;
   useEffect(() => { if (customer) void internalApi<BusinessOption[]>(`/crm/customers/${customer.id}/businesses`).then(setBusinesses).catch(() => setBusinesses([])); }, [customer]);
-  const ready = !!name.trim() && !!phone.trim() && (!company.trim() || !!companyTax.trim());
+  const ready = creating ? customerCreateReady(createForm) : !!name.trim() && !!phone.trim();
   return <FormDialog title={creating ? "Thêm khách hàng" : `Sửa ${customer.name}`} busy={busy} error={error} ready={ready} submit={creating ? "Thêm khách hàng" : "Lưu thay đổi"} onClose={onClose}
     description={creating ? "Khách dùng số điện thoại này để đăng nhập cổng khách hàng." : "Đổi số điện thoại hoặc email thì khách phải xác minh lại ở lần đăng nhập kế tiếp."}
     onSubmit={() => void save(() => creating
-      ? internalApi<CustomerRow>("/crm/customers", "POST", { name, phone, email, address, company, taxCode: companyTax })
+      ? internalApi<CustomerRow>("/crm/customers", "POST", createForm)
       : internalApi<CustomerRow>(`/crm/customers/${customer.id}`, "PUT", { name, phone, email, address, taxIdentifier: tax }))}>
-    <div className="grid gap-4 sm:grid-cols-2">
+    {creating ? <CustomerCreateFields value={createForm} onChange={setCreateForm} busy={busy}/> : <div className="grid gap-4 sm:grid-cols-2">
       <label className={`${field} sm:col-span-2`}>Tên khách hàng *<Input required maxLength={200} value={name} disabled={busy} onChange={e => setName(e.target.value)}/></label>
       <label className={field}>Số điện thoại *<Input required type="tel" maxLength={20} value={phone} disabled={busy} placeholder="VD: 0912345678" onChange={e => setPhone(e.target.value)}/></label>
       <label className={field}>Email<Input type="email" maxLength={255} value={email} disabled={busy} onChange={e => setEmail(e.target.value)}/></label>
       <label className={`${field} sm:col-span-2`}>Địa chỉ<Input maxLength={1000} value={address} disabled={busy} onChange={e => setAddress(e.target.value)}/></label>
-      {!creating && <label className={field}>Mã số thuế cá nhân<Input maxLength={20} value={tax} disabled={busy} onChange={e => setTax(e.target.value)}/></label>}
-      {creating && <><label className={field}>Tên doanh nghiệp<Input maxLength={1000} value={company} disabled={busy} placeholder="Bỏ trống nếu là cá nhân" onChange={e => setCompany(e.target.value)}/></label>
-        <label className={field}>Mã số thuế doanh nghiệp{company.trim() ? " *" : ""}<Input maxLength={20} value={companyTax} disabled={busy} onChange={e => setCompanyTax(e.target.value)}/></label></>}
-    </div>
+      <label className={field}>Mã số thuế cá nhân<Input maxLength={20} value={tax} disabled={busy} onChange={e => setTax(e.target.value)}/></label>
+    </div>}
     {!creating && <div className="grid gap-2 text-sm"><strong>Pháp nhân</strong>{businesses === null ? <span className="text-muted-foreground">Đang tải…</span>
       : businesses.length === 0 ? <span className="text-muted-foreground">Chưa có pháp nhân. Có thể thêm khi soạn hợp đồng cho khách này.</span>
       : <ul className="grid gap-1">{businesses.map(b => <li key={b.id}>{b.name} <span className="text-muted-foreground">· MST {b.taxCode}</span></li>)}</ul>}</div>}

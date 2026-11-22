@@ -5,13 +5,14 @@ import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 import { PartyEditor, PaymentEditor } from "./draft-details";
 import { keepInView } from "./word-clause-form";
 import NumberRule from "./number-rule";
+import { customerCreateReady } from "./customer-create-fields";
 
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, GripVertical, ListChecks, Plus, RefreshCw, Save, Send, Trash2, Users, Wallet } from "lucide-react";
-import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
+import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, type BusinessOption, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import DraftPreview from "./draft-preview";
 import WordDraftPreview from "./word-draft-preview";
@@ -22,7 +23,7 @@ import ApprovalPanel from "./approval-panel";
 import { useInternalUser } from "./internal-shell";
 import s from "./workspace.module.css";
 const blank = (): DraftContent => ({ formatVersion: 2, partyType: "", customerBusinessId: null, paymentMode: "PERCENT", milestones: [], templateId: "", customerId: "", name: "", fields: {}, items: [], terms: [], vatPercent: 0, effectiveDate: null, expireDate: null, templateSnapshot: null, totals: { subtotal: 0, discount: 0, vat: 0, total: 0 }, missingFields: [] });
-const newCustomer = (): CustomerInput => ({ name: "", phone: "", email: "", company: "", taxCode: "", address: "" });
+const taxKey = (value: string) => value.replace(/[\s-]/g, "").toUpperCase();
 /** Same list as InternalDraftPolicy.EnglishFieldKeys: what reads differently in English; numbers and codes are shared. */
 const ENGLISH_FIELDS = ["CUSTOMER_COMPANY", "CUSTOMER_ADDRESS", "CUSTOMER_CONTACT_TITLE", "CUSTOMER_BANK_NAME", "PROVIDER_LEGAL_NAME", "PROVIDER_ADDRESS", "PROVIDER_REPRESENTATIVE_TITLE", "PROVIDER_BANK_NAME"];
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className={s.label}>{label}{children}</label>; }
@@ -31,12 +32,14 @@ export default function DraftEditor({ id }: { id?: string }) {
   const [templates, setTemplates] = useState<TemplateDefinition[]>([]); const [customers, setCustomers] = useState<CustomerLookupResult[]>([]); const [products, setProducts] = useState<ProductOption[]>([]);
   const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [conflict, setConflict] = useState(false);
   const [dirty, setDirty] = useState(false); const dirtyRef = useRef(false); const form = useRef<HTMLFormElement>(null);
-  const [mobile, setMobile] = useState(false); const [tab, setTab] = useState("edit"); const [customerForm, setCustomerForm] = useState<CustomerInput | null>(null); const [customerBusy, setCustomerBusy] = useState(false);
+  const [mobile, setMobile] = useState(false); const [tab, setTab] = useState("edit"); const [creatingCustomer, setCreatingCustomer] = useState(false); const [numberFormKey, setNumberFormKey] = useState(0); const [customerBusy, setCustomerBusy] = useState(false);
   const [customerSearch, setCustomerSearch] = useState(""); const [searching, setSearching] = useState(false); const [lookupError, setLookupError] = useState(""); const [loadAttempt, setLoadAttempt] = useState(0);
   const [locate, setLocate] = useState<{location:string|null;request:number}|null>(null);
   const [wordInfo, setWordInfo] = useState("");
   /** Result of refilling Bên A from the customer record (shown in the Bên A section). */
   const [customerNotice, setCustomerNotice] = useState("");
+  const [customerCreateError, setCustomerCreateError] = useState("");
+  const [numberSetup, setNumberSetup] = useState({ busy: false, error: "", businessId: "" });
   const refilled = useRef("");
   const receipt = useRef<string|null|undefined>(undefined);
   const [previewHost,setPreviewHost] = useState<HTMLDivElement|null>(null);
@@ -112,16 +115,69 @@ export default function DraftEditor({ id }: { id?: string }) {
   const totals = estimateTotals(content);
   const issues = sendIssues({...content, templateSnapshot: template ?? null});
   const missing = issues.map(i => i.message);
-  function selectCustomer(customer: CustomerOption, businessId: string | null = null) {
+  function selectCustomer(customer: CustomerOption, businessId: string | null = null, justCreated = false) {
+    setCreatingCustomer(false);
+    if (!justCreated) setNumberFormKey(k => k + 1);
     change(current => ({
       ...current, customerId: customer.id, partyType: businessId ? "BUSINESS" : "PERSON", customerBusinessId: businessId,
-      fields: { ...Object.fromEntries(Object.entries(current.fields).filter(([key]) => !key.startsWith("CUSTOMER_"))), ...customer.fields },
+      fields: { ...Object.fromEntries(Object.entries(current.fields).filter(([key]) => !key.startsWith("CUSTOMER_"))), ...customer.fields, ...(justCreated ? current.fields : {}) },
       fieldsEn: current.fieldsEn && Object.fromEntries(Object.entries(current.fieldsEn).filter(([key]) => !key.startsWith("CUSTOMER_")))
     }));
     setCustomerSearch("");
     setCustomers([]);
     setLookupError("");
     setSearching(false);
+    setNumberSetup(current => ({ ...current, error: "", businessId: "" }));
+  }
+  async function setupCustomerNumber() {
+    const { customerId, partyType, fields } = content;
+    if (!customerId || partyType !== "BUSINESS") {
+      focusIssue("partyType");
+      return;
+    }
+    const input = {
+      name: fields.CUSTOMER_COMPANY?.trim() ?? "",
+      taxCode: fields.CUSTOMER_TAX_CODE?.trim() ?? "",
+      address: fields.CUSTOMER_ADDRESS?.trim() ?? "",
+      representative: fields.CUSTOMER_CONTACT_NAME?.trim() ?? "",
+    };
+    const key = taxKey(input.taxCode);
+    if (!key) {
+      setNumberSetup({ busy: false, error: "Điền mã số thuế ở mục Khách hàng · Bên A.", businessId: "" });
+      focusIssue("fields.CUSTOMER_TAX_CODE");
+      return;
+    }
+
+    setNumberSetup({ busy: true, error: "", businessId: "" });
+    const path = `/customers/${encodeURIComponent(customerId)}/businesses`;
+    const findBusiness = async () => {
+      const matches = (await internalApi<BusinessOption[]>(path)).filter(b => taxKey(b.taxCode) === key);
+      if (matches.length > 1) throw new Error("Có nhiều pháp nhân trùng mã số thuế. Hãy chọn đúng pháp nhân ở mục Bên A.");
+      return matches[0];
+    };
+    try {
+      let business = await findBusiness();
+      if (!business) {
+        const missing = [[input.name, "tên pháp lý"], [input.address, "địa chỉ"], [input.representative, "người đại diện"]]
+          .filter(([value]) => !value).map(([, label]) => label);
+        if (missing.length) throw new Error(`Bổ sung ${missing.join(", ")} trong mục Khách hàng · Bên A để tạo pháp nhân.`);
+        try {
+          business = await internalApi<BusinessOption>(path, "POST", input);
+        } catch (e) {
+          if (!(e instanceof InternalApiError && e.status === 409)) throw e;
+          const existing = await findBusiness();
+          if (!existing) throw e;
+          business = existing;
+        }
+      }
+      const businessId = business.id;
+      change(c => c.customerId === customerId && c.partyType === "BUSINESS" && !c.customerBusinessId &&
+        taxKey(c.fields.CUSTOMER_TAX_CODE ?? "") === key ? { ...c, customerBusinessId: businessId } : c);
+      setNumberSetup({ busy: false, error: "", businessId });
+      return { businessId, customerId };
+    } catch (e) {
+      setNumberSetup({ busy: false, error: (e as Error).message, businessId: "" });
+    }
   }
   /**
    * Bên A of a saved, editable version refilled from the customer record (the person or the legal entity of the draft).
@@ -168,20 +224,22 @@ export default function DraftEditor({ id }: { id?: string }) {
     } catch(e) {if(version === wordReadVersion.current) setWordInfo("Chưa đọc được thông tin tự động: " + (e as Error).message);}
   }
   async function createCustomer() {
-    if (!customerForm) return;
+    const f = content.fields;
+    const business = content.partyType === "BUSINESS";
+    const customerForm: CustomerInput = { partyType: business ? "BUSINESS" : "PERSON",
+      name: f.CUSTOMER_CONTACT_NAME || (!business ? f.CUSTOMER_COMPANY : "") || "", phone: f.CUSTOMER_CONTACT_PHONE || "",
+      company: business ? f.CUSTOMER_COMPANY || "" : "", taxCode: business ? f.CUSTOMER_TAX_CODE || "" : "",
+      address: f.CUSTOMER_ADDRESS || "", email: f.CUSTOMER_EMAIL || "" };
+    if (customerBusy) return;
+    if (!customerCreateReady(customerForm)) { setCustomerCreateError(business ? "Điền tên doanh nghiệp, mã số thuế, người đại diện và số điện thoại ở Bên A." : "Điền tên và số điện thoại ở Bên A."); return; }
     setCustomerBusy(true);
-    setError("");
+    setCustomerCreateError("");
     try {
       const customer = await internalApi<CustomerOption>("/customers", "POST", customerForm);
-      setCustomerForm(null);
-      selectCustomer(customer);
-      if (customerForm.company.trim()) {
-        const results = await internalApi<CustomerLookupResult[]>(`/customers/lookup?search=${encodeURIComponent(customerForm.taxCode)}`);
-        const business = results.find(result => result.customer.id === customer.id && result.businessId);
-        if (business) selectCustomer(business.customer, business.businessId);
-      }
+      selectCustomer(customer, customer.businessId ?? null, true);
+      if (customer.businessId) return { businessId: customer.businessId, customerId: customer.id };
     } catch (error) {
-      setError((error as Error).message);
+      setCustomerCreateError((error as Error).message);
     } finally {
       setCustomerBusy(false);
     }
@@ -240,20 +298,41 @@ export default function DraftEditor({ id }: { id?: string }) {
               {["CUSTOMER_TAX_CODE", "CUSTOMER_CONTACT_PHONE", "CUSTOMER_EMAIL"].map(key => result.customer.fields[key]).filter(Boolean).map((value, index) => <span key={index}> · {value}</span>)}
             </button>
           </li>)}</ul> : <p role="status">Không tìm thấy khách hàng phù hợp.</p>)}
-        <button type="button" className={ui.secondaryButton} onClick={() => setCustomerForm(customerForm ? null : newCustomer())}><Plus size={16}/>{customerForm ? "Đóng tạo khách hàng" : "Tạo nhanh khách hàng"}</button>
-        {customerForm && <div className={s.lineItem}><strong style={{ fontSize: 14 }}>Khách hàng mới</strong>{([["name", "Tên hiển thị *"], ["phone", "Số điện thoại *"], ["email", "Email"], ["company", "Tên doanh nghiệp (nếu có)"], ["taxCode", "Mã số thuế doanh nghiệp"], ["address", "Địa chỉ"]] as const).map(([key, label]) => <Field key={key} label={label}><input className={ui.field} value={customerForm[key]} onChange={e => setCustomerForm({ ...customerForm, [key]: e.target.value })}/></Field>)}<button disabled={customerBusy} type="button" className={ui.primaryButton} onClick={createCustomer}>{customerBusy ? "Đang tạo…" : "Tạo và chọn khách hàng"}</button></div>}
+        <button type="button" className={ui.secondaryButton} disabled={customerBusy} onClick={() => {
+          setCustomerCreateError("");
+          setCreatingCustomer(!creatingCustomer);
+          if (!creatingCustomer) {
+            setNumberFormKey(k => k + 1);
+            change(c => ({ ...c, customerId: "", customerBusinessId: null, partyType: "PERSON",
+              fields: c.customerId ? Object.fromEntries(Object.entries(c.fields).filter(([k]) => !k.startsWith("CUSTOMER_"))) : c.fields }));
+          }
+        }}><Plus size={16}/>{creatingCustomer ? "Đóng tạo khách hàng" : "Tạo nhanh khách hàng"}</button>
       </>}
       {id && record?.canEdit && !!content.customerId && <button type="button" className={ui.secondaryButton} onClick={() => void refillCustomer(false)}><RefreshCw size={16}/>Lấy lại thông tin khách hàng</button>}
       {customerNotice && <p role="status" className={ui.notice}>{customerNotice}</p>}
-      <PartyEditor content={content} change={change}/>{template.fields.filter(f => f.key.startsWith("CUSTOMER_")).map(partyField)}
+      {creatingCustomer ? <Field label="Loại khách hàng"><select className={ui.field} value={content.partyType} onChange={e => {
+        const type = e.target.value; change(c => ({ ...c, partyType: type }));
+      }}><option value="PERSON">Cá nhân</option><option value="BUSINESS">Doanh nghiệp</option></select></Field>
+        : <PartyEditor key={numberSetup.businessId || "customer-party"} content={content} change={change} useDraftFields={!id}/>}
+      {template.fields.filter(f => f.key.startsWith("CUSTOMER_")).map(partyField)}
+      {(!id && (creatingCustomer || content.partyType === "BUSINESS")) && [
+        { key: "CUSTOMER_CONTACT_NAME", label: content.partyType === "BUSINESS" ? "Người đại diện" : "Họ và tên" },
+        { key: "CUSTOMER_TAX_CODE", label: "Mã số thuế" }, { key: "CUSTOMER_EMAIL", label: "Email" }
+      ].filter(f => !template.fields.some(existing => existing.key === f.key)).map(f => partyField({...f, required:false}))}
+      {creatingCustomer && <button type="button" disabled={customerBusy} className={ui.secondaryButton} onClick={createCustomer}>Tạo và chọn khách hàng</button>}
+      {creatingCustomer && customerCreateError && <p className={ui.error} role="alert">{customerCreateError}</p>}
+      {!creatingCustomer && !id && content.customerId && content.partyType === "BUSINESS" && !content.customerBusinessId &&
+        <button type="button" className={ui.secondaryButton} disabled={numberSetup.busy} onClick={setupCustomerNumber}>Dùng thông tin Bên A cho pháp nhân</button>}
+      {numberSetup.error && <p className={ui.error} role="alert">{numberSetup.error}</p>}
     </div></section>
-    <section id="provider-fields" tabIndex={-1} className={s.section}><details open={!template.wordStorageKey || undefined}><summary><Building2/> Công ty mình · Bên B</summary><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></details></section>
     {!id && <section className={s.section}><h2>Số hợp đồng</h2><p>Chờ cấp số khi lưu nháp</p>
       <NumberRule owner="0" selected={!content.numberingBusinessId} choose={() => change(c => ({...c, numberingBusinessId:null}))}/>
-      {content.partyType === "BUSINESS" && content.customerBusinessId && <NumberRule key={content.customerBusinessId}
-        owner={content.customerBusinessId} customerId={content.customerId} selected={content.numberingBusinessId === content.customerBusinessId}
-        choose={() => change(c => c.customerBusinessId === content.customerBusinessId && c.customerId === content.customerId ? {...c, numberingBusinessId:c.customerBusinessId} : c)}/>}
-    </section>}
+      {content.partyType === "BUSINESS" && <NumberRule key={numberFormKey}
+        resolveOwner={creatingCustomer ? createCustomer : setupCustomerNumber}
+        useResolved={(identity) => change(c => c.customerId === identity.customerId && c.customerBusinessId === identity.businessId ? {...c, numberingBusinessId:identity.businessId} : c)}
+        owner={content.customerBusinessId || ""} customerId={content.customerId} openSetup selected={!!content.customerBusinessId && content.numberingBusinessId === content.customerBusinessId}
+        choose={() => change(c => c.customerBusinessId === content.customerBusinessId && c.customerId === content.customerId ? {...c, numberingBusinessId:c.customerBusinessId} : c)}/>}    </section>}
+    <section id="provider-fields" tabIndex={-1} className={s.section}><details open={!template.wordStorageKey || undefined}><summary><Building2/> Công ty mình · Bên B</summary><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></details></section>
     <section id="contract-items" tabIndex={-1} className={s.section}><h2><Wallet/>Hạng mục và giá trị</h2>
       {content.items.map((item, index) => <div key={index} className={s.lineItem}><header><strong style={{ fontSize: 12 }}>Hạng mục {index + 1}</strong><button type="button" className={s.iconButton} aria-label={`Xóa hạng mục ${index + 1}`} onClick={() => change(c => ({ ...c, items: c.items.filter((_, i) => i !== index) }))}><Trash2 size={16}/></button></header>
         <Field label="Tên sản phẩm / dịch vụ"><input required maxLength={500} className={ui.field} value={item.name} onChange={e => editItem(index, { name: e.target.value })}/></Field>

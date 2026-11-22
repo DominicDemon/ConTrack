@@ -22,6 +22,7 @@ public sealed class CustomerAccountTests
     }
 
     private static readonly InternalUser Sale = new(7, "Sale", "sale", ["contract.write"]);
+    private static readonly InternalUser HanhChinh = new(8, "HanhChinh", "hanhchinh", ["contract.check"]);
 
     [Fact]
     public async Task AccountIsCreatedOnlyAfterSigningAndEmailsPhoneAndTemporaryPassword()
@@ -41,13 +42,15 @@ public sealed class CustomerAccountTests
 
         Assert.False(await ReviewData.HasAccount(db, 3, default));
         Assert.Equal("Khách tiềm năng An", await ReviewData.CustomerLabel(db, 3, default));
+        // Sale is forbidden from issuing customer credentials.
+        Assert.Equal(403, (await Assert.ThrowsAsync<InternalAppException>(() => repo.CreateCustomerAccount(3, Sale, default))).Status);
         // Not signed yet, and a prospect has no password to reset.
-        Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => repo.CreateCustomerAccount(3, Sale, default))).Status);
-        Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => repo.ResetTemporaryPassword(3, Sale, default))).Status);
+        Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => repo.CreateCustomerAccount(3, HanhChinh, default))).Status);
+        Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => repo.ResetTemporaryPassword(3, HanhChinh, default))).Status);
 
         doc.ContractDocumentStatus = ContractDocumentStatus.Signed;
         await db.SaveChangesAsync();
-        var created = await repo.CreateCustomerAccount(3, Sale, default);
+        var created = await repo.CreateCustomerAccount(3, HanhChinh, default);
         Assert.True(created.EmailSent);
         Assert.Equal("an***@example.com", created.EmailMasked);
         Assert.Null(created.DevelopmentPassword);
@@ -63,12 +66,12 @@ public sealed class CustomerAccountTests
         var session = await new CustomerPortalRepository(db, Options.Create(new EsmsOptions())).Login("0912345678", password, default);
         Assert.True(session!.MustChangePassword);
 
-        Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => repo.CreateCustomerAccount(3, Sale, default))).Status);
-        Assert.True((await repo.ResetTemporaryPassword(3, Sale, default)).EmailSent);
+        Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => repo.CreateCustomerAccount(3, HanhChinh, default))).Status);
+        Assert.True((await repo.ResetTemporaryPassword(3, HanhChinh, default)).EmailSent);
         Assert.Equal(2, mailbox.Sent.Count);
         // Three issues within the hour are the limit.
         Assert.Equal(429, (await Assert.ThrowsAsync<InternalAppException>(async () =>
-        { await repo.ResetTemporaryPassword(3, Sale, default); await repo.ResetTemporaryPassword(3, Sale, default); })).Status);
+        { await repo.ResetTemporaryPassword(3, HanhChinh, default); await repo.ResetTemporaryPassword(3, HanhChinh, default); })).Status);
     }
 
     [Fact]

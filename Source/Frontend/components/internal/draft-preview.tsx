@@ -2,9 +2,9 @@ import { paymentMethodLabel, renderContract } from "../../../Shared/contract-ren
 import type { ReactNode } from "react";
 import { type DraftContent, money } from "@/services/internal-api";
 import s from "./workspace.module.css";
-export default function DraftPreview({ content, code }: { content: DraftContent; code?: string }) {
+export default function DraftPreview({ content: sourceContent, code }: { content: DraftContent; code?: string }) {
   // Normalize only the display copy; stored snapshots and signing hashes stay unchanged.
-  content = JSON.parse(JSON.stringify(content).normalize("NFC")) as DraftContent;
+  const content = JSON.parse(JSON.stringify(sourceContent).normalize("NFC")) as DraftContent;
   const rendered = renderContract(content); const totals = rendered.totals;
   // Bilingual (VI_EN), as in the company's printed contracts: English first, Vietnamese in italics.
   const bi = content.languageMode === "VI_EN";

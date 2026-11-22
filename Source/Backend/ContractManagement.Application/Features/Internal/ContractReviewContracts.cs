@@ -57,6 +57,7 @@ public interface IInternalSigningService
 {
     Task<IReadOnlyList<CompanySigningQueueItem>> Queue(InternalUser actor, CancellationToken ct);
     Task<SigningStartResult> Start(long documentId, StartCompanySigningRequest request, InternalUser actor, CancellationToken ct);
+    Task<SigningStartResult?> StartAfterFinalApproval(long documentId, InternalUser actor, CancellationToken ct);
     Task<byte[]> CompanyDocument(long signatureId, InternalUser actor, CancellationToken ct);
     Task<SigningStartResult> SignCompany(long signatureId, CompanySignatureRequest request, InternalUser actor, CancellationToken ct);
     /// <summary>The approved PDF of a business contract, printed to be signed and stamped with the red seal on paper.</summary>

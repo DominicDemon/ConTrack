@@ -104,7 +104,6 @@ public sealed record DraftRecord(long Id, string Code, long EmployeeId, string E
     List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null);
 public sealed record CarriedDraftComment(long Id, string? TermKey, string Content, long? SourceCommentId, long? SourceVersionId, bool Resolved);
 public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion, string? WordPreviewToken = null);
-public sealed record SigningDemoDraftResult(DraftRecord Draft, string CustomerPortalPhone, string CustomerPortalPassword);
 public sealed class InternalAppException(int status, string message, string? code = null) : Exception(message)
 {
     public int Status { get; } = status;

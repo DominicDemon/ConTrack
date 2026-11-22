@@ -12,7 +12,6 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 public sealed class ContractReviewRepository(
     MasterDbContext db,
     IInternalRepository drafts,
-    SmsOutboxWriter sms,
     ReviewLinkMailer mailer,
     IConfiguration config,
     InternalApprovalService approval,
@@ -206,7 +205,7 @@ public sealed class ContractReviewRepository(
                 .Where(x => x.ApprovalWorkflowId == approval.ApprovalWorkflowId)
                 .Select(x => x.ApprovalWorkflowName).FirstOrDefaultAsync(ct) ?? "Kiá»ƒm tra ná»™i bá»™";
             return new InternalApprovalState(approval.ContractApprovalRequestId, approval.ContractApprovalRequestStatus,
-                approval.SubmittedAt, workflowName, approval.ContractApprovalRequestDecisioncomment, true);
+                approval.SubmittedAt, workflowName, approval.ContractApprovalRequestDecisioncomment, false);
         }, ct);
 
     public async Task<DraftRecord> CreateVersion(long documentId, NewVersionRequest request, InternalUser actor, CancellationToken ct)

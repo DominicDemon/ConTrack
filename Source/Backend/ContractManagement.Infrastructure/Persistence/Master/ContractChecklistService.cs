@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
 public sealed record ChecklistInput(string? RowVersion, string[] Rules);
-public sealed record ChecklistDecision(string RowVersion, string VersionRowVersion, string? ChecklistRowVersion, string ContentHash, string Rule, string Decision, string Reason);
+public sealed record ChecklistDecision(string RowVersion, string VersionRowVersion, string? ChecklistRowVersion, string ContentHash, string Rule, string Decision, string Reason, string[]? Rules = null);
 public sealed record ChecklistRule(string Key, string Label, string[] Phrases);
 public sealed record ChecklistResolution(string Decision, string Reason, string Actor, DateTime At);
 public sealed record ChecklistFinding(string Key, string Label, bool Found, string? Location, string? Excerpt, ChecklistResolution? Resolution);
@@ -139,7 +139,14 @@ public sealed class ContractChecklistService(MasterDbContext db, InternalWordTem
             else if (input.ChecklistRowVersion is not null) throw new InternalAppException(409, "Danh sách đã thay đổi.");
             row ??= new() { VersionId = version.ContractVersionId, TemplateId = doc.ContractTemplateId };
             if (row.Id == 0) db.Add(row);
-            if (input.Decision == "APPLY_TEMPLATE")
+            if (input.Decision == "CONFIGURE")
+            {
+                ValidateRules(input.Rules);
+                row.Rules = JsonSerializer.Serialize(input.Rules);
+                row.Configured = true;
+                row.Resolutions = "{}";
+            }
+            else if (input.Decision == "APPLY_TEMPLATE")
             {
                 if (!ContractReviewPolicy.CanEdit(doc.ContractDocumentStatus, version.ContractVersionIslocked)) throw new InternalAppException(409, "Chỉ áp dụng cấu hình mới khi đang chỉnh sửa nháp.");
                 var source = await db.Set<ContractChecklist>().AsNoTracking().SingleOrDefaultAsync(x => x.TemplateId == row.TemplateId && x.VersionId == null, ct);

@@ -108,7 +108,7 @@ public class InternalApprovalTests
         Assert.Equal("APPROVED", (await approvals.View(draft.Id, sale, default)).Stage);
         var config = new ConfigurationBuilder().Build();
         var mailbox = new Mailbox();
-        var reviews = new ContractReviewRepository(db, repository, new SmsOutboxWriter(new EphemeralDataProtectionProvider(), Options.Create(new EsmsOptions())),
+        var reviews = new ContractReviewRepository(db, repository,
             new ReviewLinkMailer(mailbox, config, new HostingEnvironment(), NullLogger<ReviewLinkMailer>.Instance), config, approvals);
         request = await Input();
         var sent = await reviews.SendReview(draft.Id, new(null, request.RowVersion, request.VersionRowVersion, true, DateTimeOffset.UtcNow.AddDays(1)), sale, default);

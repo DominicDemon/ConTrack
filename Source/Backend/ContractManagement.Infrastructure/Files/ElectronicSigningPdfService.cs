@@ -54,16 +54,30 @@ public sealed class ElectronicSigningPdfService : IElectronicSigningPdfService
 
         using var signatureStream = new MemoryStream(signaturePng, writable: false);
         using var image = XImage.FromStream(signatureStream);
-        var scale = Math.Min(
-            rectangle.Width / image.PointWidth,
-            rectangle.Height / image.PointHeight);
+        var nameHeight = string.IsNullOrWhiteSpace(placement.SignerFullName) ? 0 : 14;
+        var signatureHeight = Math.Max(1, rectangle.Height - nameHeight);
+        var scale = Math.Min(rectangle.Width / image.PointWidth, signatureHeight / image.PointHeight);
         var width = image.PointWidth * scale;
         var height = image.PointHeight * scale;
         var x = rectangle.X + (rectangle.Width - width) / 2;
-        var y = rectangle.Y + (rectangle.Height - height) / 2;
+        var y = rectangle.Y + (signatureHeight - height) / 2;
 
         using var graphics = XGraphics.FromPdfPage(page);
+        graphics.DrawRectangle(XBrushes.White, rectangle);
         graphics.DrawImage(image, x, y, width, height);
+        if (nameHeight > 0)
+        {
+            var signerName = placement.SignerFullName!.Trim();
+            var fontSize = 9d;
+            var nameFont = new XFont("Arial", fontSize, XFontStyleEx.Regular);
+            while (fontSize > 6 && graphics.MeasureString(signerName, nameFont).Width > rectangle.Width - 8)
+            {
+                fontSize -= 0.5;
+                nameFont = new XFont("Arial", fontSize, XFontStyleEx.Regular);
+            }
+            var nameArea = new XRect(rectangle.X, rectangle.Y + signatureHeight, rectangle.Width, nameHeight);
+            graphics.DrawString(signerName, nameFont, XBrushes.Black, nameArea, XStringFormats.TopCenter);
+        }
 
         using var result = new MemoryStream();
         document.Save(result, closeStream: false);

@@ -13,8 +13,6 @@ const tabs = [
   { id: "signed", label: "Đã có chữ ký" },
   { id: "untracked", label: "Thiếu dữ liệu ký" },
 ] as const;
-type SigningDemoResult = { draft: { id: string; code: string }; customerPortalPhone: string; customerPortalPassword: string };
-
 export default function ContractSigningMonitorPage() {
   const user = useInternalUser();
   const [rows, setRows] = useState<SigningMonitorEntry[]>([]);
@@ -24,19 +22,6 @@ export default function ContractSigningMonitorPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
   const [reload, setReload] = useState(0);
-  const [demoAvailable, setDemoAvailable] = useState(false);
-  const [demoBusy, setDemoBusy] = useState(false);
-  const [demo, setDemo] = useState<SigningDemoResult | null>(null);
-
-  useEffect(() => {
-    if (!user.canManageAll) return;
-    let active = true;
-    void internalApi<{ available: boolean }>("/contract-signing-demo/availability")
-      .then(result => { if (active) setDemoAvailable(result.available); })
-      .catch(() => { if (active) setDemoAvailable(false); });
-    return () => { active = false; };
-  }, [user.canManageAll]);
-
   useEffect(() => {
     if (!user.canManageAll) return;
     let active = true;
@@ -64,17 +49,6 @@ export default function ContractSigningMonitorPage() {
     || (tab === "signed" && row.signedCount > 0)
     || (tab === "untracked" && !row.paper && [3, 4, 5].includes(row.status) && row.signatureCount === 0));
 
-  async function createSigningDemo() {
-    setDemoBusy(true); setError(""); setDemo(null);
-    try {
-      const result = await internalApi<SigningDemoResult>("/contract-signing-demo", "POST");
-      setDemo(result);
-      setTab("all");
-      setReload(value => value + 1);
-    } catch (e) { setError((e as Error).message); }
-    finally { setDemoBusy(false); }
-  }
-
   if (!user.canManageAll) return <div className={s.page}><p role="alert" className={ui.error}>Theo dõi ký chỉ dành cho quản trị viên công ty.</p></div>;
 
   return <div className={`${s.page} ${s.signingPage}`} data-ui="signing-monitor">
@@ -82,28 +56,9 @@ export default function ContractSigningMonitorPage() {
       <div><div className={s.signingKicker}><Activity size={15}/> VẬN HÀNH HỢP ĐỒNG</div><h1>Theo dõi ký hợp đồng</h1><p className={s.muted}>Xem tiến độ của từng hồ sơ, chữ ký đã ghi nhận và các bước đang chờ.</p></div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <Link href="/workspace/contracts/drafts/new" className={ui.primaryButton}><FilePlus2 size={16}/>Tạo hợp đồng nháp</Link>
-        {demoAvailable && <button className={ui.primaryButton} disabled={demoBusy} onClick={() => void createSigningDemo()}><FilePlus2 size={16}/>{demoBusy ? "Đang chuẩn bị demo…" : "Tạo demo toàn luồng ký"}</button>}
-        <button className={ui.secondaryButton} disabled={busy || demoBusy} onClick={() => setReload(v => v + 1)}><RefreshCw size={15}/> Làm mới</button>
+        <button className={ui.secondaryButton} disabled={busy} onClick={() => setReload(v => v + 1)}><RefreshCw size={15}/> Làm mới</button>
       </div>
     </div>
-
-    {demo && <section className={ui.card} style={{ margin: "16px 0" }} aria-label="Hướng dẫn demo toàn luồng ký">
-      <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>Demo đã sẵn sàng: {demo.draft.code}</h2>
-      <p className={s.muted}>Bản nháp và khách hàng thử nghiệm đã được tạo. Hoàn tất theo đúng quy trình để hợp đồng xuất hiện trên trang theo dõi.</p>
-      <p className={s.muted}>Sau khi khách duyệt trên Portal, nếu bản nháp vẫn hiện trạng thái cũ, bấm <strong>Làm mới trạng thái</strong> trong trang bản nháp trước khi phê duyệt nội bộ.</p>
-      <ol style={{ display: "grid", gap: 8, margin: "14px 0", paddingLeft: 22 }}>
-        <li><Link href={`/workspace/contracts/drafts/${demo.draft.id}`} target="_blank" rel="noreferrer">Mở bản nháp</Link> trong tab mới, rồi chọn <strong>Gửi khách xem</strong>. Giữ tab theo dõi này mở để xem thông tin đăng nhập Portal.</li>
-        <li>Khách đăng nhập <a href="http://localhost:3000/portal/login" target="_blank" rel="noreferrer">Portal khách hàng</a> bằng thông tin dưới đây, mở hợp đồng và chọn đồng ý.</li>
-        <li>Quay lại bản nháp để <strong>phê duyệt nội bộ</strong>, sau đó tạo phiên ký.</li>
-        <li>Mở mục <strong>Ký phía công ty</strong>, ký PDF. Sao chép link khách hàng được cấp.</li>
-        <li>Khách mở link, yêu cầu OTP, nhập mã Development hiện trên trang, xem PDF và ký. Trạng thái cuối cùng cùng PDF sẽ xuất hiện tại đây và trong Kho hợp đồng.</li>
-      </ol>
-      <dl className={s.fields} style={{ marginTop: 12 }}>
-        <div><dt>Số điện thoại Portal</dt><dd><code>{demo.customerPortalPhone}</code></dd></div>
-        <div><dt>Mật khẩu Portal thử nghiệm</dt><dd><code>{demo.customerPortalPassword}</code></dd></div>
-      </dl>
-      <p className={s.muted} style={{ marginBottom: 0 }}>Tài khoản này chỉ được tạo trong Development; SMS review dùng số thử nghiệm. OTP ký điện tử sẽ hiện trên trang nếu eSMS tắt.</p>
-    </section>}
 
     <div className={s.signingMetrics} aria-label="Tổng quan tiến độ ký">
       <div><strong>{counts.waiting}</strong><span>Chờ ký</span></div>

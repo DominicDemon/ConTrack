@@ -11,7 +11,6 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using UglyToad.PdfPig;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
@@ -23,7 +22,8 @@ public sealed class CustomerSigningService(
     IDataProtectionProvider protection,
     IHostEnvironment environment,
     ILogger<CustomerSigningService> logger,
-    IOptions<EsmsOptions> smsOptions) : ICustomerSigningService
+    IOptions<EsmsOptions> smsOptions,
+    CustomerContractMailer? customerMail = null) : ICustomerSigningService
 {
     private const int CustomerParty = 2;
     private const int Pending = 0;
@@ -35,7 +35,7 @@ public sealed class CustomerSigningService(
     public async Task<CustomerPortalSigningState> PortalState(long customerId, long reviewId, CancellationToken ct)
     {
         var review = await db.ContractReviewRequests.AsNoTracking().SingleOrDefaultAsync(x => x.ContractReviewRequestId == reviewId && x.CustomerId == customerId, ct)
-            ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y há»£p Ä‘á»“ng.");
+            ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng.");
         if (review.ContractReviewRequestStatus != ContractReviewStatus.Approved)
             return new("WAITING_APPROVAL", null, null);
         var document = await db.ContractDocuments.AsNoTracking().SingleAsync(x => x.ContractDocumentId == review.ContractDocumentId && x.TenantId == null, ct);
@@ -56,11 +56,11 @@ public sealed class CustomerSigningService(
     public async Task<CustomerSigningOtpResult> RequestPortalOtp(long customerId, long reviewId, CancellationToken ct)
     {
         if (!environment.IsDevelopment() && !smsOptions.Value.Enabled)
-            throw new InternalAppException(503, "Dá»‹ch vá»¥ gá»­i OTP chÆ°a Ä‘Æ°á»£c cáº¥u hÃ¬nh.");
+            throw new InternalAppException(503, "Dịch vụ gửi OTP chưa được cấu hình.");
         var link = await ResolvePortalLink(customerId, reviewId, ct);
         var now = DateTime.UtcNow;
         if (link.ActivatedAt is DateTime activated && activated > now.AddMinutes(-1))
-            throw new InternalAppException(429, "Vui lÃ²ng chá» má»™t phÃºt trÆ°á»›c khi yÃªu cáº§u mÃ£ má»›i.");
+            throw new InternalAppException(429, "Vui lòng chờ một phút trước khi yêu cầu mã mới.");
         var previous = await db.ContractCustomerOtpChallenges.Where(x => x.ContractAccessLinkId == link.ContractAccessLinkId && x.UsedAt == null).ToListAsync(ct);
         foreach (var challenge in previous) challenge.UsedAt = now;
         link.ActivatedAt = now;
@@ -100,22 +100,22 @@ public sealed class CustomerSigningService(
     {
         var link = await ResolvePortalLink(customerId, reviewId, ct);
         await RequireVerifiedChallenge(link.ContractAccessLinkId, challengeId, ct);
-        return (await BuildPortalSigningPdf(link, customerId, ct)).Content;
+        return await BuildPortalSigningPdf(link, customerId, ct);
     }
 
     public async Task<byte[]> PortalFinalDocument(long customerId, long reviewId, CancellationToken ct)
     {
         var review = await db.ContractReviewRequests.AsNoTracking().SingleOrDefaultAsync(x => x.ContractReviewRequestId == reviewId && x.CustomerId == customerId, ct)
-            ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y há»£p Ä‘á»“ng.");
+            ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng.");
         var signed = await db.ContractElectronicSignatures.AnyAsync(x => x.ContractDocumentId == review.ContractDocumentId
             && x.ContractVersionId == review.ContractVersionId && x.ContractElectronicPartytype == CustomerParty && x.ContractElectronicStatus == Signed, ct);
-        if (!signed) throw new InternalAppException(409, "KhÃ¡ch hÃ ng chÆ°a kÃ½ xong há»£p Ä‘á»“ng.");
+        if (!signed) throw new InternalAppException(409, "Khách hàng chưa ký xong hợp đồng.");
         return await CurrentPdf(review.ContractDocumentId, review.ContractVersionId, ct);
     }
 
     public async Task<byte[]> PortalSign(long customerId, long reviewId, CustomerSigningRequest request, string? ipAddress, string? userAgent, CancellationToken ct)
     {
-        if (!request.Confirmed) throw new ArgumentException("Vui lÃ²ng xÃ¡c nháº­n báº¡n Ä‘Ã£ Ä‘á»c há»£p Ä‘á»“ng vÃ  Ä‘á»“ng Ã½ kÃ½.");
+        if (!request.Confirmed) throw new ArgumentException("Vui lòng xác nhận bạn đã đọc hợp đồng và đồng ý ký.");
         var png = DecodeSignature(request.SignaturePngBase64);
         var link = await ResolvePortalLink(customerId, reviewId, ct);
         var challenge = await RequireVerifiedChallenge(link.ContractAccessLinkId, request.ChallengeId, ct);
@@ -125,20 +125,18 @@ public sealed class CustomerSigningService(
         var version = await db.ContractVersions.SingleAsync(x => x.ContractVersionId == link.ContractVersionId, ct);
         if (document.ContractDocumentCurrentVersionId != version.ContractVersionId || !version.ContractVersionIslocked
             || document.ContractDocumentStatus != ContractDocumentStatus.PendingSignature)
-            throw new InternalAppException(409, "PhiÃªn báº£n há»£p Ä‘á»“ng Ä‘Ã£ thay Ä‘á»•i hoáº·c khÃ´ng cÃ²n Ä‘Æ°á»£c phÃ©p kÃ½.");
-        var prepared = await BuildPortalSigningPdf(link, customerId, ct);
-        var source = prepared.Content;
-        var placement = new PdfSignaturePlacement(prepared.SignaturePage, prepared.CustomerSignatureX,
-            prepared.SignatureY, prepared.SignatureWidth, prepared.SignatureHeight);
+            throw new InternalAppException(409, "Phiên bản hợp đồng đã thay đổi hoặc không còn được phép ký.");
+        var source = await BuildPortalSigningPdf(link, customerId, ct);
+        var placement = new PdfSignaturePlacement(signer.ContractElectronicPagenumber ?? 1,
+            signer.ContractElectronicPositionx ?? 50, signer.ContractElectronicPositiony ?? 680,
+            signer.ContractElectronicWidth ?? 190, signer.ContractElectronicHeight ?? 54);
         var signed = signatures.StampSignature(source, png, placement);
         var signedKey = $"{link.ContractDocumentId}-{link.ContractVersionId}-final-{Guid.NewGuid():N}.pdf";
-        var companySignedLayoutKey = $"{link.ContractDocumentId}-{link.ContractVersionId}-company-layout-{Guid.NewGuid():N}.pdf";
         Directory.CreateDirectory(root);
         await File.WriteAllBytesAsync(Path.Combine(root, signedKey), signed, ct);
-        await File.WriteAllBytesAsync(Path.Combine(root, companySignedLayoutKey), source, ct);
         try
         {
-            return await InTransaction(async () =>
+            var result = await InTransaction(async () =>
             {
                 var now = DateTime.UtcNow;
                 var current = await (from relation in db.ContractDocumentFiles join stored in db.FileStorages on relation.FileStorageFileid equals stored.FileStorageFileid
@@ -150,11 +148,6 @@ public sealed class CustomerSigningService(
                 signer.ContractElectronicSignatureimagestoragekey = "embedded-in-signed-pdf";
                 signer.ContractElectronicIpaddress = Cut(ipAddress, 45);
                 signer.ContractElectronicUseragent = Cut(userAgent, 1000);
-                signer.ContractElectronicPagenumber = prepared.SignaturePage;
-                signer.ContractElectronicPositionx = prepared.CustomerSignatureX;
-                signer.ContractElectronicPositiony = prepared.SignatureY;
-                signer.ContractElectronicWidth = prepared.SignatureWidth;
-                signer.ContractElectronicHeight = prepared.SignatureHeight;
                 signer.ContractElectronicDocumentHashAtSigning = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant();
                 challenge.UsedAt = now;
                 document.ContractDocumentStatus = ContractDocumentStatus.Signed;
@@ -162,20 +155,14 @@ public sealed class CustomerSigningService(
                 version.ContractVersionSigndate = now;
                 link.RevokedAt = now;
                 link.ContractAccessLinkRevocationReason = "CUSTOMER_SIGNED";
-                ReviewData.Audit(db, "CUSTOMER_SIGNING_PDF_REFORMATTED", "CONTRACT_DOCUMENTS", document.ContractDocumentId, "CUSTOMER", customerId, now);
-                var companySignedLayout = new FileStorage
-                {
-                    FileStorageObjectid = document.ContractDocumentId, FileStorageObjecttype = "CONTRACT_SIGNING",
-                    FileStorageFiletype = "COMPANY_SIGNED_PDF_REFORMATTED", FileStorageFilename = (document.ContractDocumentCode ?? $"contract-{document.ContractDocumentId}") + "-company-approved-layout.pdf",
-                    FileStorageFilepath = companySignedLayoutKey, FileStorageStoragekey = companySignedLayoutKey, FileStorageContenttype = "application/pdf",
-                    FileStorageFilesize = source.Length, FileStorageSha256 = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant(),
-                    FileStorageUploadedbyemployeeid = document.EmployeeId, FileStorageUploadeddate = now
-                };
-                db.FileStorages.Add(companySignedLayout);
-                await db.SaveChangesAsync(ct);
-                db.ContractDocumentFiles.Add(new ContractDocumentFile { ContractDocumentId = document.ContractDocumentId, ContractVersionId = version.ContractVersionId,
-                    FileStorageFileid = companySignedLayout.FileStorageFileid, ContractDocumentFileRole = 1, IsPrimary = false, CreatedDate = now, CreatedEmployeeId = document.EmployeeId });
-                await db.SaveChangesAsync(ct);
+                ReviewData.Audit(db, "CUSTOMER_SIGNED_PDF", "CONTRACT_DOCUMENTS", document.ContractDocumentId, "CUSTOMER", customerId, now);
+                // The customer signs last, so both sides have now signed: the Sale in charge and Hành chính are told at once,
+                // and a prospect (no portal account yet) is flagged so they create the account.
+                var prospect = !await ReviewData.HasAccount(db, customerId, ct);
+                await ReviewData.Notify(db, document, $"customer-signed:{document.ContractDocumentId}:{version.ContractVersionId}", "CUSTOMER_SIGNED",
+                    prospect ? "Hai bên đã ký · tạo tài khoản cho khách" : "Hai bên đã ký hợp đồng",
+                    $"{document.ContractDocumentCode} · {document.ContractDocumentName}" + (prospect ? " · Khách tiềm năng chưa có tài khoản: mở hợp đồng và bấm “Tạo tài khoản khách”." : ""),
+                    await ReviewData.WithPermission(db, "contract.check", ct), now, ct);
                 var file = new FileStorage
                 {
                     FileStorageObjectid = document.ContractDocumentId, FileStorageObjecttype = "CONTRACT_SIGNING", FileStorageFiletype = "FULLY_SIGNED_PDF",
@@ -196,72 +183,54 @@ public sealed class CustomerSigningService(
                 await db.SaveChangesAsync(ct);
                 return signed;
             }, ct);
+            // After the commit: confirm by email that the contract is signed by both sides (the portal shows the final PDF).
+            if (customerMail is not null)
+                await customerMail.Send(link.ContractDocumentId, "Hợp đồng đã ký xong",
+                    "Bạn và công ty đã ký đủ hợp đồng. Bạn có thể tải bản PDF đã ký trên Cổng khách hàng.", ct,
+                    "Bạn và công ty đã ký đủ hợp đồng. Nhân viên phụ trách sẽ gửi tài khoản Cổng khách hàng qua email để bạn xem và tải bản đã ký.");
+            return result;
         }
         catch
         {
             File.Delete(Path.Combine(root, signedKey));
-            File.Delete(Path.Combine(root, companySignedLayoutKey));
             throw;
         }
     }
 
-    private async Task<PreparedCustomerSigningPdf> BuildPortalSigningPdf(ContractAccessLink link, long customerId, CancellationToken ct)
+    private async Task<byte[]> BuildPortalSigningPdf(ContractAccessLink link, long customerId, CancellationToken ct)
     {
         var document = await db.ContractDocuments.AsNoTracking().SingleAsync(x => x.ContractDocumentId == link.ContractDocumentId
             && x.CustomerId == customerId && x.TenantId == null, ct);
         var version = await db.ContractVersions.AsNoTracking().SingleAsync(x => x.ContractVersionId == link.ContractVersionId
             && x.ContractDocumentId == document.ContractDocumentId, ct);
-        var customer = await db.Customers.AsNoTracking().SingleAsync(x => x.CustomerId == document.CustomerId, ct);
         var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleOrDefaultAsync(x => x.ContractDocumentId == document.ContractDocumentId
             && x.ContractVersionId == version.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct)
             ?? throw new InternalAppException(409, "Không tìm thấy bản chụp hợp đồng để dựng PDF.");
         if (!SnapshotHash.Compute(snapshot.FieldValue).Equals(version.ContractVersionSnapshothash, StringComparison.OrdinalIgnoreCase))
             throw new InternalAppException(409, "Bản chụp hợp đồng không khớp hash đã duyệt.");
-        var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)
+        _ = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)
             ?? throw new InternalAppException(409, "Bản chụp hợp đồng không hợp lệ.");
         var companySigner = await db.ContractElectronicSignatures.AsNoTracking().SingleOrDefaultAsync(x => x.ContractDocumentId == document.ContractDocumentId
             && x.ContractVersionId == version.ContractVersionId && x.ContractElectronicPartytype == 1 && x.ContractElectronicStatus == Signed, ct)
             ?? throw new InternalAppException(409, "Công ty chưa ký hợp đồng.");
-        var companySignedPdf = await CurrentPdf(document.ContractDocumentId, version.ContractVersionId, ct);
-        var companySignature = ExtractCompanySignature(companySignedPdf, companySigner.ContractElectronicPagenumber ?? 1);
-        var layout = InternalSigningService.RenderContractPdf(document, version, customer, content);
-        var companyPlacement = new PdfSignaturePlacement(layout.SignaturePage, layout.CompanySignatureX, layout.SignatureY,
-            layout.SignatureWidth, layout.SignatureHeight);
-        var companySignedLayout = signatures.StampSignature(layout.Content, companySignature, companyPlacement);
-        return new PreparedCustomerSigningPdf(companySignedLayout, layout.SignaturePage, layout.CompanySignatureX, layout.CustomerSignatureX,
-            layout.SignatureY, layout.SignatureWidth, layout.SignatureHeight);
+        return await CurrentPdf(document.ContractDocumentId, version.ContractVersionId, ct);
     }
-
-    internal static byte[] ExtractCompanySignature(byte[] pdfBytes, int pageNumber)
-    {
-        using var pdf = PdfDocument.Open(pdfBytes);
-        if (pageNumber < 1 || pageNumber > pdf.NumberOfPages)
-            throw new InternalAppException(409, "Không tìm thấy trang có chữ ký công ty trong bản PDF đã ký.");
-        var images = pdf.GetPage(pageNumber).GetImages();
-        var signatures = images.Where(image => image.TryGetPng(out _)).ToList();
-        if (signatures.Count != 1 || !signatures[0].TryGetPng(out var png))
-            throw new InternalAppException(409, "Không thể lấy chữ ký công ty từ bản PDF hiện tại để dựng lại bố cục.");
-        return png;
-    }
-
-    private sealed record PreparedCustomerSigningPdf(byte[] Content, int SignaturePage, int CompanySignatureX, int CustomerSignatureX,
-        int SignatureY, int SignatureWidth, int SignatureHeight);
 
     private async Task VerifyOtpForLink(ContractAccessLink link, CustomerSigningOtpVerification request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Otp) || request.Otp.Length != 6 || request.Otp.Any(c => !char.IsAsciiDigit(c)))
-            throw new ArgumentException("MÃ£ OTP pháº£i gá»“m 6 chá»¯ sá»‘.");
+            throw new ArgumentException("Mã OTP phải gồm 6 chữ số.");
         var challenge = await db.ContractCustomerOtpChallenges.SingleOrDefaultAsync(x => x.PublicChallengeId == request.ChallengeId
-            && x.ContractAccessLinkId == link.ContractAccessLinkId, ct) ?? throw new InternalAppException(400, "MÃ£ xÃ¡c minh khÃ´ng há»£p lá»‡.");
+            && x.ContractAccessLinkId == link.ContractAccessLinkId, ct) ?? throw new InternalAppException(400, "Mã xác minh không hợp lệ.");
         var now = DateTime.UtcNow;
         if (challenge.UsedAt is not null || challenge.VerifiedAt is not null || challenge.ExpiresAt <= now || challenge.FailedAttemptCount >= 5)
-            throw new InternalAppException(400, "MÃ£ xÃ¡c minh Ä‘Ã£ háº¿t háº¡n hoáº·c bá»‹ khÃ³a.");
+            throw new InternalAppException(400, "Mã xác minh đã hết hạn hoặc bị khóa.");
         var expected = otpProtector.Unprotect(challenge.ProtectedOtp);
         if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(request.Otp)))
         {
             challenge.FailedAttemptCount++;
             await db.SaveChangesAsync(ct);
-            throw new InternalAppException(400, "MÃ£ OTP khÃ´ng chÃ­nh xÃ¡c.");
+            throw new InternalAppException(400, "Mã OTP không chính xác.");
         }
         challenge.VerifiedAt = now;
         var signer = await db.ContractElectronicSignatures.SingleAsync(x => x.ContractElectronicSignatureId == challenge.ContractElectronicSignatureId, ct);
@@ -272,17 +241,17 @@ public sealed class CustomerSigningService(
     private async Task<ContractAccessLink> ResolvePortalLink(long customerId, long reviewId, CancellationToken ct)
     {
         var review = await db.ContractReviewRequests.AsNoTracking().SingleOrDefaultAsync(x => x.ContractReviewRequestId == reviewId && x.CustomerId == customerId, ct)
-            ?? throw new InternalAppException(404, "KhÃ´ng tÃ¬m tháº¥y há»£p Ä‘á»“ng.");
+            ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng.");
         if (review.ContractReviewRequestStatus != ContractReviewStatus.Approved)
-            throw new InternalAppException(409, "KhÃ¡ch hÃ ng cáº§n Ä‘á»“ng Ã½ ná»™i dung trÆ°á»›c khi kÃ½.");
+            throw new InternalAppException(409, "Khách hàng cần đồng ý nội dung trước khi ký.");
         var link = await db.ContractAccessLinks.SingleOrDefaultAsync(x => x.ContractDocumentId == review.ContractDocumentId && x.ContractVersionId == review.ContractVersionId
             && x.TenantId == null && x.RevokedAt == null && x.ExpiresAt > DateTime.UtcNow
             && db.ContractDocuments.Any(d => d.ContractDocumentId == x.ContractDocumentId && d.CustomerId == customerId
                 && d.ContractDocumentCurrentVersionId == x.ContractVersionId && d.ContractDocumentStatus == ContractDocumentStatus.PendingSignature), ct)
-            ?? throw new InternalAppException(409, "Há»£p Ä‘á»“ng chÆ°a Ä‘áº¿n bÆ°á»›c khÃ¡ch hÃ ng kÃ½ hoáº·c link kÃ½ Ä‘Ã£ háº¿t háº¡n.");
+            ?? throw new InternalAppException(409, "Hợp đồng chưa đến bước khách hàng ký hoặc link ký đã hết hạn.");
         var companySigned = await db.ContractElectronicSignatures.AnyAsync(x => x.ContractDocumentId == link.ContractDocumentId
             && x.ContractVersionId == link.ContractVersionId && x.ContractElectronicPartytype == 1 && x.ContractElectronicStatus == Signed, ct);
-        if (!companySigned) throw new InternalAppException(409, "CÃ´ng ty chÆ°a kÃ½ há»£p Ä‘á»“ng.");
+        if (!companySigned) throw new InternalAppException(409, "Công ty chưa ký hợp đồng.");
         return link;
     }
 

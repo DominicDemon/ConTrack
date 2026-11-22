@@ -44,7 +44,6 @@ public static class InternalHost
         builder.Services.AddMasterDatabase(builder.Configuration);
         builder.Services.AddScoped<IInternalRepository, InternalRepository>();
         builder.Services.AddScoped<InternalDraftService>();
-        builder.Services.AddScoped<InternalSigningDemoService>();
         builder.Services.AddScoped<IInternalTemplateImport, InternalTemplateImport>();
         builder.Services.AddScoped<InternalWordDocument>();
         builder.Services.AddScoped<InternalWordTemplates>();
@@ -59,6 +58,8 @@ public static class InternalHost
         builder.Services.AddScoped<ICustomerSigningService, CustomerSigningService>();
         builder.Services.AddScoped<IElectronicSigningPdfService, ContractManagement.Infrastructure.Files.ElectronicSigningPdfService>();
         builder.Services.AddScoped<ICustomerPortalRepository, CustomerPortalRepository>();
+        builder.Services.AddSingleton<CustomerProfileGuards>();
+        builder.Services.AddScoped<CustomerProfileService>();
         builder.Services.AddScoped<SmsCallbackProcessor>();
         builder.Services.AddOptions<EsmsOptions>().Bind(builder.Configuration.GetSection("Esms"))
             .Validate(o => !o.Enabled || (!string.IsNullOrWhiteSpace(o.ApiKey) && !string.IsNullOrWhiteSpace(o.SecretKey)
@@ -201,7 +202,7 @@ public static class InternalHost
             return await next(invocation);
         });
         var crm = Screen("/crm", "Bạn không có quyền quản lý khách hàng.", CatalogRules.CustomerManage);
-        crm.MapGet("/customers", async (string? search, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Customers(search, ct)));
+        crm.MapGet("/customers", async (string? search, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.Customers(search, null, ct)));
         crm.MapPost("/customers", async (CustomerInput input, HttpContext c, IInternalRepository r, ICatalogAdmin a, CancellationToken ct) =>
             Results.Ok(await a.CustomerRow((await r.CreateCustomer(input, Current(c).Id, ct)).Id, ct)));
         crm.MapPut("/customers/{id:long}", async (long id, CustomerUpdateInput input, HttpContext c, ICatalogAdmin a, CancellationToken ct) => Results.Ok(await a.UpdateCustomer(id, input, Current(c), ct)));
@@ -389,9 +390,6 @@ public static class InternalHost
                 if (!long.TryParse(ownerId, out var parsed) || parsed <= 0) throw new ArgumentException("Nhân viên không hợp lệ."); owner = parsed; }
             return Results.Ok(await r.Drafts(owner, search, status, ct, partyType));
         });
-        secured.MapGet("/contract-signing-demo/availability", (IHostEnvironment environment) => Results.Ok(new { available = environment.IsDevelopment() }));
-        secured.MapPost("/contract-signing-demo", async (HttpContext c, InternalSigningDemoService demo, CancellationToken ct) =>
-            Results.Ok(await demo.Create(Current(c), ct)));
         secured.MapGet("/contract-archive", async (string? search, int? status, string? partyType, HttpContext c, IInternalRepository r, CancellationToken ct) =>
         {
             if (!Current(c).CanManageContractWorkflow) throw new InternalAppException(403, "Bạn không có quyền xem kho hợp đồng.");
@@ -419,8 +417,16 @@ public static class InternalHost
             var approval = await r.InternalApproval(id, Current(c), ct);
             return approval is null ? Results.Content("null", "application/json") : Results.Ok(approval);
         });
-        secured.MapPost("/contract-drafts/{id:long}/internal-approval", async (long id, InternalApprovalDecisionRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>
-            Results.Ok(await r.ResolveInternalApproval(id, input, Current(c), ct)));
+        secured.MapPost("/contract-drafts/{id:long}/internal-approval", async (long id, InternalApprovalDecisionRequest input, HttpContext c, IContractReviewRepository r, IInternalSigningService signing, CancellationToken ct) =>
+        {
+            var actor = Current(c);
+            var state = await r.ResolveInternalApproval(id, input, actor, ct);
+            if (!input.Approve) return Results.Ok(state);
+            var signingSession = await signing.StartAfterFinalApproval(id, actor, ct);
+            return Results.Ok(state with { SigningStarted = signingSession is not null });
+        });
+        secured.MapPost("/contract-drafts/{id:long}/ensure-signing", async (long id, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.StartAfterFinalApproval(id, Current(c), ct)));
         secured.MapGet("/company-signing/queue", async (HttpContext c, IInternalSigningService signing, CancellationToken ct) =>
             Results.Ok(await signing.Queue(Current(c), ct)));
         secured.MapPost("/contract-drafts/{id:long}/start-signing", async (long id, StartCompanySigningRequest input, HttpContext c, IInternalSigningService signing, CancellationToken ct) =>

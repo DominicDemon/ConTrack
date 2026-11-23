@@ -8,12 +8,12 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 
 /// <param name="From">First day (Vietnam time) the contract was created, inclusive.</param>
 /// <param name="To">Last day (Vietnam time) the contract was created, inclusive.</param>
-public sealed record ProgressFilter(string? Search = null, long? OwnerId = null, string? Stage = null, int? WaitingDays = null, bool Mine = false, bool Warnings = false, int Page = 1,
+public sealed record ProgressFilter(string? Search = null, long? OwnerId = null, string? Stage = null, int? WaitingDays = null, bool Mine = false, int Page = 1,
     DateOnly? From = null, DateOnly? To = null);
-public sealed record ProgressRow(long Id, string Code, string Name, string Customer, long OwnerId, string Owner, string Stage, string Department, DateTime? EnteredAt, string? LastActor, int WarningCount, bool Configured, bool NeedsMe, string? InspectionError = null);
+public sealed record ProgressRow(long Id, string Code, string Name, string Customer, long OwnerId, string Owner, string Stage, string Department, DateTime? EnteredAt, string? LastActor, bool NeedsMe);
 public sealed record ProgressPage(List<ProgressRow> Items, int Total, int Page, int PageSize, Dictionary<string, int> Counts, DateTime ServerTime);
 
-public sealed class ContractProgressService(MasterDbContext db, ContractChecklistService checklist)
+public sealed class ContractProgressService(MasterDbContext db)
 {
     public async Task<ProgressPage> List(ProgressFilter filter, InternalUser actor, CancellationToken ct)
     {
@@ -26,7 +26,7 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
                     join customer in db.Customers on doc.CustomerId equals customer.CustomerId
                     where doc.TenantId == null && (actor.CanManageAll || doc.EmployeeId == actor.Id)
                     && db.ContractDynamicValues.Any(v => v.ContractDocumentId == doc.ContractDocumentId && v.ContractVersionId == doc.ContractDocumentCurrentVersionId && v.FieldKey == InternalRepository.SnapshotKey)
-                    select new { doc, version, employee.EmployeeDisplayName, customer.CustomerDisplayName };
+                    select new { doc, version, employee.EmployeeDisplayName, customer.CustomerDisplayName, customer.CustomerPersonalPhone, customer.CustomerEmail };
         if (filter.OwnerId.HasValue) query = query.Where(x => x.doc.EmployeeId == filter.OwnerId);
         if (!string.IsNullOrWhiteSpace(filter.Search))
         {
@@ -41,11 +41,9 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
         var source = await query.ToListAsync(ct);
         var ids = source.Select(x => x.doc.ContractDocumentId).ToArray();
         var versions = source.Select(x => x.version.ContractVersionId).ToArray();
-        // Batch scoped snapshots and configuration instead of querying three times per list row.
+        // Batch scoped snapshots instead of querying three times per list row.
         var snapshots = await db.ContractDynamicValues.AsNoTracking().Where(x => versions.Contains(x.ContractVersionId) && x.FieldKey == InternalRepository.SnapshotKey)
             .ToDictionaryAsync(x => x.ContractVersionId, x => x.FieldValue, ct);
-        var checklists = await db.Set<ContractChecklist>().AsNoTracking().Where(x => x.VersionId.HasValue && versions.Contains(x.VersionId.Value))
-            .ToDictionaryAsync(x => x.VersionId!.Value, ct);
         var approvals = await db.ContractApprovalRequests.AsNoTracking().Where(x => ids.Contains(x.ContractDocumentId) && x.InternalStage != null).ToListAsync(ct);
         var reviews = await db.ContractReviewRequests.AsNoTracking().Where(x => versions.Contains(x.ContractVersionId)).ToListAsync(ct);
         var pendingPaper = await (from file in db.ContractDocumentFiles
@@ -56,6 +54,10 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
             group evidence by (file.ContractVersionId ?? 0L) into files
             select new { Version = files.Key, Uploaded = files.Max(e => e.UploadedAt) }).ToDictionaryAsync(x => x.Version, x => x.Uploaded, ct);
         var stringIds = ids.Select(x => x.ToString()).ToArray();
+        var creationAudits = (await db.AuditLogs.AsNoTracking()
+            .Where(a => a.EntityName == "CONTRACT_DOCUMENTS" && a.ActionType == "CREATE" && stringIds.Contains(a.EntityId!))
+            .OrderBy(a => a.AuditLogId).Select(a => new { a.EntityId, a.NewData }).ToListAsync(ct))
+            .GroupBy(a => a.EntityId!).ToDictionary(g => g.Key, g => g.First().NewData);
         var events = await (from audit in db.AuditLogs.AsNoTracking()
                             join employee in db.Employees on audit.ActorId equals (long?)employee.EmployeeId
                             where audit.EntityName == "CONTRACT_INTERNAL_APPROVAL" && stringIds.Contains(audit.EntityId!)
@@ -97,28 +99,21 @@ public sealed class ContractProgressService(MasterDbContext db, ContractChecklis
                     entered = uploaded;
                 }
             }
-            var department = stage switch { "OFFICE" or "FINAL_CHECK" => "Hành chính", "CUSTOMER" => "Khách hàng", "SIGNATURE" => "Sếp ký, rồi khách ký", "CLOSED" => "Đã đóng", _ => "Sale" };
+            var content = JsonSerializer.Deserialize<DraftContent>(snapshots[version.ContractVersionId], InternalRepository.Json)!;
+            var officeOrigin = InternalRepository.ResolveOfficeOrigin(content.OfficeOrigin,
+                creationAudits.GetValueOrDefault(doc.ContractDocumentId.ToString()));
+            var officeReady = officeOrigin && stage == "DRAFT" &&
+                InternalRepository.OfficeSendBlockedReason(content, doc.ContractDocumentStatus, review?.ContractReviewRequestStatus,
+                    version.ContractVersionIslocked, item.CustomerPersonalPhone, item.CustomerEmail) is null;
+            if (officeReady) stage = "OFFICE_SEND";
+            var department = stage switch { "OFFICE" or "FINAL_CHECK" or "OFFICE_SEND" => "Hành chính", "CUSTOMER" => "Khách hàng", "SIGNATURE" => "Sếp ký, rồi khách ký", "CLOSED" => "Đã đóng", _ => officeOrigin ? "Hành chính" : "Sale" };
             if (stage == "PAPER_SIGNATURE") department = "Hai bên ký giấy";
             if (stage == "PAPER_REVIEW") department = "Hành chính";
-            var mine = stage switch { "OFFICE" or "FINAL_CHECK" => actor.CanCheck, "SIGNATURE" => actor.CanApprove, "DRAFT" or "RETURNED" or "APPROVED" or "CHANGES" => actor.CanWrite && doc.EmployeeId == actor.Id, _ => false };
+            var mine = stage switch { "OFFICE" or "FINAL_CHECK" => actor.CanCheck, "SIGNATURE" => actor.CanApprove, "OFFICE_SEND" => actor.CanCheck && doc.EmployeeId == actor.Id, "CHANGES" when officeOrigin => actor.CanCheck && doc.EmployeeId == actor.Id, "DRAFT" or "RETURNED" or "APPROVED" or "CHANGES" => !officeOrigin && actor.CanWrite && doc.EmployeeId == actor.Id, _ => false };
             if (stage == "PAPER_SIGNATURE") mine = actor.CanCheck || actor.CanApprove || (actor.CanWrite && doc.EmployeeId == actor.Id);
             if (stage == "PAPER_REVIEW") mine = actor.CanCheck;
             if (filter.Mine && !mine || filter.WaitingDays.HasValue && (entered is null || now - entered < TimeSpan.FromDays(filter.WaitingDays.Value))) continue;
-            var config = checklists.GetValueOrDefault(version.ContractVersionId);
-            var configured = config?.Configured ?? false;
-            var warnings = 1;
-            string? inspectionError = null;
-            try
-            {
-                var findings = await checklist.InspectSnapshot(snapshots[version.ContractVersionId], config, ct);
-                warnings = findings.Configured ? findings.Findings.Count(x => !x.Found && x.Resolution is null) : 1;
-            }
-            catch (Exception error) when (error is IOException or ArgumentException or JsonException)
-            {
-                inspectionError = "Chưa kiểm tra được tài liệu đã lưu. Mở hợp đồng để kiểm tra tệp nguồn.";
-            }
-            if (filter.Warnings && warnings == 0) continue;
-            rows.Add(new(doc.ContractDocumentId, doc.ContractDocumentCode ?? "", doc.ContractDocumentName, item.CustomerDisplayName, doc.EmployeeId, item.EmployeeDisplayName, stage, department, entered, lastActor, warnings, configured, mine, inspectionError));
+            rows.Add(new(doc.ContractDocumentId, doc.ContractDocumentCode ?? "", doc.ContractDocumentName, item.CustomerDisplayName, doc.EmployeeId, item.EmployeeDisplayName, stage, department, entered, lastActor, mine));
         }
         var counts = rows.GroupBy(x => x.Stage).ToDictionary(x => x.Key, x => x.Count());
         if (!string.IsNullOrEmpty(filter.Stage)) rows = rows.Where(x => x.Stage == filter.Stage).ToList();

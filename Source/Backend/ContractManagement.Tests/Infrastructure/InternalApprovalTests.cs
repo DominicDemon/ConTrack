@@ -40,7 +40,7 @@ public class InternalApprovalTests
         var repository = new InternalRepository(db, storage);
         var word = new InternalWordTemplates(db, storage, new InternalWordDocument(new ConfigurationBuilder().Build()), new EphemeralDataProtectionProvider());
         var approvals = new InternalApprovalService(db, word);
-        var progress = new ContractProgressService(db, new ContractChecklistService(db, word));
+        var progress = new ContractProgressService(db);
         var employee = await db.Employees.Where(e => e.EmployeeStatus == "ACTIVE").Select(e => e.EmployeeId).FirstAsync();
         var sale = new InternalUser(employee, "Sale test", "test", ["draft.write"]);
         var office = sale with { Permissions = ["contract.check", "template.manage"] };

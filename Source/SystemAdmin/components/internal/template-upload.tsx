@@ -43,10 +43,6 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
   const [extraction, setExtraction] = useState<Extraction | null>(null);
   const [name, setName] = useState("");
   const [documentType, setDocumentType] = useState(1);
-  const [checklistRules, setChecklistRules] = useState<string[]>([]);
-  const [checklistConfirmed, setChecklistConfirmed] = useState(false);
-  const [checklistOptions, setChecklistOptions] = useState<{key:string;label:string}[]>([]);
-  useEffect(() => { if (open && !draft && !inline) internalApi<{key:string;label:string}[]>("/checklist-rules").then(setChecklistOptions).catch(e=>setError(e.message)); }, [open, !!draft]);
   const [cards,setCards] = useState<Card[]>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [tables, setTables] = useState<AddedTable[]>([]);
@@ -107,7 +103,6 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
   async function extract(file?: File) {
     if (!file) return;
     invalidate(); setPreview(null); setSource(null); setExtraction(null); setMessage(""); setTables([]); setAdditions([]);
-    setChecklistRules([]); setChecklistConfirmed(false);
     if (!/\.(doc|docx)$/i.test(file.name) || file.size === 0 || file.size > 10 * 1024 * 1024) {
       setError("Chọn Word .doc hoặc .docx có nội dung, tối đa 10 MB."); return;
     }
@@ -129,7 +124,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
         ...original, documentBase64: result.documentBase64, sourceToken: result.sourceToken,
         name: editTemplate ? name : result.name, documentType: type,
         blocks: result.blocks.map(({ images, ...block }) => { void images; return block; }),
-        fields: editFields, tables: [], additions: [], sampleValues: {}, manualContent: manual, checklistRules: null,
+        fields: editFields, tables: [], additions: [], sampleValues: {}, manualContent: manual,
       }, false);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
@@ -139,7 +134,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     const byId = new Map(blocks.map(b=>[b.id,b]));
     const bodyOrder = inline ? [...new Set(cards.flatMap(c=>c.ids.map(id=>byId.get(id)!.bodyUnit!)))].map(id=>({id,text:original.has(id)?undefined:byId.get(id)!.text,heading:cards.some(c=>c.title===id&&!c.fixed)})) : undefined;
     return { ...source!, documentBase64: extraction!.documentBase64, sourceToken: extraction!.sourceToken,
-      name, documentType, bodyOrder, blocks: blocks.filter(b=>original.has(b.id)).map(({ images, ...block }) => { void images; return block; }), fields: editFields, tables:tables.filter(t=>!inline||retained.has(t.afterBlockId)), additions:additions.filter(a=>!inline||retained.has(a.afterBlockId)), sampleValues: {}, manualContent: manual, checklistRules: !draft && documentType === 1 && checklistConfirmed ? checklistRules : null };
+      name, documentType, bodyOrder, blocks: blocks.filter(b=>original.has(b.id)).map(({ images, ...block }) => { void images; return block; }), fields: editFields, tables:tables.filter(t=>!inline||retained.has(t.afterBlockId)), additions:additions.filter(a=>!inline||retained.has(a.afterBlockId)), sampleValues: {}, manualContent: manual };
   }
   async function render(input: ReturnType<typeof payload> | Omit<ReturnType<typeof payload>,"bodyOrder"> = payload(), showPreview = true) {
     const version = revision.current; setBusy(true); invalidate(false);
@@ -154,7 +149,6 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
   }
   async function activate() {
     if (!preview || !previewCurrent || !confirmed) return;
-    if (!draft && documentType === 1 && !checklistConfirmed) {setError("Xác nhận danh sách điều khoản cần rà soát trước khi kích hoạt."); return;}
     setBusy(true); setError("");
     try {
       const template = await internalApi<TemplateDefinition>(editTemplate ? `/template-library/${editTemplate.id}?stamp=${stamp}` : "/contract-templates/word/activate", editTemplate ? "PUT" : "POST", { input: payload(), previewToken: preview.token });
@@ -171,17 +165,15 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
       try {
         const { extraction: result, stamp, template } = await internalApi<{extraction: Extraction & {coreFields:{key:string}[]}; stamp:string; template:TemplateDefinition}>(`/template-library/${id}/editor`);
         const type = template.documentType ?? 1;
-        const checklist = type === 1 ? await internalApi<{configured:boolean;rules:string[]}>(`/contract-templates/${id}/checklist`) : null;
         if (!active) return;
         const original = {fileName:"template.docx", base64:result.documentBase64};
         const fields = template.fields.filter(f => !result.coreFields.some(core => core.key === f.key));
         const manualContent = template.manualWordContent ?? false;
         setStamp(stamp); setEditFields(fields); setManual(manualContent); setSource(original); setExtraction(result);
         setBlocks(result.blocks); setName(template.name); setDocumentType(type);
-        setChecklistRules(checklist?.rules ?? []); setChecklistConfirmed(!!checklist?.configured);
         await render({...original, documentBase64:result.documentBase64, sourceToken:result.sourceToken,
           name:template.name, documentType:type, blocks:result.blocks.map(({images,...b})=>b), fields, tables:[], additions:[],
-          sampleValues:{}, manualContent, checklistRules:checklist?.configured ? checklist.rules : null}, false);
+          sampleValues:{}, manualContent}, false);
       } catch(e) { if (active) setError((e as Error).message); }
       finally { if (active) setBusy(false); }
     }
@@ -197,7 +189,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
       setCards(wordCards(result.blocks));
       setSource({fileName:"hop-dong.docx",base64:result.documentBase64});
       setExtraction(result); setName(editTemplate ? name : result.name); setBlocks(result.blocks); setDocumentType(1); setActive("");
-      if (inline && !inline.readOnly) await render({fileName:"hop-dong.docx", base64:result.documentBase64, documentBase64:result.documentBase64, sourceToken:result.sourceToken, name:result.name, documentType:1, blocks:result.blocks.map(({images,...b}) => b), fields:[], tables:[], additions:[], sampleValues:{}, manualContent:true, checklistRules:null}, false);
+      if (inline && !inline.readOnly) await render({fileName:"hop-dong.docx", base64:result.documentBase64, documentBase64:result.documentBase64, sourceToken:result.sourceToken, name:result.name, documentType:1, blocks:result.blocks.map(({images,...b}) => b), fields:[], tables:[], additions:[], sampleValues:{}, manualContent:true}, false);
     } catch(e) { setError((e as Error).message); } finally {setBusy(false);}
   }
   useEffect(() => { if (inline) void openEditor(); }, [endpoint]);
@@ -332,10 +324,6 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
             {documentTypes.map((label,index) => <option value={index+1} key={label}>{label}</option>)}
           </select></label>
         </fieldset>
-        {!draft && documentType === 1 && <details className={styles.checklist} data-done={checklistConfirmed}><summary>Điều khoản cần rà soát · {checklistConfirmed ? "Đã xác nhận" : "Cần xác nhận trước khi kích hoạt"}</summary>
-          <fieldset disabled={busy} style={{display:"flex",flexWrap:"wrap",gap:12}}>{checklistOptions.map(rule=><label key={rule.key}><input type="checkbox" checked={checklistRules.includes(rule.key)} onChange={e=>{setChecklistRules(old=>e.target.checked?[...old,rule.key]:old.filter(key=>key!==rule.key));setChecklistConfirmed(false);invalidate();}}/> {rule.label}</label>)}</fieldset>
-          <label><input type="checkbox" disabled={busy || checklistOptions.length===0} checked={checklistConfirmed} onChange={e=>{setChecklistConfirmed(e.target.checked);invalidate();}}/> Xác nhận lựa chọn (có thể bỏ chọn tất cả nếu không áp dụng)</label>
-        </details>}
         <div className={styles.tabs}><Button type="button" variant={tab==="edit"?"default":"outline"} onClick={() => setTab("edit")}>Chỉnh mẫu</Button><Button type="button" variant={tab==="preview"?"default":"outline"} onClick={() => setTab("preview")}>Xem trước</Button></div>
         <div className={styles.workspace}>{mobile ? <><div className={styles.mobilePane} hidden={tab!=="edit"}>{editor}</div><div className={styles.mobilePane} hidden={tab!=="preview"}>{previewPane}</div></> :
           <PanelGroup direction="horizontal"><Panel defaultSize={50} minSize={30}>{editor}</Panel><PanelResizeHandle className={styles.handle} aria-label="Điều chỉnh chiều rộng hai khung">⋮</PanelResizeHandle><Panel defaultSize={50} minSize={30}>{previewPane}</Panel></PanelGroup>}

@@ -2,8 +2,9 @@
 import { sendIssues as validateSend, focusIssue } from "../../../Shared/draft-validation";
 import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 import DraftPreview from "./draft-preview";
+import SigningWorkflowGuide from "./signing-workflow-guide";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Check, CopyPlus, KeyRound, Mail, MessageSquare, Send, XCircle, Handshake, RefreshCw, Printer, Upload, UserPlus } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -19,7 +20,7 @@ const inSevenDays = () => { const d = new Date(Date.now() + 7 * 864e5); return n
 const customerPortalLoginUrl = process.env.NEXT_PUBLIC_CUSTOMER_PORTAL_URL || "http://localhost:3000/portal/login";
 
 /** Customer review actions and history for a saved draft. All state transitions are re-checked by the API. */
-export default function ReviewPanel({ record, dirty, onChanged, onLocate = focusIssue }: { onLocate?: (path:string) => void; record: DraftRecord; dirty: boolean; onChanged: () => void }) {
+export default function ReviewPanel({ record, dirty, onChanged, onLocate = focusIssue, beforeReview }: { beforeReview?: ReactNode; onLocate?: (path:string) => void; record: DraftRecord; dirty: boolean; onChanged: () => void }) {
   const user = useInternalUser();
   const sendIssues = validateSend(record.content);
   const [confirmed, setConfirmed] = useState(false);
@@ -74,7 +75,9 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
   const awaitingInternalApproval = record.status === 2 && approval?.status === 0;
   const canDecideFinal = awaitingInternalApproval && user.canCheck;
   const preSendStage = preSend?.stage ?? "DRAFT";
-  const officeApproved = preSendStage === "APPROVED" || preSendStage.startsWith("CUSTOMER_");
+  const direct = record.content.officeOrigin === true;
+  const canSend = direct ? user.canCheck && user.id === record.employeeId : user.canWrite;
+  const officeApproved = direct || preSendStage === "APPROVED" || preSendStage.startsWith("CUSTOMER_");
   /** "Gửi khách xem" appears only once Hành chính has approved this version; before that a status line explains why. */
   const sendWaiting = canSendToCustomer && !officeApproved
     ? preSendStage === "OFFICE" ? "Đang chờ Hành chính duyệt. Hành chính duyệt xong mới gửi khách được."
@@ -85,27 +88,12 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
   const business = record.content.partyType === "BUSINESS";
   const canStartSigning = !business && user.canApprove && record.status === 3 && approval?.status === 1 && !approval.signingStarted;
   const canPrint = business && record.status === 3 && approval?.status === 1;
-  const customerApproved = latest?.status === "APPROVED";
   const signingComplete = record.status === 4 || record.status === 5;
   const paperWaiting = business && record.status === 3;
   const paperPending = paperWaiting && record.paperEvidencePending;
   /** A prospect has no portal account: they read, comment and sign through the emailed link; the account comes after both sides signed. */
   const prospect = !record.customerHasAccount;
   const linkUsable = prospect && !!latest && (["SENT", "VIEWED"].includes(latest.status) || (latest.status === "APPROVED" && !signingComplete));
-  const companySigned = signingProgress?.signers.some(signer => signer.party === "Công ty" && signer.status === 1) ?? false;
-  const customerSigned = signingProgress?.signers.some(signer => signer.party === "Khách hàng" && signer.status === 1) ?? signingComplete;
-  const workflowSteps = [
-    { title: "Hoàn thiện bản nháp", detail: record.status === 0 ? (record.sendBlockedReason ?? "Điền đủ nội dung, thông tin khách hàng và điều khoản.") : "Phiên bản hợp đồng đã được lưu.", done: record.status !== 0, current: record.status === 0 },
-    { title: "Hành chính duyệt trước khi gửi", detail: officeApproved ? "Hành chính đã duyệt, Sale gửi khách được." : preSendStage === "OFFICE" ? "Đang chờ Hành chính duyệt." : preSendStage === "RETURNED" ? "Hành chính trả lại, Sale chỉnh sửa rồi trình lại." : "Sale bấm Trình Hành chính ở khung Duyệt nội bộ.", done: officeApproved, current: preSendStage === "OFFICE" || preSendStage === "RETURNED" },
-    { title: "Khách hàng duyệt nội dung", detail: customerApproved ? "Khách hàng đã đồng ý phiên bản này." : latest && ["SENT", "VIEWED"].includes(latest.status) ? "Đang chờ khách xem và phản hồi." : "Gửi phiên bản đã hoàn thiện để khách xác nhận nội dung.", done: customerApproved, current: !customerApproved && record.status === 1 },
-    { title: "Hành chính duyệt bản chốt", detail: approval?.status === 1 ? "Hành chính đã duyệt bản khách đồng ý." : awaitingInternalApproval ? "Đang chờ Hành chính duyệt bản khách đã đồng ý." : "Chỉ mở sau khi khách hàng đồng ý.", done: approval?.status === 1, current: awaitingInternalApproval },
-    ...business ? [
-      { title: "In, ký và đóng dấu đỏ", detail: signingComplete ? "Hai bên đã ký giấy." : paperPending ? "Đã nộp bản scan để Hành chính kiểm tra." : approval?.status === 1 ? "In hợp đồng; đại diện hai bên ký, doanh nghiệp đóng dấu đỏ." : "Sau khi Hành chính duyệt bản chốt, in hợp đồng để Sếp ký và khách đóng dấu.", done: signingComplete || paperPending, current: paperWaiting && !paperPending },
-      { title: "Lưu bản ký giấy", detail: signingComplete ? "Bản scan đã được xác nhận, hồ sơ đã ký." : paperPending ? "Đang chờ Hành chính xác nhận bản ký giấy." : "Scan bản đã đóng dấu, tải lên màn Bản ký giấy và xác nhận.", done: signingComplete, current: paperPending },
-    ] : [{ title: "Sếp ký cho công ty", detail: companySigned ? "Sếp đã ký." : approval?.signingStarted ? "Đang chờ Sếp ký trong hàng đợi Ký phía công ty." : "Sau khi Hành chính duyệt bản chốt, Sếp tạo phiên ký và ký.", done: companySigned, current: record.status === 3 && !companySigned },
-    { title: "Khách hàng ký", detail: customerSigned ? "Khách hàng đã ký, hồ sơ hoàn tất." : companySigned ? (prospect ? "Công ty đã ký. Khách mở link trong email, xác minh OTP rồi ký." : "Công ty đã ký. Khách đăng nhập Portal, mở hợp đồng và xác minh OTP để ký.") : prospect ? "Sau khi công ty ký, khách ký ngay trên link đã nhận qua email." : "Sau khi công ty ký, khách đăng nhập Portal để tiếp tục ký.", done: customerSigned, current: companySigned && !customerSigned }],
-  ];
-
   function ask(c: Confirm) { setConfirmed(false); setConfirm(c); setNote(""); setExpiry(inSevenDays()); setError(""); setNotice(""); }
   async function run() {
     if (!confirm) return; setBusy(true); setError("");
@@ -184,13 +172,15 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
       if (tab) tab.location.href = url; else window.location.href = url;
     } catch (e) { tab?.close(); setError((e as Error).message); }
   }
-  return <section className={ui.card} style={{ margin: "0 0 16px" }} aria-label="Gửi khách xem">
-    <div className={s.workflowGuide} aria-label="Các bước ký hợp đồng">
-      <div className={s.workflowGuideHeader}><div><strong>Quy trình ký hợp đồng</strong><p>{business ? "Khách hàng doanh nghiệp: Sale trình → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → hai bên ký giấy và đóng dấu → Hành chính xác nhận bản scan." : "Khách hàng cá nhân: Sale trình → Hành chính duyệt → Sale gửi khách → khách đồng ý → Hành chính duyệt bản chốt → Sếp ký → khách hàng ký."}</p></div>{!business && approval?.signingStarted && !signingComplete && <Link className={ui.secondaryButton} href="/workspace/contracts/company-signing">Mở hàng đợi ký công ty</Link>}</div>
-      <ol className={s.workflowSteps}>{workflowSteps.map((step, index) => <li key={step.title} className={`${s.workflowStep} ${step.done ? s.workflowStepDone : step.current ? s.workflowStepCurrent : ""}`}>
-        <span className={s.workflowStepNumber}>{step.done ? <Check size={14}/> : index + 1}</span><div><strong>{step.title}</strong><p>{step.detail}</p></div>
-      </li>)}</ol>
-    </div>
+  return <>
+    <SigningWorkflowGuide record={record} business={business} direct={direct} approval={approval}
+      sendReady={canSendToCustomer && officeApproved && !record.sendBlockedReason && sendIssues.length === 0 && !dirty}
+      draftIssue={dirty ? "Lưu thay đổi trước khi gửi khách." : sendIssues.length > 0
+        ? "Hoàn thiện các thông tin bắt buộc trước khi gửi khách."
+        : canSendToCustomer && officeApproved ? record.sendBlockedReason : null}
+      preSendStage={preSendStage} reviewStatus={latest?.status} signingProgress={signingProgress}/>
+    {beforeReview}
+    <section className={ui.card} style={{ margin: "0 0 16px" }} aria-label="Gửi khách xem">
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <strong style={{ fontSize: 14 }}>Phiên bản {record.versionNo}</strong>
@@ -200,13 +190,13 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         <button className={ui.secondaryButton} disabled={busy || dirty} title={dirty ? "Lưu nháp trước khi tải lại trạng thái" : "Tải trạng thái khách hàng và phê duyệt mới nhất"} onClick={() => void refreshWorkflow()}><RefreshCw size={15}/>Làm mới trạng thái</button>
-        {user.canWrite && canSendToCustomer && officeApproved && <button type="button" className={ui.primaryButton} disabled={busy || dirty || sendIssues.length > 0 || !!record.sendBlockedReason}
+        {canSend && canSendToCustomer && officeApproved && <button type="button" className={ui.primaryButton} disabled={busy || dirty || sendIssues.length > 0 || !!record.sendBlockedReason}
           aria-describedby="review-send-guidance" title={dirty ? "Lưu nháp trước khi gửi" : record.sendBlockedReason || undefined} onClick={send}><Send size={16}/>Gửi khách xem</button>}
         {(user.canWrite || user.canCheck) && canCreateVersion && <button className={latest?.status === "CHANGES_REQUESTED" ? ui.primaryButton : ui.secondaryButton} disabled={busy} onClick={newVersion}><CopyPlus size={16}/>Tạo phiên bản mới để chỉnh sửa</button>}
-        {user.canWrite && awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
+        {canSend && awaitingDecision && <><button className={ui.secondaryButton} disabled={busy} onClick={() => followup("NEGOTIATE")}><Handshake size={16}/>Thương lượng tiếp</button>
           <button className={ui.secondaryButton} disabled={busy} onClick={() => followup("CLOSE")}><XCircle size={16}/>Đóng draft</button></>}
-        {user.canWrite && linkUsable && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
-        {user.canWrite && linkUsable && latest && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách không kịp nhập mã, nhập sai quá nhiều lần hoặc bị khóa đăng nhập"
+        {canSend && linkUsable && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách mất email, link hết hạn hoặc email chưa gửi được" onClick={resendLink}><Mail size={16}/>Gửi lại link</button>}
+        {canSend && linkUsable && latest && <button className={ui.secondaryButton} disabled={busy} title="Dùng khi khách không kịp nhập mã, nhập sai quá nhiều lần hoặc bị khóa đăng nhập"
           onClick={() => void act(() => internalApi(`/contract-reviews/${latest.id}/resend-otp`, "POST"), `Đã gửi mã OTP mới tới ${record.customerPhoneMasked} và mở khóa cho khách. Khách mở link trong email, chọn “Đã có mã” và nhập mã (hiệu lực 5 phút).`)}><KeyRound size={16}/>Gửi lại mã OTP</button>}
         {canDecideFinal && <>
           <button className={ui.primaryButton} disabled={busy || dirty} onClick={() => decideApproval(true)}><Check size={16}/>{business ? "Duyệt, chuyển ký giấy" : "Duyệt, chuyển Sếp ký"}</button>
@@ -224,13 +214,13 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
           onClick={() => void issueCustomerPassword(false)}><KeyRound size={16}/>Cấp lại mật khẩu tạm</button>}
       </div>
     </div>
-    {user.canWrite && canSendToCustomer && <div id="review-send-guidance" className={s.muted} style={{ marginTop: 8 }} aria-live="polite">
+    {canSend && canSendToCustomer && <div id="review-send-guidance" className={s.muted} style={{ marginTop: 8 }} aria-live="polite">
       {sendWaiting ? <p role="status" className={ui.notice}>{sendWaiting}</p> : dirty ? <p>Lưu nháp để cập nhật thông tin và kiểm tra điều kiện gửi khách.</p> : record.sendBlockedReason || sendIssues.length ? <>
         <p>Chưa thể gửi khách: {record.sendBlockedReason || "Cần hoàn thiện thông tin hợp đồng."}</p>
         {sendIssues.map((issue,i) => <button key={i} type="button" className={ui.secondaryButton} onClick={() => onLocate(issue.path)}>{issue.message}</button>)}
       </> : <p>Nháp đã đủ thông tin. Bạn có thể gửi phiên bản này cho khách xem và phản hồi.</p>}
     </div>}
-    {latest?.status === "CHANGES_REQUESTED" && record.locked && (user.canWrite || user.canCheck) && <p role="status" className={ui.notice} style={{ marginTop: 8 }}>Khách đã góp ý và yêu cầu sửa. Sale hoặc Hành chính bấm <strong>Tạo phiên bản mới để chỉnh sửa</strong>, sửa nội dung theo các góp ý bên dưới, rồi Trình Hành chính và gửi lại khách.</p>}
+    {latest?.status === "CHANGES_REQUESTED" && record.locked && (user.canWrite || user.canCheck) && <p role="status" className={ui.notice} style={{ marginTop: 8 }}>Khách đã góp ý và yêu cầu sửa. Sale hoặc Hành chính bấm <strong>Tạo phiên bản mới để chỉnh sửa</strong>, sửa nội dung theo các góp ý bên dưới, rồi {direct ? "gửi lại khách" : "trình Hành chính và gửi lại khách"}.</p>}
     {(record.issues ?? []).some(i => i.path.startsWith("milestones")) && <button type="button" className={ui.secondaryButton} onClick={() => focusIssue("milestones")}>Đi tới lịch thanh toán</button>}
     {(record.carriedComments?.length ?? 0) > 0 && <section className={ui.notice}><strong>Góp ý chuyển tiếp sang phiên bản này</strong>{record.carriedComments?.map(c => <div key={c.id}><p>{c.content} · chuyển từ bản trước · {c.resolved ? "Đã xử lý" : "Chưa xử lý"}</p>{!c.resolved && <button type="button" disabled={busy} className={ui.secondaryButton} onClick={() => void act(async () => { await internalApi(`/contract-comments/${c.id}/resolve`,"POST"); onChanged(); })}>Đánh dấu đã xử lý</button>}</div>)}</section>}
     {latest && <div className={s.customerPortalAccess}>
@@ -295,5 +285,5 @@ export default function ReviewPanel({ record, dirty, onChanged, onLocate = focus
       <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setConfirm(null)}>Hủy</Button>
         <Button type="button" disabled={busy || (!!confirm?.expiry && !expiry) || (confirm?.action === "Gửi khách xem" && !confirmed) || (!!confirm?.note?.required && !note.trim())} onClick={() => void run()}>{busy ? "Đang xử lý…" : confirm?.action}</Button></DialogFooter>
     </DialogContent></Dialog>
-  </section>;
+  </section></>;
 }

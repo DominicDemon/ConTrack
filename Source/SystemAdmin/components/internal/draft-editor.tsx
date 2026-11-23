@@ -11,14 +11,14 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, GripVertical, ListChecks, Plus, RefreshCw, Save, Send, Trash2, Users, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, GripVertical, ListChecks, Plus, RefreshCw, Save, Trash2, Users, Wallet } from "lucide-react";
 import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, type BusinessOption, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import DraftPreview from "./draft-preview";
 import WordDraftPreview from "./word-draft-preview";
 import TemplateUpload from "./template-upload";
 import ReviewPanel from "./review-panel";
-import ChecklistPanel from "./checklist-panel";
+import SigningWorkflowGuide from "./signing-workflow-guide";
 import ApprovalPanel from "./approval-panel";
 import { useInternalUser } from "./internal-shell";
 import s from "./workspace.module.css";
@@ -34,7 +34,6 @@ export default function DraftEditor({ id }: { id?: string }) {
   const [dirty, setDirty] = useState(false); const dirtyRef = useRef(false); const form = useRef<HTMLFormElement>(null);
   const [mobile, setMobile] = useState(false); const [tab, setTab] = useState("edit"); const [creatingCustomer, setCreatingCustomer] = useState(false); const [numberFormKey, setNumberFormKey] = useState(0); const [customerBusy, setCustomerBusy] = useState(false);
   const [customerSearch, setCustomerSearch] = useState(""); const [searching, setSearching] = useState(false); const [lookupError, setLookupError] = useState(""); const [loadAttempt, setLoadAttempt] = useState(0);
-  const [locate, setLocate] = useState<{location:string|null;request:number}|null>(null);
   const [wordInfo, setWordInfo] = useState("");
   /** Result of refilling Bên A from the customer record (shown in the Bên A section). */
   const [customerNotice, setCustomerNotice] = useState("");
@@ -344,7 +343,7 @@ export default function DraftEditor({ id }: { id?: string }) {
       </div><div className={s.totals}><div><span>Tạm tính</span><span>{money(totals.subtotal)} ₫</span></div><div><span>Giảm giá</span><span>{money(totals.discount)} ₫</span></div><div><span>VAT</span><span>{money(totals.vat)} ₫</span></div><div><span>Tổng giá trị</span><span>{money(totals.total)} ₫</span></div></div>
     </section>
     <section id="contract-terms" tabIndex={-1} className={s.section}><h2><ListChecks/>{showWordSections ? "Nội dung hợp đồng" : "Điều khoản hợp đồng"}</h2>
-      {template.wordStorageKey && <TemplateUpload key={String(template.id) + ":" + template.wordStorageKey} draft={record ?? undefined} locate={locate} onImported={() => {}}
+      {template.wordStorageKey && <TemplateUpload key={String(template.id) + ":" + template.wordStorageKey} draft={record ?? undefined} onImported={() => {}}
         inline={{readOnly:!inlineWord,content,saved:record?.content,templateId:String(template.id),previewHost,receipt,changed:() => {setDirty(true); dirtyRef.current=true;setSuccess("");}}}/>}
       <fieldset hidden={!!template.wordStorageKey} disabled={!canEditTerms || showWordSections} style={{border:0,padding:0}}>
       {!template.isImported && <Field label="Căn cứ hợp đồng"><textarea className={`${ui.field} ${s.termContent}`} maxLength={4000} value={content.fields.CONTRACT_LEGAL_BASES ?? ""} onChange={e => setField("CONTRACT_LEGAL_BASES", e.target.value)}/></Field>}
@@ -371,8 +370,12 @@ export default function DraftEditor({ id }: { id?: string }) {
   </fieldset></form></div>;
   return <><div className={s.editorHeader}><Link href="/workspace/contracts/drafts" className={s.iconButton} aria-label="Về danh sách"><ArrowLeft size={20}/></Link><div><h1>{readOnly ? "Xem hợp đồng" : id ? "Chỉnh sửa hợp đồng nháp" : "Tạo hợp đồng nháp"}</h1><p className={s.muted}>{record ? `${record.employeeName} · Cập nhật ${dateTime(record.updatedAt)}` : "Bắt đầu từ mẫu, hoàn thiện theo nhu cầu"}</p></div><div className={s.actions}><span className={`${s.badge} ${dirty ? s.warning : ""}`}>{dirty ? "Chưa lưu thay đổi" : record ? "Đã lưu" : "Nháp mới"}</span>{!readOnly && <button disabled={busy || customerBusy} className={ui.primaryButton} onClick={save}><Save size={17}/>{busy ? "Đang lưu…" : "Lưu nháp"}</button>}</div></div>
     {(error || success) && <div className={s.messages}>{error && <div role="alert" className={ui.error}>{error}{conflict && <button className={ui.secondaryButton} style={{ marginLeft: 12 }} onClick={reload}>Tải lại bản mới</button>}</div>}{success && <div role="status" className={ui.notice}>{success}</div>}</div>}
-    {!record && <div className={s.messages}><section className={ui.card} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }} aria-label="Gửi khách xem"><button type="button" className={ui.primaryButton} disabled aria-describedby="new-draft-send-guidance"><Send size={16}/>Gửi khách xem</button><p id="new-draft-send-guidance" className={s.muted}>Lưu nháp trước, sau đó hoàn thiện các mục còn thiếu để gửi khách xem.</p></section></div>}
-    {record && <div className={s.messages}><ChecklistPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)} onLocate={location => { setTab("edit"); if (template.wordStorageKey && canEditTerms && !readOnly && !dirty) setLocate({location,request:Date.now()}); else requestAnimationFrame(() => { const target = document.getElementById(`contract-term-${location}`) ?? document.getElementById("contract-terms"); target?.scrollIntoView({behavior:"smooth"}); target?.focus({preventScroll:true}); }); }}/><ApprovalPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/><ReviewPanel onLocate={path => { setTab("edit"); requestAnimationFrame(() => focusIssue(path)); }} record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/></div>}
+    <div className={s.messages}>
+      {record ? <ReviewPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}
+        onLocate={path => { setTab("edit"); requestAnimationFrame(() => focusIssue(path)); }}
+        beforeReview={!record.content.officeOrigin && <ApprovalPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/>}/>
+        : <SigningWorkflowGuide direct={user.canCheck && !user.canWrite} business={content.partyType === "BUSINESS"}/>}
+    </div>
     <div className={s.mobileTabs}><button type="button" className={tab === "edit" ? ui.primaryButton : ui.secondaryButton} onClick={() => setTab("edit")}>Soạn thảo</button><button type="button" className={tab === "preview" ? ui.primaryButton : ui.secondaryButton} onClick={() => setTab("preview")}>Xem trước</button></div>
     <div className={s.editorBody} style={mobile ? {height:"calc(100dvh - 140px)",minHeight:480}:undefined}><PanelGroup direction="horizontal">
       <Panel defaultSize={48} minSize={30} style={mobile ? {display:tab==="edit"?"block":"none",flexGrow:1}:undefined}>{editor}</Panel>

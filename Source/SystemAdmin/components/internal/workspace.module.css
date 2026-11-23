@@ -134,6 +134,7 @@
 .workflowStep strong { display: block; color: var(--foreground); font-size: 11px; line-height: 1.4; }
 .workflowStep p { margin: 4px 0 0; font-size: 10px; line-height: 1.45; }
 .workflowStepDone { border-color: #b8dccc; background: #f2faf6; color: #16734a; }
+.workflowStepDone strong { color: #16734a; }
 .workflowStepDone .workflowStepNumber { border-color: #95c9ae; }
 .workflowStepCurrent { border-color: #8ed2ce; box-shadow: 0 0 0 1px #8ed2ce inset; }
 .workflowStepCurrent .workflowStepNumber { border-color: var(--primary); color: var(--primary); }

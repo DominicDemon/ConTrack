@@ -137,7 +137,6 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
     public async Task<TemplateDefinition> Activate(WordActivation request, long actor, CancellationToken ct, long? editId = null, string? expectedStamp = null)
     {
         var input = request.Input;
-        if (input.DocumentType == 1) ContractChecklistService.ValidateRules(input.ChecklistRules);
         var receipt = ReadReceipt(request.PreviewToken, actor);
         if (receipt.Fingerprint != Fingerprint(input)) throw new ArgumentException("Nội dung đã thay đổi. Hãy xem trước lại trước khi kích hoạt.");
         var document = Prepare(input, actor);
@@ -170,15 +169,10 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                     template.ContractTemplateDocumentType = input.DocumentType;
                     template.UpdatedDate = DateTime.UtcNow;
                     db.ContractTemplateFields.RemoveRange(db.ContractTemplateFields.Where(f => f.ContractTemplateId == editId));
-                    var checklist = await db.Set<ContractChecklist>().SingleOrDefaultAsync(c => c.TemplateId == editId && c.VersionId == null, ct);
-                    if (checklist != null) db.Remove(checklist);
                 }
                 else db.ContractTemplates.Add(template);
                 await db.SaveChangesAsync(ct);
                 Directory.CreateDirectory(storage.Root);
-                if (input.DocumentType == 1)
-                    db.Set<ContractChecklist>().Add(new() { TemplateId = template.ContractTemplateId, Configured = true,
-                        Rules = JsonSerializer.Serialize(input.ChecklistRules) });
                 async Task<string> Store(byte[] bytes, string extension, string objectType, string mime, string filename)
                 {
                     var key = Guid.NewGuid().ToString("N") + extension;
@@ -217,8 +211,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                     ContractTemplateFieldKey = field.Key, ContractTemplateFieldLabel = field.Label, ContractTemplateFieldDataType = field.DataType,
                     IsRequired = field.Required, ExtraOptions = JsonSerializer.Serialize(new { field.Options, field.Min, field.Max }, InternalRepository.Json) });
                 db.AuditLogs.Add(new() { ActionType = editId.HasValue ? "UPDATE" : "CREATE", EntityName = "CONTRACT_TEMPLATE", EntityId = template.ContractTemplateId.ToString(),
-                    ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow,
-                    NewData = JsonSerializer.Serialize(new { checklistRules = input.ChecklistRules }) });
+                    ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow });
                 await db.SaveChangesAsync(ct);
                 commitAttempted = true;
                 await tx.CommitAsync(ct);

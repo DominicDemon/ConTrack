@@ -1,3 +1,6 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 -- 017: KHACH HANG XEM BAN SCAN HOP DONG CUA MINH BANG KEY RIENG. Chay sau 008; chay lai nhieu lan khong sao.
 -- Khach tu dat key tren cong khach hang (mat khau + ma gui qua email), giong nhan vien (008, 014): khoa bi mat RSA
 -- cua khach duoc ma hoa bang key do, he thong khong luu key. Moi ban scan cua khach duoc boc khoa tep rieng cho key
@@ -19,9 +22,12 @@ BEGIN
         revoked_at DATETIME2 NULL,
         CONSTRAINT CK_CustomerEncryptionKey_Status CHECK (customer_encryption_key_status IN ('ACTIVE', 'REVOKED'))
     );
+END
+GO
+-- Separate guard: a run that stopped after creating the table still gets its index.
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_CustomerEncryptionKey_ActiveCustomer')
     CREATE UNIQUE INDEX UX_CustomerEncryptionKey_ActiveCustomer
         ON CUSTOMER_ENCRYPTION_KEY (customer_id) WHERE customer_encryption_key_status = 'ACTIVE';
-END
 GO
 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'CUSTOMER_FILE_KEY')

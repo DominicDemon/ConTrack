@@ -1,3 +1,6 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 SET XACT_ABORT ON;
 BEGIN TRANSACTION;
 -- Some company databases were provisioned from the older optimized script, which

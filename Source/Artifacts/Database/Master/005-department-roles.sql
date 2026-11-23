@@ -1,3 +1,6 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 -- 005: phân quyền theo phòng ban. Mỗi nhân viên thuộc đúng 1 phòng; mỗi phòng có 1 quản lý.
 -- Phòng ban quyết định màn hình: role nhân viên / role quản lý của phòng được gán vào EMPLOYEE_ROLE.
 -- Idempotent; chạy tay bằng SSMS hoặc sqlcmd -I (app không tự chạy). Chạy sau 004.

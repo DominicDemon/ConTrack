@@ -1,3 +1,6 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 -- 008: MÃ HÓA TỆP BẢN SCAN BẰNG KEY 12 KÝ TỰ CẤP CHO TỪNG NGƯỜI DÙNG, CÓ BẢN DỰ PHÒNG. BẢNG RIÊNG CỦA NHÓM TRÊN DATABASE DEV CLONE.
 -- Cách làm (mã hóa hai lớp):
 --   * Mỗi tệp có một khóa ngẫu nhiên 256 bit; tệp được mã hóa AES-256-GCM rồi mới ghi vào nơi lưu tệp.

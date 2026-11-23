@@ -1,3 +1,6 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 -- 002: luồng "gửi khách xem hợp đồng nháp" (CONTRACT-REVIEW-FLOW). Chỉ thêm, không xóa/đổi tên.
 -- Nguồn: phần [THÊM-xx] của MasterDB-ConTrack.sql. Idempotent; chạy tay bằng SSMS hoặc sqlcmd -I (app không tự chạy).
 

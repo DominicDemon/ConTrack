@@ -1,3 +1,6 @@
+SET QUOTED_IDENTIFIER ON;
+SET ANSI_NULLS ON;
+GO
 -- 004: admin quản lý tài khoản nhân viên và phân quyền.
 -- Chỉ thêm / nới ràng buộc, idempotent; chạy tay bằng SSMS hoặc sqlcmd -I (app không tự chạy).
 

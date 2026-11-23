@@ -124,7 +124,22 @@ public sealed class CustomerScanService(
         }, cancellationToken);
         guards.Attempts.Reset(customerId);
         await TellAsync(me, current is null ? "Bạn vừa tạo key xem bản scan hợp đồng." : "Key xem bản scan của bạn vừa được đặt lại; key cũ không còn dùng được.", cancellationToken);
-        return await GrantWithServerKeyAsync(customerId, installed, cancellationToken);
+        var granted = await GrantWithServerKeyAsync(customerId, installed, cancellationToken);
+        if (granted > 0)
+        {
+            // The company recovery key opened the customer's files for the new key: recorded, and the customer is told.
+            db.AuditLogs.Add(new AuditLog
+            {
+                ActionType = "CUSTOMER_FILES_RECOVERED", EntityName = "CUSTOMER", EntityId = customerId.ToString(),
+                ActorType = "CUSTOMER", ActorId = customerId, CreatedAt = DateTime.UtcNow,
+                NewData = System.Text.Json.JsonSerializer.Serialize(new { files = granted, recoveryKeyId = recovery.KeyId }),
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            await TellAsync(me, $"Khóa khôi phục của hệ thống vừa được dùng để mở lại {granted} tài liệu (bản scan và kho lưu trữ) cho key mới của bạn. "
+                + "Việc này chỉ diễn ra khi bạn đặt lại key và đã được ghi nhật ký. Nếu không phải bạn thực hiện, hãy đổi mật khẩu và liên hệ công ty ngay.", cancellationToken);
+        }
+
+        return granted;
     }
 
     /// <summary>Changes the key while it is known; every scan already given stays open (the same private key, sealed again).</summary>
@@ -224,7 +239,9 @@ public sealed class CustomerScanService(
         await files.SaveAsync(storageKey, storedBytes, cancellationToken);
         try
         {
-            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            // Inside the execution strategy: a retrying SQL connection does not allow a transaction opened by hand.
+            return await db.ExecuteInTransactionAsync(async () =>
+            {
             var file = new FileStorage
             {
                 FileStorageObjectid = documentId, FileStorageObjecttype = "CONTRACT_DOCUMENT", FileStorageFiletype = extension[1..].ToUpperInvariant(),
@@ -244,8 +261,8 @@ public sealed class CustomerScanService(
             });
             ReviewData.Audit(db, "CUSTOMER_CONTRACT_SCAN_UPLOADED", "FILE_STORAGE", file.FileStorageFileid, "CUSTOMER", customerId, now);
             await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
             return new CustomerScanUploadResult(file.FileStorageFileid.ToString(), safeName, now);
+            }, cancellationToken);
         }
         catch
         {
@@ -265,6 +282,19 @@ public sealed class CustomerScanService(
         var file = await db.FileStorages.AsNoTracking().SingleAsync(f => f.FileStorageFileid == fileId, cancellationToken);
         var stored = await files.ReadAsync(file.FileStorageStoragekey, cancellationToken)
             ?? throw new InternalAppException(404, "Không tìm thấy tệp trên máy chủ. Liên hệ nhân viên phụ trách.");
+        var plain = await DecryptForCustomerAsync(customerId, fileId, stored, userKey, cancellationToken);
+
+        ReviewData.Audit(db, "CUSTOMER_SCAN_OPENED", "FILE_STORAGE", fileId, "CUSTOMER", customerId, DateTime.UtcNow);
+        await db.SaveChangesAsync(cancellationToken);
+        return new CustomerScanFile(file.FileStorageFilename, file.FileStorageContenttype, plain);
+    }
+
+    /// <summary>
+    /// The plain bytes of a file the customer's own key was given (or can be given through the recovery key the server
+    /// keeps). Wrong keys count towards the lock. Used for contract scans and for the customer's vault.
+    /// </summary>
+    internal async Task<byte[]> DecryptForCustomerAsync(long customerId, long fileId, byte[] stored, string? userKey, CancellationToken cancellationToken)
+    {
         byte[] plain;
         if (!FileCrypto.IsEncrypted(stored))
         {
@@ -302,9 +332,7 @@ public sealed class CustomerScanService(
             }
         }
 
-        ReviewData.Audit(db, "CUSTOMER_SCAN_OPENED", "FILE_STORAGE", fileId, "CUSTOMER", customerId, DateTime.UtcNow);
-        await db.SaveChangesAsync(cancellationToken);
-        return new CustomerScanFile(file.FileStorageFilename, file.FileStorageContenttype, plain);
+        return plain;
     }
 
     private RSA Unlock(long customerId, CustomerEncryptionKey key, string? userKey)
@@ -336,7 +364,13 @@ public sealed class CustomerScanService(
         }
 
         var granted = 0;
-        foreach (var match in await CustomerScans.ForCustomerAsync(db, customerId, cancellationToken))
+        // The customer's contract scans and the documents of their own vault (022).
+        var vault = await db.CustomerVaultFiles.AsNoTracking()
+            .Where(v => v.CustomerId == customerId && v.DeletedAt == null)
+            .Select(v => v.FileStorageFileid)
+            .ToListAsync(cancellationToken);
+        foreach (var match in (await CustomerScans.ForCustomerAsync(db, customerId, cancellationToken)).Select(m => m.FileId).Concat(vault).Distinct()
+            .Select(id => new { FileId = id }))
         {
             try
             {

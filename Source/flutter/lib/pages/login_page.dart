@@ -23,19 +23,15 @@ class _LoginPageState extends State<LoginPage> {
   bool _isSubmitting = false;
   bool _showPassword = false;
 
-  final _tenantController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
-  final _tenantFocusNode = FocusNode();
   final _emailFocusNode = FocusNode();
   final _passwordFocusNode = FocusNode();
 
-  String? _tenantError;
   String? _emailError;
   String? _passwordError;
 
-  bool _tenantTouched = false;
   bool _emailTouched = false;
   bool _passwordTouched = false;
 
@@ -44,15 +40,6 @@ class _LoginPageState extends State<LoginPage> {
   @override
   void initState() {
     super.initState();
-
-    _tenantFocusNode.addListener(() {
-      if (!_tenantFocusNode.hasFocus) {
-        setState(() {
-          _tenantTouched = true;
-          _tenantError = _validateTenantCode(_tenantController.text);
-        });
-      }
-    });
 
     _emailFocusNode.addListener(() {
       if (!_emailFocusNode.hasFocus) {
@@ -80,21 +67,14 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   void dispose() {
-    _tenantController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
-    _tenantFocusNode.dispose();
     _emailFocusNode.dispose();
     _passwordFocusNode.dispose();
     super.dispose();
   }
 
   // --- VALIDATORS ---
-  String? _validateTenantCode(String value) {
-    if (value.trim().isEmpty) return "Vui lòng nhập Mã công ty";
-    return null;
-  }
-
   String? _validateEmail(String value) {
     if (value.trim().isEmpty) return "Vui lòng nhập tên tài khoản";
     return null;
@@ -136,7 +116,18 @@ class _LoginPageState extends State<LoginPage> {
       if (mounted) {
         _navigateToDashboard();
       }
-    } catch (e) {
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+      if (e.statusCode == ApiClient.unreachable) {
+        // Offline: keep the session, say so, and let the user retry or use the customer scan area.
+        if (mounted) AppToast.error(context, e.message);
+        return;
+      }
+      _authStore.clear();
+      ApiClient().clearCookies();
+    } catch (_) {
       _authStore.clear();
       if (mounted) {
         setState(() => _isLoading = false);
@@ -146,21 +137,18 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _handleEmailSignIn(StateSetter bottomSheetSetState) async {
-    final tenantErr = _validateTenantCode(_tenantController.text);
     final emailErr = _validateEmail(_emailController.text);
     final passwordErr = _validatePassword(_passwordController.text);
 
     bottomSheetSetState(() {
-      _tenantTouched = true;
       _emailTouched = true;
       _passwordTouched = true;
-      _tenantError = tenantErr;
       _emailError = emailErr;
       _passwordError = passwordErr;
     });
 
-    if (tenantErr != null || emailErr != null || passwordErr != null) {
-      AppToast.error(context, tenantErr ?? emailErr ?? passwordErr!);
+    if (emailErr != null || passwordErr != null) {
+      AppToast.error(context, emailErr ?? passwordErr!);
       return;
     }
 
@@ -169,7 +157,6 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       final loginResult = await AuthApi.login(
-        _tenantController.text.trim(),
         accountName: _emailController.text.trim(),
         password: _passwordController.text,
       );
@@ -265,34 +252,6 @@ class _LoginPageState extends State<LoginPage> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Tenant Code
-                              _buildLabel('Mã công ty'),
-                              const SizedBox(height: 8),
-                              AppTextField(
-                                controller: _tenantController,
-                                focusNode: _tenantFocusNode,
-                                maxLength: 50,
-                                placeholder: 'Nhập mã công ty',
-                                hasError:
-                                    _tenantError != null && _tenantTouched,
-                                autofillHints: const [
-                                  AutofillHints.organizationName,
-                                ],
-                                onChanged: (val) {
-                                  if (_tenantTouched) {
-                                    setBottomSheetState(
-                                      () => _tenantError = _validateTenantCode(
-                                        val,
-                                      ),
-                                    );
-                                  }
-                                },
-                              ),
-                              if (_tenantError != null && _tenantTouched)
-                                _buildErrorText(_tenantError!),
-
-                              const SizedBox(height: 16),
-
                               // Email/Username
                               _buildLabel('Tên tài khoản'),
                               const SizedBox(height: 8),

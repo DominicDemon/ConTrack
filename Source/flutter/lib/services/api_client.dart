@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -54,12 +55,17 @@ class ApiClient {
     }
   }
 
+  /// Every request gives up after this, so a server that cannot be reached never leaves a screen loading forever.
+  static const Duration requestTimeout = Duration(seconds: 15);
+
+  /// On Android, `localhost` is the phone itself: run `adb reverse tcp:5005 tcp:5005` (emulator or USB phone) so it
+  /// reaches the computer. To use a host alias instead (e.g. 10.0.2.2 on the emulator), set API_ANDROID_HOST in .env;
+  /// the API must then accept that host name (AllowedHosts).
   String get baseUrl {
-    final effectiveUrl =
-        (!kIsWeb && Platform.isAndroid && _baseUrl.contains('localhost'))
-        ? _baseUrl.replaceAll('localhost', '10.0.2.2')
+    final alias = AppConfig.androidHostAlias;
+    return !kIsWeb && Platform.isAndroid && alias != null && _baseUrl.contains('localhost')
+        ? _baseUrl.replaceAll('localhost', alias)
         : _baseUrl;
-    return effectiveUrl;
   }
 
   void setBaseUrl(String url) {
@@ -189,12 +195,18 @@ class ApiClient {
     );
   }
 
+  /// Status of [ApiException] when the server could not be reached (no network, refused, timed out).
+  static const int unreachable = 0;
+
+  /// A failed connection is not a lost session: the cookies stay, so the user is still signed in once the server is
+  /// back. It becomes an [ApiException] with a message the user can act on.
   Future<void> _handleException(Object e) async {
-    if (e is SocketException || e is http.ClientException) {
-      await clearCookies();
-      if (onUnauthorized != null) {
-        onUnauthorized!();
-      }
+    if (e is SocketException || e is http.ClientException || e is TimeoutException) {
+      throw ApiException(
+        statusCode: unreachable,
+        message: 'Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại.',
+        data: e.toString(),
+      );
     }
   }
 
@@ -223,7 +235,7 @@ class ApiClient {
     }
 
     try {
-      final response = await http.get(url, headers: builtHeaders);
+      final response = await http.get(url, headers: builtHeaders).timeout(requestTimeout);
       return await _processResponse(response, url, 'GET');
     } catch (e) {
       if (kDebugMode) {
@@ -256,7 +268,7 @@ class ApiClient {
         url,
         headers: builtHeaders,
         body: jsonBody,
-      );
+      ).timeout(requestTimeout);
       return await _processResponse(response, url, 'POST');
     } catch (e) {
       if (kDebugMode) {
@@ -289,7 +301,7 @@ class ApiClient {
         url,
         headers: builtHeaders,
         body: jsonBody,
-      );
+      ).timeout(requestTimeout);
       return await _processResponse(response, url, 'PUT');
     } catch (e) {
       if (kDebugMode) {
@@ -313,7 +325,7 @@ class ApiClient {
     }
 
     try {
-      final response = await http.delete(url, headers: builtHeaders);
+      final response = await http.delete(url, headers: builtHeaders).timeout(requestTimeout);
       return await _processResponse(response, url, 'DELETE');
     } catch (e) {
       if (kDebugMode) {
@@ -346,7 +358,7 @@ class ApiClient {
         url,
         headers: builtHeaders,
         body: jsonBody,
-      );
+      ).timeout(requestTimeout);
       return await _processResponse(response, url, 'PATCH');
     } catch (e) {
       if (kDebugMode) {

@@ -46,6 +46,9 @@ const ADMIN_OFFICER_NAV_ITEMS: NavItem[] = [
   { label: "Tổng quan", icon: LayoutDashboard, href: "/workspace", permissions: [] },
   { label: "Quản lý hợp đồng", icon: FileSignature, href: "/workspace/contracts", permissions: ["legal.manage", "contract.read"] },
   { label: "Quản lý văn bản", icon: Files, href: "/workspace/templates", permissions: ["template.read", "template.manage"] },
+  // Legal keeps the signed paper copies and the scans: the same screens as the main menu, each still behind its permission.
+  ...NAV_ITEMS.filter(item => ["/workspace/signed-contracts", "/workspace/scanned-contracts", "/workspace/signed-contracts/search",
+    "/workspace/scan-emails", "/workspace/my-key", "/workspace/encryption-keys"].includes(item.href)),
   { label: "Hỗ trợ khách hàng", icon: LifeBuoy, href: "/workspace/support-tickets", permissions: ["ticket.handle", "ticket.manage.all"] },
 ];
 

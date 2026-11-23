@@ -240,6 +240,12 @@ public static class ScanRegistration
         services.AddScoped<FileKeyOwnerService>();
         services.AddSingleton<CustomerKeyGuards>();
         services.AddScoped<CustomerScanService>();
+        // The customer's own vault (022): reading in the background, emails a customer may send in an hour.
+        services.AddSingleton<CustomerVaultOcrQueue>();
+        services.AddHostedService(provider => provider.GetRequiredService<CustomerVaultOcrQueue>());
+        services.AddSingleton<CustomerVaultEmailLimit>();
+        services.AddHostedService<CustomerVaultMaintenance>();
+        services.AddScoped<CustomerVaultService>();
 
         services.AddOptions<ScanOcrOptions>().Bind(configuration.GetSection(ScanOcrOptions.SectionName));
         services.AddSingleton<IScanOcrEngine, TesseractScanOcrEngine>();

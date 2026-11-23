@@ -1,6 +1,7 @@
 "use client";
 import { isGroupedWordSection, wordDisplaySections } from "../../../Shared/word-display-sections";
 import { sendIssues, focusIssue, DEFAULT_PROVIDER_FIELDS } from "../../../Shared/draft-validation";
+import { documentRule } from "../../../Shared/document-rules";
 import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 import { PartyEditor, PaymentEditor } from "./draft-details";
 import { keepInView } from "./word-clause-form";
@@ -12,7 +13,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, Files, GripVertical, ListChecks, Plus, RefreshCw, Save, Trash2, Users, Wallet } from "lucide-react";
-import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, documentStatusLabel, documentTypeLabel, DOCUMENT_TYPES, type DraftRelations, type DraftSummary, type BusinessOption, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
+import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, documentStatusLabel, documentTypeLabel, DOCUMENT_TYPES, type DraftRelations, type DraftSummary, type DraftMilestone, type BusinessOption, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import DraftPreview from "./draft-preview";
 import WordDraftPreview from "./word-draft-preview";
@@ -22,6 +23,10 @@ import SigningWorkflowGuide from "./signing-workflow-guide";
 import ApprovalPanel from "./approval-panel";
 import { useInternalUser } from "./internal-shell";
 import s from "./workspace.module.css";
+/** Company defaults only for the fields this template has: the server refuses any other key ("Trường nhập không thuộc mẫu"). */
+const withTemplateDefaults = (template: TemplateDefinition | null | undefined) => template
+  ? Object.fromEntries(Object.entries(DEFAULT_PROVIDER_FIELDS).filter(([key]) => completePartyFields(template).fields.some(f => f.key === key)))
+  : DEFAULT_PROVIDER_FIELDS;
 const blank = (): DraftContent => ({ formatVersion: 2, partyType: "", customerBusinessId: null, paymentMode: "PERCENT", milestones: [], templateId: "", customerId: "", name: "", fields: { ...DEFAULT_PROVIDER_FIELDS }, items: [], terms: [], vatPercent: 0, effectiveDate: null, expireDate: null, templateSnapshot: null, totals: { subtotal: 0, discount: 0, vat: 0, total: 0 }, missingFields: [] });
 const newCustomer = (): CustomerInput => ({ name: "", phone: "", email: "", company: "", taxCode: "", address: "" });
 const taxKey = (value: string) => value.replace(/[\s-]/g, "").toUpperCase();
@@ -70,7 +75,7 @@ export default function DraftEditor({ id }: { id?: string }) {
           customerId: contract.content.customerId, partyType: contract.content.partyType, customerBusinessId: contract.content.customerBusinessId,
           fields: party });
       } else
-      setContent(draft?.content ? { ...draft.content, fields: { ...DEFAULT_PROVIDER_FIELDS, ...draft.content.fields } } : { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
+      setContent(draft?.content ? { ...draft.content, fields: { ...withTemplateDefaults(draft.content.templateSnapshot), ...draft.content.fields } } : { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
       receipt.current = undefined; setDirty(false); dirtyRef.current = false;
     }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; };
   }, [id, loadAttempt]);
@@ -152,6 +157,15 @@ export default function DraftEditor({ id }: { id?: string }) {
   </Fragment>;
   const sourceTemplate = content.templateSnapshot ?? templates.find(t => t.id === content.templateId);
   const template = sourceTemplate && (!record?.locked ? completePartyFields(sourceTemplate) : sourceTemplate);
+  /** What this document type needs: its dates, whether it has prices and a payment schedule (Shared/document-rules). */
+  const rule = documentRule(template?.documentType);
+  // A payment request names one instalment of its contract: the contract is the one it was opened from, or the one it is attached to.
+  const parentDocId = parent?.record.id ?? relations?.parent?.id ?? null;
+  const [parentDraft, setParentDraft] = useState<{ id: string; milestones: DraftMilestone[] } | null>(null);
+  useEffect(() => { if (!rule.parentMilestone || !parentDocId || parent) return; let active = true;
+    void internalApi<DraftRecord>(`/contract-drafts/${parentDocId}`).then(r => { if (active) setParentDraft({ id: parentDocId, milestones: r.content.milestones ?? [] }); }).catch(() => undefined);
+    return () => { active = false; }; }, [rule.parentMilestone, parentDocId, parent]);
+  const parentMilestones = parent ? parent.record.content.milestones ?? [] : parentDraft?.id === parentDocId ? parentDraft.milestones : null;
   const totals = estimateTotals(content);
   const issues = sendIssues({...content, templateSnapshot: template ?? null});
   const missing = issues.map(i => i.message);
@@ -355,7 +369,10 @@ export default function DraftEditor({ id }: { id?: string }) {
         <option value="CASH_OR_TRANSFER">Tiền mặt hoặc chuyển khoản</option>
       </select></Field>
       {bilingual && <Field label="Tên hợp đồng tiếng Anh *"><input maxLength={1000} className={ui.field} lang="en" placeholder="Ví dụ: Supply and installation contract" value={content.nameEn ?? ""} onChange={e => { const value = e.target.value; change(c => ({ ...c, nameEn: value })); }}/></Field>}
-      <div className={s.columns}><Field label="Ngày hiệu lực"><input type="date" className={ui.field} value={content.effectiveDate ?? ""} onChange={e => change(c => ({ ...c, effectiveDate: e.target.value || null }))}/></Field><Field label="Ngày hết hạn *"><input required aria-label="Ngày hết hạn" type="date" className={ui.field} min={content.effectiveDate ?? undefined} value={content.expireDate ?? ""} onChange={e => change(c => ({ ...c, expireDate: e.target.value || null }))}/></Field></div>
+      <div className={s.columns}><Field label={rule.effectiveLabel + (rule.effectiveRequired ? " *" : "")}><input type="date" aria-label={rule.effectiveLabel} className={ui.field} value={content.effectiveDate ?? ""} onChange={e => change(c => ({ ...c, effectiveDate: e.target.value || null }))}/></Field>{rule.expireShown && <Field label={rule.expireLabel + (rule.expireRequired ? " *" : "")}><input required={rule.expireRequired} aria-label={rule.expireLabel} type="date" className={ui.field} min={content.effectiveDate ?? undefined} value={content.expireDate ?? ""} onChange={e => change(c => ({ ...c, expireDate: e.target.value || null }))}/></Field>}</div>
+      {rule.parentMilestone && parentMilestones && parentMilestones.length > 0 && <Field label="Đợt thanh toán của hợp đồng *"><select id="parentMilestoneKey" className={ui.field} value={content.parentMilestoneKey ?? ""} onChange={e => { const m = parentMilestones.find(x => x.key === e.target.value);
+        change(c => ({ ...c, parentMilestoneKey: m?.key ?? null, items: m && !c.items.length ? [{ productId: null, name: `Thanh toán ${m.title}`, quantity: 1, unitPrice: m.amount, discountPercent: 0, discountAmount: 0 }] : c.items })); }}>
+        <option value="">Chọn đợt cần thanh toán…</option>{parentMilestones.map(m => <option key={m.key} value={m.key}>{m.title} — {money(m.amount)} ₫</option>)}</select></Field>}
     </div></section>
     {relations && (relations.childTemplates.length > 0 || relations.children.length > 0) && <section id="attached-documents" tabIndex={-1} className={s.section}><h2><Files/>Văn bản đi kèm</h2>
       <p className={s.muted}>Phụ lục, biên bản bàn giao… làm từ các mẫu con của mẫu hợp đồng này. Mỗi văn bản đi đủ quy trình như hợp đồng: lưu nháp, gửi khách xem, duyệt và ký.</p>
@@ -423,15 +440,15 @@ export default function DraftEditor({ id }: { id?: string }) {
         owner={content.customerBusinessId || ""} customerId={content.customerId} openSetup selected={!!content.customerBusinessId && content.numberingBusinessId === content.customerBusinessId}
         choose={() => change(c => c.customerBusinessId === content.customerBusinessId && c.customerId === content.customerId ? {...c, numberingBusinessId:c.customerBusinessId} : c)}/>}    </section>}
     <section id="provider-fields" tabIndex={-1} className={s.section}><details open={!template.wordStorageKey || undefined}><summary><Building2/> Công ty mình · Bên B</summary><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></details></section>
-    <section id="contract-items" tabIndex={-1} className={s.section}><h2><Wallet/>Hạng mục và giá trị</h2>
+    <section id="contract-items" tabIndex={-1} className={s.section}><h2><Wallet/>{rule.itemPrices ? rule.itemsLabel : rule.itemsLabel + " (tên và số lượng)"}</h2>
       {content.items.map((item, index) => <div key={index} className={s.lineItem}><header><strong style={{ fontSize: 12 }}>Hạng mục {index + 1}</strong><button type="button" className={s.iconButton} aria-label={`Xóa hạng mục ${index + 1}`} onClick={() => change(c => ({ ...c, items: c.items.filter((_, i) => i !== index) }))}><Trash2 size={16}/></button></header>
         <Field label="Tên sản phẩm / dịch vụ"><input required maxLength={500} className={ui.field} value={item.name} onChange={e => editItem(index, { name: e.target.value })}/></Field>
-        <div className={s.columns}>{([["quantity", "Số lượng", "0.0001"], ["unitPrice", "Đơn giá (VND)", "0.01"], ["discountPercent", "Giảm giá (%)", "0.01"], ["discountAmount", "Hoặc giảm số tiền (VND)", "0.01"]] as const).map(([key, label, step]) => <Field key={key} label={label}><input type="number" min={key === "quantity" ? "0.0001" : "0"} max={key === "discountPercent" ? "100" : undefined} step={step} className={ui.field} value={item[key]} onChange={e => editItem(index, { [key]: e.target.valueAsNumber || 0, ...(key === "discountPercent" ? { discountAmount: 0 } : key === "discountAmount" ? { discountPercent: 0 } : {}) })}/></Field>)}</div>
+        <div className={s.columns}>{([["quantity", "Số lượng", "0.0001"], ["unitPrice", "Đơn giá (VND)", "0.01"], ["discountPercent", "Giảm giá (%)", "0.01"], ["discountAmount", "Hoặc giảm số tiền (VND)", "0.01"]] as const).filter(([key]) => rule.itemPrices || key === "quantity").map(([key, label, step]) => <Field key={key} label={label}><input type="number" min={key === "quantity" ? "0.0001" : "0"} max={key === "discountPercent" ? "100" : undefined} step={step} className={ui.field} value={item[key]} onChange={e => editItem(index, { [key]: e.target.valueAsNumber || 0, ...(key === "discountPercent" ? { discountAmount: 0 } : key === "discountAmount" ? { discountPercent: 0 } : {}) })}/></Field>)}</div>
       </div>)}
-      <div className={s.fields}><button type="button" className={ui.secondaryButton} onClick={() => change(c => ({ ...c, items: [...c.items, { productId: null, name: "", quantity: 1, unitPrice: 0, discountPercent: 0, discountAmount: 0 }] }))}><Plus size={16}/>Thêm hạng mục</button>
+      <div className={s.fields}><button type="button" className={ui.secondaryButton} onClick={() => change(c => ({ ...c, items: [...c.items, { productId: null, name: "", quantity: 1, unitPrice: 0, discountPercent: 0, discountAmount: 0 }] }))}><Plus size={16}/>Thêm dòng</button>
         {products.length > 0 && <select className={ui.field} aria-label="Thêm sản phẩm từ danh mục" value="" onChange={e => { const p = products.find(p => p.id === e.target.value); if (p) change(c => ({ ...c, items: [...c.items, { productId: p.id, name: p.name, quantity: 1, unitPrice: p.price, discountPercent: 0, discountAmount: 0 }] })); }}><option value="">Hoặc chọn sản phẩm trong danh mục…</option>{products.map(p => <option value={p.id} key={p.id}>{p.name} — {money(p.price)} ₫</option>)}</select>}
-        <Field label="VAT chung của hợp đồng (%)"><input type="number" min="0" max="100" step="0.01" className={ui.field} value={content.vatPercent} onChange={e => change(c => ({ ...c, vatPercent: e.target.valueAsNumber || 0 }))}/></Field>
-      </div><div className={s.totals}><div><span>Tạm tính</span><span>{money(totals.subtotal)} ₫</span></div><div><span>Giảm giá</span><span>{money(totals.discount)} ₫</span></div><div><span>VAT</span><span>{money(totals.vat)} ₫</span></div><div><span>Tổng giá trị</span><span>{money(totals.total)} ₫</span></div></div>
+        {rule.itemPrices && <Field label="VAT chung của hợp đồng (%)"><input type="number" min="0" max="100" step="0.01" className={ui.field} value={content.vatPercent} onChange={e => change(c => ({ ...c, vatPercent: e.target.valueAsNumber || 0 }))}/></Field>}
+      </div>{rule.itemPrices && <div className={s.totals}><div><span>Tạm tính</span><span>{money(totals.subtotal)} ₫</span></div><div><span>Giảm giá</span><span>{money(totals.discount)} ₫</span></div><div><span>VAT</span><span>{money(totals.vat)} ₫</span></div><div><span>Tổng giá trị</span><span>{money(totals.total)} ₫</span></div></div>}
     </section>
     <section id="contract-terms" tabIndex={-1} className={s.section}><h2><ListChecks/>{showWordSections ? "Nội dung hợp đồng" : "Điều khoản hợp đồng"}</h2>
       {template.wordStorageKey && <TemplateUpload key={String(template.id) + ":" + template.wordStorageKey} draft={record ?? undefined} onImported={() => {}}
@@ -457,7 +474,7 @@ export default function DraftEditor({ id }: { id?: string }) {
         <option>Định nghĩa</option>
         <option>Phụ lục</option>
       </select>}
-    </fieldset></section><PaymentEditor content={content} change={change}/><section className={s.section}><h2>Thông tin bổ sung theo mẫu</h2>{template.fields.filter(f => !f.key.startsWith("CUSTOMER_") && !f.key.startsWith("PROVIDER_") && f.key !== "CONTRACT_LEGAL_BASES").map(f => <Field key={f.key} label={f.label + (f.required ? " *" : "")} >{f.dataType === "SELECT" ? <select className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}><option value="">Chọn giá trị</option>{f.options?.map(o => <option key={o}>{o}</option>)}</select> : <input className={ui.field} type={f.dataType === "DATE" ? "date" : f.dataType === "NUMBER" ? "number" : "text"} step="any" min={f.min ?? undefined} max={f.max ?? undefined} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}/>}</Field>)}</section><section className={ui.notice}><strong>Nháp có thể lưu khi chưa hoàn thiện</strong>{issues.length > 0 && <ul>{issues.map((issue,i) => <li key={i}><button type="button" className={ui.secondaryButton} onClick={() => focusIssue(issue.path)}>{issue.message}</button></li>)}</ul>}<p className={s.muted} style={{ marginTop: 6 }}>{missing.length ? `Cần bổ sung: ${missing.join(", ")}.` : "Đã đủ các trường thông tin của mẫu. Hợp đồng vẫn là bản nháp, chưa được duyệt hoặc ký."}</p></section>
+    </fieldset></section>{rule.milestones && <PaymentEditor content={content} change={change}/>}<section className={s.section}><h2>Thông tin bổ sung theo mẫu</h2>{template.fields.filter(f => !f.key.startsWith("CUSTOMER_") && !f.key.startsWith("PROVIDER_") && f.key !== "CONTRACT_LEGAL_BASES").map(f => <Field key={f.key} label={f.label + (f.required ? " *" : "")} >{f.dataType === "SELECT" ? <select className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}><option value="">Chọn giá trị</option>{f.options?.map(o => <option key={o}>{o}</option>)}</select> : <input className={ui.field} type={f.dataType === "DATE" ? "date" : f.dataType === "NUMBER" ? "number" : "text"} step="any" min={f.min ?? undefined} max={f.max ?? undefined} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}/>}</Field>)}</section><section className={ui.notice}><strong>Nháp có thể lưu khi chưa hoàn thiện</strong>{issues.length > 0 && <ul>{issues.map((issue,i) => <li key={i}><button type="button" className={ui.secondaryButton} onClick={() => focusIssue(issue.path)}>{issue.message}</button></li>)}</ul>}<p className={s.muted} style={{ marginTop: 6 }}>{missing.length ? `Cần bổ sung: ${missing.join(", ")}.` : "Đã đủ các trường thông tin của mẫu. Hợp đồng vẫn là bản nháp, chưa được duyệt hoặc ký."}</p></section>
   </fieldset></form></div>;
   return <><div className={s.editorHeader}><Link href="/workspace/contracts/drafts" className={s.iconButton} aria-label="Về danh sách"><ArrowLeft size={20}/></Link><div><h1>{readOnly ? `Xem ${documentTypeLabel(template.documentType).toLowerCase()}` : id ? `Chỉnh sửa ${documentTypeLabel(template.documentType).toLowerCase()}` : parent ? "Tạo văn bản đi kèm" : "Tạo hợp đồng"}</h1><p className={s.muted}>{record ? `${record.employeeName} · Cập nhật ${dateTime(record.updatedAt)}` : "Bắt đầu từ mẫu, hoàn thiện theo nhu cầu"}</p></div><div className={s.actions}><span className={`${s.badge} ${dirty ? s.warning : ""}`}>{dirty ? "Chưa lưu thay đổi" : record ? "Đã lưu" : "Nháp mới"}</span>{!readOnly && <button disabled={busy || customerBusy} className={ui.primaryButton} onClick={save}><Save size={17}/>{busy ? "Đang lưu…" : "Lưu nháp"}</button>}</div></div>
     {(error || success) && <div className={s.messages}>{error && <div role="alert" className={ui.error}>{error}{conflict && <button className={ui.secondaryButton} style={{ marginLeft: 12 }} onClick={reload}>Tải lại bản mới</button>}</div>}{success && <div role="status" className={ui.notice}>{success}</div>}</div>}

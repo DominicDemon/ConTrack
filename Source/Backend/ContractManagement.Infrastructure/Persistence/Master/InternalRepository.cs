@@ -75,7 +75,19 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             var file = await db.FileStorages.AsNoTracking().Where(f => f.FileStorageObjecttype == "INTERNAL_TEMPLATE" && f.FileStorageObjectid == id)
                 .OrderByDescending(f => f.FileStorageFileid).FirstOrDefaultAsync(ct);
             // The table's type wins over the stored definition, which older files wrote without one (read back as 1).
-            if (file is not null) { result.Add(DraftCompletionPolicy.UpgradeTemplate((await storage.Read(file, ct)) with { Name = t.ContractTemplateName, DocumentType = t.ContractTemplateDocumentType, ParentTemplateId = t.ParentTemplateId })); continue; }
+            if (file is not null)
+            {
+                var stored = await storage.Read(file, ct);
+                // Hành chính changes which fields are required on the template page (CONTRACT_TEMPLATE_FIELDS); the row wins over the stored file.
+                var flags = (await db.ContractTemplateFields.AsNoTracking().Where(f => f.ContractTemplateId == id && f.ContractTemplateFieldDataType != "TERM")
+                    .Select(f => new { f.ContractTemplateFieldKey, f.IsRequired }).ToListAsync(ct))
+                    .GroupBy(f => f.ContractTemplateFieldKey).ToDictionary(g => g.Key, g => g.Last().IsRequired);
+                var fields = stored.Fields.Select(f => flags.TryGetValue(f.Key, out var required) ? f with { Required = required } : f).ToList();
+                fields.AddRange(DraftCompletionPolicy.PartyFields.Where(f => flags.ContainsKey(f.Key) && fields.All(x => x.Key != f.Key)).Select(f => f with { Required = flags[f.Key] }));
+                result.Add(DraftCompletionPolicy.UpgradeTemplate(stored with { Name = t.ContractTemplateName, DocumentType = t.ContractTemplateDocumentType,
+                    ParentTemplateId = t.ParentTemplateId, Fields = fields }));
+                continue;
+            }
             // An uploaded template whose definition file is missing is skipped, as before; only SQL-defined templates have no stored files.
             if (await db.FileStorages.AnyAsync(f => f.FileStorageObjecttype.StartsWith("INTERNAL_TEMPLATE") && f.FileStorageObjectid == id, ct)) continue;
             if (await FromDatabase(t, ct) is { } defined) result.Add(DraftCompletionPolicy.UpgradeTemplate(defined with { DocumentType = t.ContractTemplateDocumentType, ParentTemplateId = t.ParentTemplateId }));
@@ -160,9 +172,19 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var used = await db.ContractDocuments.AsNoTracking().GroupBy(d => d.ContractTemplateId)
             .Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count, ct);
         var names = rows.ToDictionary(t => t.ContractTemplateId, t => t.ContractTemplateName);
+        var fieldRows = (await db.ContractTemplateFields.AsNoTracking().Where(f => f.ContractTemplateFieldDataType != "TERM")
+            .OrderBy(f => f.ContractTemplateFieldId).ToListAsync(ct)).ToLookup(f => f.ContractTemplateId);
         return rows.Select(t => new TemplateSummary(t.ContractTemplateId, t.ContractTemplateName, t.ContractTemplateDocumentType,
             t.ParentTemplateId, t.ParentTemplateId is long p ? names.GetValueOrDefault(p) : null, t.IsActive, words.Contains(t.ContractTemplateId),
-            rows.Count(c => c.ParentTemplateId == t.ContractTemplateId), used.GetValueOrDefault(t.ContractTemplateId), t.CreatedDate, t.UpdatedDate)).ToList();
+            rows.Count(c => c.ParentTemplateId == t.ContractTemplateId), used.GetValueOrDefault(t.ContractTemplateId), t.CreatedDate, t.UpdatedDate,
+            TemplateFields(fieldRows[t.ContractTemplateId]))).ToList();
+    }
+
+    /// <summary>The template's own field rows, plus the party fields every document has (UpgradeTemplate) when it has no row for them.</summary>
+    private static List<TemplateFieldOption> TemplateFields(IEnumerable<ContractTemplateField> rows)
+    {
+        var own = rows.Select(f => new TemplateFieldOption(f.ContractTemplateFieldKey, f.ContractTemplateFieldLabel, f.IsRequired)).ToList();
+        return own.Concat(DraftCompletionPolicy.PartyFields.Where(f => own.All(x => x.Key != f.Key)).Select(f => new TemplateFieldOption(f.Key, f.Label, f.Required))).ToList();
     }
 
     /// <summary>Name, document type and parent of a template; its Word content is replaced through the Word preview and activation.</summary>
@@ -184,6 +206,19 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         template.ContractTemplateName = name;
         template.ContractTemplateDocumentType = input.DocumentType;
         template.ParentTemplateId = input.ParentTemplateId;
+        if (input.RequiredFields is { } required)
+        {
+            // Documents already made keep the flags of their own snapshot; new ones take these.
+            var keys = required.ToHashSet(StringComparer.Ordinal);
+            var rows = await db.ContractTemplateFields.Where(f => f.ContractTemplateId == id && f.ContractTemplateFieldDataType != "TERM").ToListAsync(ct);
+            if (keys.Any(k => rows.All(r => r.ContractTemplateFieldKey != k) && DraftCompletionPolicy.PartyFields.All(f => f.Key != k)))
+                throw new ArgumentException("Có trường không thuộc mẫu này.");
+            foreach (var row in rows) row.IsRequired = keys.Contains(row.ContractTemplateFieldKey);
+            // A party field the template has no row for is stored once it is given its own flag.
+            foreach (var party in DraftCompletionPolicy.PartyFields.Where(f => rows.All(r => r.ContractTemplateFieldKey != f.Key) && keys.Contains(f.Key) != f.Required))
+                db.ContractTemplateFields.Add(new() { ContractTemplateId = id, ContractTemplateFieldKey = party.Key, ContractTemplateFieldLabel = party.Label,
+                    ContractTemplateFieldDataType = party.DataType, IsRequired = keys.Contains(party.Key) });
+        }
         template.UpdatedDate = now;
         template.ModifiedEmployeeId = checked((int)actor.Id);
         await db.SaveChangesAsync(ct);
@@ -224,6 +259,8 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             throw new ArgumentException("Văn bản đi kèm phải cùng khách hàng với hợp đồng.");
     }
 
+    public Task<long?> ParentDocument(long id, CancellationToken ct) => db.ContractDocumentRelations.AsNoTracking()
+        .Where(r => r.ChildDocumentId == id && r.ContractDocumentRelationType == ChildRelation).Select(r => (long?)r.ParentDocumentId).FirstOrDefaultAsync(ct);
     public async Task<DraftRelations> Related(long id, InternalUser actor, CancellationToken ct)
     {
         var document = await db.ContractDocuments.AsNoTracking().SingleOrDefaultAsync(d => d.ContractDocumentId == id && d.TenantId == null, ct)

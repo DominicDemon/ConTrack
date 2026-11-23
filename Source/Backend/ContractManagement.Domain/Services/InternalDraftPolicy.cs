@@ -34,6 +34,10 @@ public sealed class DraftContent
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? PaymentMethod { get; set; }
     public List<DraftMilestone> Milestones { get; set; } = [];
+    /// <summary>Payment request: the instalment of its contract (a key of the contract's milestones) it asks to be paid.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? ParentMilestoneKey { get; set; }
+    /// <summary>Set by the server when saving: the contract this payment request belongs to has a payment schedule to pick from.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? ParentMilestoneRequired { get; set; }
     public long TemplateId { get; set; }
     public long CustomerId { get; set; }
     public string Name { get; set; } = "";
@@ -92,8 +96,13 @@ public static class InternalDraftPolicy
             throw new ArgumentException("Dữ liệu nháp không hợp lệ hoặc vượt quá 100 hạng mục/điều khoản.");
         if (input.VatPercent < 0 || input.VatPercent > 100 || Round(input.VatPercent) != input.VatPercent)
             throw new ArgumentException("VAT phải từ 0 đến 100, tối đa 2 số thập phân.");
+        var rule = DocumentRules.For(template.DocumentType);
+        // A date the document does not have (a handover record has no end date) is cleared, never printed.
+        if (!rule.ExpireShown) input.ExpireDate = null;
         if (input.EffectiveDate > input.ExpireDate)
-            throw new ArgumentException("Ngày hết hạn phải sau hoặc bằng ngày hiệu lực.");
+            throw new ArgumentException($"{rule.ExpireLabel} phải sau hoặc bằng {rule.EffectiveLabel.ToLowerInvariant()}.");
+        if (!rule.ParentMilestone) { input.ParentMilestoneKey = null; input.ParentMilestoneRequired = null; }
+        else input.ParentMilestoneKey = string.IsNullOrWhiteSpace(input.ParentMilestoneKey) ? null : Text(input.ParentMilestoneKey, 50);
         var allowed = template.Fields.Select(f => f.Key).ToHashSet(StringComparer.Ordinal);
         if (input.Fields.Keys.Any(k => !allowed.Contains(k))) throw new ArgumentException("Trường nhập không thuộc mẫu.");
         input.Fields = input.Fields.ToDictionary(p => p.Key, p => Text(p.Value, 4000));
@@ -141,7 +150,11 @@ public static class InternalDraftPolicy
         input.MissingFields = template.Fields.Where(f => f.Required
             && !(template.WordStorageKey is not null && f.Key.StartsWith("PROVIDER_", StringComparison.Ordinal))
             && string.IsNullOrWhiteSpace(input.Fields.GetValueOrDefault(f.Key))).Select(f => f.Label).ToList();
-        if (input.Items.Count == 0) input.MissingFields.Add("Hạng mục hợp đồng");
+        if (rule.ItemsRequired && input.Items.Count == 0) input.MissingFields.Add(rule.ItemsLabel);
+        if (rule.AmountRequired && input.Items.Count > 0 && input.Totals.Total <= 0) input.MissingFields.Add("Số tiền phải lớn hơn 0");
+        if (rule.EffectiveRequired && input.EffectiveDate is null) input.MissingFields.Add(rule.EffectiveLabel);
+        if (rule.ParentMilestone && input.ParentMilestoneRequired == true && input.ParentMilestoneKey is null)
+            input.MissingFields.Add("Đợt thanh toán của hợp đồng");
         // A fixed term is the template's own text (checked above); a title-only one, e.g. a Word signature heading, is complete.
         if (input.Terms.Count == 0 || input.Terms.Any(t => t.Editable && string.IsNullOrWhiteSpace(t.Content))) input.MissingFields.Add("Nội dung điều khoản");
         if (bilingual && string.IsNullOrEmpty(input.NameEn)) input.MissingFields.Add("Tên hợp đồng tiếng Anh");

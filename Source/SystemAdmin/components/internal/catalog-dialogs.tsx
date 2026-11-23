@@ -219,13 +219,15 @@ export function ProductFormDialog({ product, categories, onClose, onSaved }: { p
 export function TemplateInfoDialog({ template, parents, onClose, onSaved }: { template: TemplateSummary; parents: TemplateSummary[]; onClose: () => void; onSaved: (row: TemplateSummary) => void }) {
   const [name, setName] = useState(template.name); const [documentType, setDocumentType] = useState(template.documentType);
   const [parentId, setParentId] = useState(template.parentTemplateId ?? "");
+  // Fields a document made from this template must fill before it is sent; the type's own rules (dates, items…) come on top.
+  const [required, setRequired] = useState(() => new Set((template.fields ?? []).filter(f => f.required).map(f => f.key)));
   const { busy, error, save } = useSave(onSaved);
   // A contract template is never a child; a child hangs under an active contract template other than itself.
   const choices = parents.filter(p => p.active && p.documentType === 1 && p.id !== template.id);
   return <FormDialog title={`Sửa ${template.name}`} description="Nội dung Word được thay ở nút Thay file Word; văn bản đã tạo giữ nguyên nội dung cũ."
     busy={busy} error={error} ready={!!name.trim()} submit="Lưu thay đổi" onClose={onClose}
     onSubmit={() => void save(() => internalApi<TemplateSummary>(`/contract-templates/${template.id}`, "PUT",
-      { name, documentType, parentTemplateId: documentType === 1 || !parentId ? null : parentId }))}>
+      { name, documentType, parentTemplateId: documentType === 1 || !parentId ? null : parentId, requiredFields: template.fields ? [...required] : null }))}>
     <label className={field}>Tên mẫu *<Input required maxLength={500} value={name} disabled={busy} onChange={e => setName(e.target.value)}/></label>
     <div className="grid gap-4 sm:grid-cols-2">
       <label className={field}>Loại văn bản *<select className={ui.field} value={documentType} disabled={busy || template.childCount > 0}
@@ -234,6 +236,11 @@ export function TemplateInfoDialog({ template, parents, onClose, onSaved }: { te
       <label className={field}>Mẫu hợp đồng cha<select className={ui.field} value={documentType === 1 ? "" : parentId} disabled={busy || documentType === 1}
         onChange={e => setParentId(e.target.value)}><option value="">Không gắn mẫu cha</option>{choices.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     </div>
+    {!!template.fields?.length && <fieldset className={field} disabled={busy}><legend>Trường bắt buộc trước khi gửi khách</legend>
+      <span className="text-xs font-normal text-muted-foreground">Văn bản tạo từ mẫu này phải điền đủ các trường được chọn. Văn bản đã tạo giữ quy định cũ.</span>
+      <div className="grid gap-2 sm:grid-cols-2">{template.fields.map(f => <label key={f.key} className="flex items-center gap-2 text-sm font-normal">
+        <input type="checkbox" checked={required.has(f.key)} onChange={e => setRequired(old => { const next = new Set(old); if (e.target.checked) next.add(f.key); else next.delete(f.key); return next; })}/>{f.label}</label>)}</div>
+    </fieldset>}
   </FormDialog>;
 }
 

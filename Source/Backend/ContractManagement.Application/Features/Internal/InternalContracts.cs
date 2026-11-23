@@ -106,8 +106,11 @@ public sealed record DraftRecord(long Id, string Code, long EmployeeId, string E
     List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null, bool CustomerHasAccount = false, bool PaperEvidencePending = false);
 /// <summary>One row of the template library (Tạo mẫu văn bản): every type, hidden ones included.</summary>
 public sealed record TemplateSummary(long Id, string Name, int DocumentType, long? ParentTemplateId, string? ParentName, bool Active,
-    bool Word, int ChildCount, int DocumentCount, DateTime CreatedAt, DateTime? UpdatedAt);
-public sealed record TemplateInfoInput(string? Name, int DocumentType, long? ParentTemplateId);
+    bool Word, int ChildCount, int DocumentCount, DateTime CreatedAt, DateTime? UpdatedAt, List<TemplateFieldOption>? Fields = null);
+/// <summary>A field a document made from the template fills in; Required = it must be filled before sending.</summary>
+public sealed record TemplateFieldOption(string Key, string Label, bool Required);
+/// <param name="RequiredFields">Keys of the template's fields that must be filled before sending; null leaves them as they are.</param>
+public sealed record TemplateInfoInput(string? Name, int DocumentType, long? ParentTemplateId, List<string>? RequiredFields = null);
 public sealed record CarriedDraftComment(long Id, string? TermKey, string Content, long? SourceCommentId, long? SourceVersionId, bool Resolved);
 /// <param name="ParentDocumentId">On create: attach the new document (appendix, handover record…) to this contract.</param>
 public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion, string? WordPreviewToken = null, long? ParentDocumentId = null);
@@ -142,6 +145,8 @@ public interface IInternalRepository
     Task<SigningMonitorDetail?> SigningMonitorDetail(long id, CancellationToken ct);
     Task<DraftRecord?> Draft(long id, CancellationToken ct);
     Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser actor, CancellationToken ct);
+    /// <summary>The contract a document is attached to, if any.</summary>
+    Task<long?> ParentDocument(long id, CancellationToken ct) => Task.FromResult<long?>(null);
 }
 
 public sealed class InternalDraftService(IInternalRepository repository)
@@ -156,7 +161,11 @@ public sealed class InternalDraftService(IInternalRepository repository)
     {
         var draft = await repository.Draft(id, ct) ?? throw new InternalAppException(404, "Không tìm thấy bản nháp.");
         RequireAccess(user, draft.EmployeeId);
-        return draft with { CanEdit = draft.CanEdit && (user.CanWrite || user.CanCheck), SendBlockedReason = user.CanWrite ? draft.SendBlockedReason : "Chỉ kinh doanh được gửi khách." };
+        // A contract Hành chính created goes to the customer from that Hành chính employee; any other from Sale.
+        var blocked = draft.Content.OfficeOrigin == true
+            ? user.CanCheck && user.Id == draft.EmployeeId ? draft.SendBlockedReason : "Chỉ Hành chính phụ trách hợp đồng này được gửi khách."
+            : user.CanWrite ? draft.SendBlockedReason : "Chỉ kinh doanh được gửi khách.";
+        return draft with { CanEdit = draft.CanEdit && (user.CanWrite || user.CanCheck), SendBlockedReason = blocked };
     }
 
     public async Task<DraftRecord> Save(long? id, SaveDraftRequest request, InternalUser user, CancellationToken ct)
@@ -188,9 +197,24 @@ public sealed class InternalDraftService(IInternalRepository repository)
                 if (!content.Fields.ContainsKey(pair.Key)) content.Fields[pair.Key] = pair.Value;
         }
         template = DraftCompletionPolicy.UpgradeTemplate(template);
+        // Keys the template does not have (company defaults an editor filled in, an older client) are dropped, not refused:
+        // they are never printed, and refusing them blocked a plain re-save.
+        var known = template.Fields.Select(f => f.Key).ToHashSet(StringComparer.Ordinal);
+        foreach (var key in content.Fields.Keys.Where(k => !known.Contains(k)).ToList()) content.Fields.Remove(key);
+        content.FieldsEn = content.FieldsEn?.Where(p => known.Contains(p.Key)).ToDictionary(p => p.Key, p => p.Value);
         if (template.WordStorageKey is null)
             template = template with { Terms = content.Terms.Select(t => t with { Editable = true }).ToList() };
-        DraftValidation.RequireContractDates(content);
+        DraftValidation.RequireContractDates(content, template);
+        if (DocumentRules.For(template.DocumentType).ParentMilestone)
+        {
+            // A payment request names one instalment of its contract; the flag is the server's, never the client's.
+            var parentId = id.HasValue ? await repository.ParentDocument(id.Value, ct) : request.ParentDocumentId;
+            var milestones = parentId is long p ? (await repository.Draft(p, ct))?.Content.Milestones ?? [] : [];
+            content.ParentMilestoneRequired = milestones.Count > 0 ? true : null;
+            if (milestones.Count == 0) content.ParentMilestoneKey = null;
+            else if (!string.IsNullOrWhiteSpace(content.ParentMilestoneKey) && milestones.All(m => m.Key != content.ParentMilestoneKey))
+                throw new ArgumentException("Đợt thanh toán không thuộc hợp đồng này.");
+        }
         DraftValidation.Prepare(content, template);
         if (content.CustomerBusinessId.HasValue && !(await repository.Businesses(content.CustomerId, ct)).Any(b => b.Id == content.CustomerBusinessId))
             throw new ArgumentException("Pháp nhân không thuộc khách hàng đã chọn.");

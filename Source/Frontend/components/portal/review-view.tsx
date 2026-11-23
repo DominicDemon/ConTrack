@@ -96,7 +96,7 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
       <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Văn bản</th><th>Loại</th><th>Trạng thái</th><th><span className="sr-only">Mở</span></th></tr></thead>
         <tbody>{review.related.map(d => <tr key={`${d.relation}-${d.reviewId ?? d.name}`}>
           <td>{d.reviewId && !onAuthLost ? <Link href={`/portal/contracts/${d.reviewId}`}>{d.name}</Link> : <strong>{d.name}</strong>}</td>
-          <td>{d.relation === "PARENT" ? "Hợp đồng gốc" : documentTypeLabel(d.documentType)}</td>
+          <td>{d.relation === "PARENT" ? "Hợp đồng gốc" : d.documentTypeName ?? documentTypeLabel(d.documentType)}</td>
           <td>{d.reviewId ? <span className={`${s.badge} ${!d.isSigned && d.status && isOpenReview(d.status) ? s.warning : ""}`}>{d.isSigned ? "Đã ký" : customerStatusLabel[d.status ?? ""] ?? d.status}</span>
             : <span className={s.muted}>Công ty đang chuẩn bị, sẽ gửi bạn sau</span>}</td>
           <td>{d.reviewId && !onAuthLost && <Link href={`/portal/contracts/${d.reviewId}`} aria-label={`Mở ${d.name}`}><ArrowUpRight size={18}/></Link>}</td></tr>)}</tbody></table></div>

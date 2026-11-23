@@ -44,6 +44,9 @@ public static class InternalHost
             throw new InvalidOperationException("Internal mode requires ConnectionStrings:MasterDatabase.");
         builder.Services.AddMasterDatabase(builder.Configuration);
         builder.Services.AddScoped<InternalRepository>();
+        builder.Services.AddScoped<DocumentCategories>();
+        builder.Services.AddScoped<ContractHardDelete>();
+        builder.Services.AddScoped<ContractFormatSettings>();
         builder.Services.AddScoped<ContractNumberRules>();
         builder.Services.AddScoped<IInternalRepository>(services => services.GetRequiredService<InternalRepository>());
         builder.Services.AddScoped<InternalDraftService>();
@@ -346,7 +349,7 @@ public static class InternalHost
             var legalContractRead = user.CanManageLegal && HttpMethods.IsGet(c.Request.Method)
                 && (path is "/api/internal/contract-drafts" or "/api/internal/contract-progress" or "/api/internal/contract-archive"
                     or "/api/internal/contract-signing-monitor" or "/api/internal/company-signing/queue" or "/api/internal/contract-templates"
-                    or "/api/internal/contract-template-library"
+                    or "/api/internal/contract-template-library" or "/api/internal/document-categories" or "/api/internal/contract-format"
                     || System.Text.RegularExpressions.Regex.IsMatch(path,
                         @"^/api/internal/(contract-drafts/\d+(/(approval|internal-approval|internal-comments|checklist|reviews|versions|word/content|print-pdf|related))?|contract-signing-monitor/\d+|company-signing/\d+/document|contract-templates/\d+(/checklist)?)$"));
             var legalWorkflowAction = user.CanManageLegal && HttpMethods.IsPost(c.Request.Method)
@@ -383,6 +386,17 @@ public static class InternalHost
             Results.Ok(await repository.UpdateTemplate(id, input, Current(c), ct)));
         secured.MapPost("/contract-templates/{id:long}/restore", async (long id, HttpContext c, InternalRepository repository, CancellationToken ct) =>
             Results.Ok(await repository.RestoreTemplate(id, Current(c), ct)));
+        // Contract print format (Thiết lập tham số hợp đồng): read by everyone, changed by Hành chính.
+        secured.MapGet("/contract-format", async (ContractFormatSettings s, CancellationToken ct) => Results.Ok(new { format = await s.Get(ct), fonts = ContractManagement.Domain.Internal.ContractFormat.Fonts }));
+        secured.MapPut("/contract-format", async (ContractManagement.Domain.Internal.ContractFormat input, HttpContext c, ContractFormatSettings s, CancellationToken ct) => Results.Ok(await s.Save(input, Current(c), ct)));
+        // Document types (Loại văn bản): everyone reads them for labels; Hành chính adds, changes, hides or deletes them.
+        secured.MapGet("/document-categories", async (DocumentCategories s, CancellationToken ct) => Results.Ok(await s.List(ct)));
+        secured.MapPost("/document-categories", async (DocumentCategoryInput input, HttpContext c, DocumentCategories s, CancellationToken ct) =>
+            Results.Ok(await s.Create(input, Current(c), ct)));
+        secured.MapPut("/document-categories/{id:int}", async (int id, DocumentCategoryInput input, HttpContext c, DocumentCategories s, CancellationToken ct) =>
+            Results.Ok(await s.Update(id, input, Current(c), ct)));
+        secured.MapDelete("/document-categories/{id:int}", async (int id, HttpContext c, DocumentCategories s, CancellationToken ct) =>
+        { await s.Delete(id, Current(c), ct); return Results.NoContent(); });
         // The contract bell: every signed-in employee sees their own contract notifications; the item opens the contract.
         api.MapGet("/contract-notifications", async (int? limit, HttpContext c, IInternalRepository r, ContractNotificationFeed feed, CancellationToken ct) =>
             Results.Ok(await feed.List(await User(c, r, ct), limit ?? 20, ct)));
@@ -391,6 +405,9 @@ public static class InternalHost
         api.MapPost("/contract-notifications/read-all", async (HttpContext c, IInternalRepository r, ContractNotificationFeed feed, CancellationToken ct) =>
         { await feed.MarkRead(await User(c, r, ct), null, ct); return Results.NoContent(); });
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
+        // A rejected or cancelled contract removed for good (Quản lý hợp đồng).
+        secured.MapDelete("/contract-drafts/{id:long}", async (long id, HttpContext c, ContractHardDelete service, CancellationToken ct) =>
+        { await service.Delete(id, Current(c), ct); return Results.NoContent(); });
         secured.MapGet("/contract-progress", async ([AsParameters] ProgressFilter filter, HttpContext c, ContractProgressService service, CancellationToken ct) => Results.Ok(await service.List(filter, Current(c), ct)));
         secured.MapGet("/contract-drafts/{id:long}/word/content", async (long id, HttpContext c, InternalDraftService drafts, InternalWordTemplates service, CancellationToken ct) => {
             var draft = await drafts.Get(id, Current(c), ct);

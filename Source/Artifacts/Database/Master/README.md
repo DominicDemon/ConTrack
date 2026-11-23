@@ -141,3 +141,5 @@ The running API also returned `{"status":"Ready"}` from `/health/master`.
 `018-contract-number-rules.sql` adds per-owner contract number formatting rules and counters, plus `AllocateFormattedContractNumber`. Run after 008.
 `019-template-parent.sql` adds `CONTRACT_TEMPLATE.parent_template_id`: a child template (appendix, handover, receipt, payment request) attached to a contract template. Run after MasterDB-ConTrack.sql.
 Run the numbered scripts with `sqlcmd ... -f 65001 -i <file>`: without `-f 65001` sqlcmd reads these UTF-8 files as Windows-1252 and stores Vietnamese text garbled ("Táº¡o" instead of "Tạo").
+`020-document-categories.sql` adds `DOCUMENT_CATEGORY`: the document types (contract, appendix, handover…) with their own sending rules; Hành chính adds more on the Loại văn bản page. Run after 019.
+`021-contract-format.sql` adds `CONTRACT_FORMAT_SETTING`: one row with the company contract print format (font, sizes, margins, line spacing) set on the Định dạng hợp đồng page. Run after 020.

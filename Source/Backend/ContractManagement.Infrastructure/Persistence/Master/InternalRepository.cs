@@ -92,7 +92,9 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             if (await db.FileStorages.AnyAsync(f => f.FileStorageObjecttype.StartsWith("INTERNAL_TEMPLATE") && f.FileStorageObjectid == id, ct)) continue;
             if (await FromDatabase(t, ct) is { } defined) result.Add(DraftCompletionPolicy.UpgradeTemplate(defined with { DocumentType = t.ContractTemplateDocumentType, ParentTemplateId = t.ParentTemplateId }));
         }
-        return result;
+        // Each template carries its type's sending rule; a draft made from it keeps that rule in its snapshot.
+        var rules = await DocumentCategories.Rules(db, ct);
+        return result.Select(t => t with { Rule = rules.GetValueOrDefault(t.DocumentType) }).ToList();
     }
     /// <summary>Database first: a template written by SQL (Artifacts/Database/Master/010-demo-template.sql) is CONTRACT_TEMPLATE plus
     /// CONTRACT_TEMPLATE_FIELDS; rows with data type TERM are its terms in id order (label = title, extra_options = default content).</summary>

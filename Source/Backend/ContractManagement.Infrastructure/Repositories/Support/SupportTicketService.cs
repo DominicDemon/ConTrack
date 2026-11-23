@@ -1,3 +1,4 @@
+using ContractManagement.Application.Common.Files;
 using System.Text.Json;
 using ContractManagement.API.Common.Enums;
 using ContractManagement.API.Domains.Email;
@@ -102,6 +103,8 @@ public interface ISupportTicketService
         AdminReplyTicketRequestDto request,
         CancellationToken cancellationToken = default);
 
+    /// <summary>A customer reopens a closed ticket of theirs that did not solve the problem.</summary>
+    Task<SupportTicketDto?> ReopenByCustomerAsync(int ticketId, int customerId, string customerName, string? reason, CancellationToken cancellationToken = default);
     Task<SupportTicketDto?> UpdateTicketStatusAsync(
         int ticketId,
         int systemAdminId,
@@ -361,6 +364,8 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         // employeeId ở luồng khách là CUSTOMER.customer_id của người gửi; không có khách thì không ghi thay cho khách 1.
         if (employeeId <= 0) throw new ArgumentException("Thiếu khách hàng gửi yêu cầu hỗ trợ.");
+        // Pictures are checked here, not only in the browser: real PNG/JPG/GIF/WEBP data, at most 3 of 5 MB.
+        request.AttachmentUrls = UploadedImages.SupportImages(request.AttachmentUrls);
         SupportTicketDto createdTicket;
         Employee? head = null;
         await StoreLock.WaitAsync(cancellationToken);
@@ -645,6 +650,14 @@ public sealed class SupportTicketService : ISupportTicketService
             .ToListAsync(cancellationToken);
 
         var empDeptMap = await LoadEmployeeDepartmentMapAsync(db, cancellationToken);
+        // Workload: open tickets each employee is currently assigned to.
+        var workload = await (from a in db.TicketSupportEmployees.AsNoTracking()
+                              join t in db.TicketSupports.AsNoTracking() on a.TicketSupportId equals t.TicketSupportId
+                              where a.TicketSupportEmployeeAssignmentRole == "ASSIGNEE" && a.TicketSupportEmployeeUnassignedAt == null && a.EmployeeId != null
+                                  && t.TicketStatus != "Resolved" && t.TicketStatus != "RESOLVED" && t.TicketStatus != "Closed"
+                              group a by a.EmployeeId!.Value into g
+                              select new { EmployeeId = g.Key, Count = g.Select(x => x.TicketSupportId).Distinct().Count() })
+            .ToDictionaryAsync(x => x.EmployeeId, x => x.Count, cancellationToken);
 
         // Trả về Trưởng phòng của phòng ban (isManager = true) và các Nhân viên (STAFF) thuộc đúng phòng ban đó
         var filteredStaff = new List<DepartmentEmployeeDto>();
@@ -672,7 +685,9 @@ public sealed class SupportTicketService : ISupportTicketService
                 EmployeeEmail = emp.EmployeeEmail,
                 DepartmentId = deptId.Value,
                 DepartmentName = CleanMojibake(deptName) ?? deptName,
-                IsManager = isManager
+                IsManager = isManager,
+                EmployeePhone = emp.EmployeePhone,
+                ActiveTicketCount = workload.GetValueOrDefault(emp.EmployeeId)
             });
         }
 
@@ -1337,6 +1352,8 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         // employeeId ở luồng khách là CUSTOMER.customer_id của người gửi; không có khách thì không ghi thay cho khách 1.
         if (employeeId <= 0) throw new ArgumentException("Thiếu khách hàng gửi tin nhắn.");
+        request.AttachmentUrls = UploadedImages.SupportImages([request.AttachmentUrl, .. request.AttachmentUrls ?? []]);
+        request.AttachmentUrl = null;
         SupportTicketDto? updatedTicket = null;
         SupportTicketMessageDto? createdMsg = null;
 
@@ -1346,11 +1363,11 @@ public sealed class SupportTicketService : ISupportTicketService
             var state = await EnsureStateLoadedAsync(cancellationToken);
             var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
                 ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
-            if (ticket is null) return null;
+            if (ticket is null || !BelongsToCustomerTenant(ticket, tenantId, tenantCode, employeeId)) return null;
 
             if (string.Equals(NormalizeStatus(ticket.TicketStatus), "Resolved", StringComparison.OrdinalIgnoreCase))
             {
-                throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng, không thể gửi thêm tin nhắn.");
+                throw new ArgumentException("Yêu cầu hỗ trợ này đã hoàn thành và đóng. Bấm Mở lại yêu cầu nếu vấn đề chưa được giải quyết.");
             }
 
             var rawContent = (request.MessageContent ?? request.Content ?? string.Empty).Trim();
@@ -1475,6 +1492,7 @@ public sealed class SupportTicketService : ISupportTicketService
         string? attachmentName = null,
         CancellationToken cancellationToken = default)
     {
+        attachmentUrl = UploadedImages.SupportImages([attachmentUrl]).FirstOrDefault();
         SupportTicketDto? updatedTicket = null;
         SupportTicketMessageDto? createdMsg = null;
 
@@ -1603,6 +1621,8 @@ public sealed class SupportTicketService : ISupportTicketService
         AdminReplyTicketRequestDto request,
         CancellationToken cancellationToken = default)
     {
+        request.AttachmentUrls = UploadedImages.SupportImages([request.AttachmentUrl, .. request.AttachmentUrls ?? []]);
+        request.AttachmentUrl = null;
         var attUrl = !string.IsNullOrWhiteSpace(request.AttachmentUrl)
             ? request.AttachmentUrl
             : request.AttachmentUrls?.FirstOrDefault(u => !string.IsNullOrWhiteSpace(u));
@@ -1619,6 +1639,80 @@ public sealed class SupportTicketService : ISupportTicketService
             attUrl,
             attName,
             cancellationToken);
+    }
+
+    /// <summary>
+    /// The customer is not satisfied with the result: a closed (Resolved) ticket of theirs goes back to work. It returns to its
+    /// assignees (In_Progress) or to the department head (Open); the reason is kept as a customer message and the head is notified.
+    /// </summary>
+    public async Task<SupportTicketDto?> ReopenByCustomerAsync(int ticketId, int customerId, string customerName, string? reason, CancellationToken cancellationToken = default)
+    {
+        if (customerId <= 0) throw new ArgumentException("Thiếu khách hàng mở lại yêu cầu.");
+        var why = (reason ?? string.Empty).Trim();
+        if (why.Length is < 5 or > 2000) throw new ArgumentException("Cho biết lý do mở lại yêu cầu (5–2000 ký tự).");
+        await StoreLock.WaitAsync(cancellationToken);
+        try
+        {
+            var state = await EnsureStateLoadedAsync(cancellationToken);
+            var ticket = state.Tickets.FirstOrDefault(t => t.TicketSupportId == ticketId)
+                ?? await LoadSingleTicketFromDbAsync(ticketId, cancellationToken);
+            if (ticket is null || !BelongsToCustomerTenant(ticket, 0, string.Empty, customerId)) return null;
+            if (!string.Equals(NormalizeStatus(ticket.TicketStatus), "Resolved", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Chỉ mở lại được yêu cầu đã đóng.");
+            var now = DateTime.UtcNow;
+            var assigned = ticket.AssignedEmployeeIds is { Count: > 0 } || ticket.AssignedEmployeeId is > 0;
+            var newStatus = assigned ? "In_Progress" : "Open";
+            var content = "Khách hàng mở lại yêu cầu: " + why;
+
+            using (var scope = _scopeFactory.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetService<MasterDbContext>();
+                var entity = db is null ? null : await db.TicketSupports.FirstOrDefaultAsync(t => t.TicketSupportId == ticketId, cancellationToken);
+                if (db is not null && entity is not null)
+                {
+                    var oldStatus = entity.TicketStatus;
+                    entity.TicketStatus = newStatus;
+                    entity.TicketResolvedAt = null;
+                    entity.TicketClosedAt = null;
+                    entity.UpdatedAt = now;
+                    db.TicketMessages.Add(new TicketMessage
+                    {
+                        TicketSupportId = ticketId,
+                        TicketMessageSenderCustomerId = customerId,
+                        TicketMessageContent = content,
+                        TicketMessageType = "CUSTOMER_REPLY",
+                        CreatedAt = now
+                    });
+                    await db.SaveChangesAsync(cancellationToken);
+                    await TryInsertTicketHistoryAsync(db, ticketId, null, null, null, oldStatus, newStatus, content, cancellationToken);
+                }
+            }
+
+            ticket.TicketStatus = newStatus;
+            ticket.TicketResolvedAt = null;
+            ticket.TicketClosedAt = null;
+            ticket.UpdatedAt = now;
+            ticket.Messages.Add(new SupportTicketMessageDto
+            {
+                TicketMessageId = state.NextMessageId++, TicketSupportId = ticketId, SenderCustomerId = customerId, SenderName = customerName,
+                IsFromEmployee = false, TicketMessageContent = content, TicketMessageType = "CUSTOMER_REPLY", CreatedAt = now
+            });
+            state.Tickets.RemoveAll(t => t.TicketSupportId == ticketId);
+            state.Tickets.Insert(0, ticket);
+            state.AdminNotifications.Insert(0, new AdminNotificationDto
+            {
+                NotificationId = state.NextNotificationId++, SubjectType = "SupportTicket", SubjectId = ticket.TicketSupportId, TicketCode = ticket.TicketCode,
+                TenantName = ticket.TenantName, TenantCode = ticket.TenantCode, Title = $"[{ticket.Department}] Khách hàng mở lại {ticket.TicketCode}",
+                Body = $"{customerName}: {TruncatePreview(why, 160)}", Priority = ticket.TicketPriority, DepartmentId = ticket.DepartmentId, Department = ticket.Department,
+                TargetEmployeeId = ticket.DepartmentHeadEmployeeId ?? ticket.AssignedEmployeeId, ActionKey = "customer-reopened-ticket", CreatedAtUtc = now
+            });
+            await SaveStateAsync(state, cancellationToken);
+            return CloneTicketWithViewer(ticket, "CUSTOMER", customerId, null);
+        }
+        finally
+        {
+            StoreLock.Release();
+        }
     }
 
     public async Task<SupportTicketDto?> UpdateTicketStatusAsync(

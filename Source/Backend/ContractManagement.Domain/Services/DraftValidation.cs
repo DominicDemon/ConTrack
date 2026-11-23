@@ -10,7 +10,7 @@ public static class DraftValidation
     /// <summary>The dates a document of this type cannot be saved or sent without (a contract's end date, a payment request's due date…).</summary>
     public static void RequireContractDates(DraftContent content, TemplateDefinition? template = null)
     {
-        var rule = DocumentRules.For((template ?? content.TemplateSnapshot)?.DocumentType);
+        var rule = DocumentRules.For(template ?? content.TemplateSnapshot);
         if (!rule.ExpireShown) content.ExpireDate = null;
         if (rule.ExpireRequired && content.ExpireDate is null)
             throw new DraftValidationException([new("required", "expireDate", rule.Type == DocumentRules.Contract
@@ -60,7 +60,7 @@ public static class DraftValidation
     {
         var field = template?.Fields.FirstOrDefault(f => message.Contains(f.Label, StringComparison.Ordinal));
         if (field is not null) return "fields." + field.Key;
-        var rule = DocumentRules.For(template?.DocumentType);
+        var rule = DocumentRules.For(template);
         if (rule.ExpireLabel.Length > 0 && message.StartsWith(rule.ExpireLabel, StringComparison.Ordinal)) return "expireDate";
         if (message.StartsWith(rule.EffectiveLabel, StringComparison.Ordinal)) return "effectiveDate";
         if (message == rule.ItemsLabel || message.StartsWith("Số tiền", StringComparison.Ordinal)) return "items";

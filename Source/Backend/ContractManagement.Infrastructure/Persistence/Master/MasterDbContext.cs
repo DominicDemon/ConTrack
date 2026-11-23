@@ -56,6 +56,10 @@ public partial class MasterDbContext : DbContext
 
     public virtual DbSet<ContractTemplate> ContractTemplates { get; set; }
 
+    public virtual DbSet<DocumentCategory> DocumentCategories { get; set; }
+
+    public virtual DbSet<ContractFormatSetting> ContractFormatSettings { get; set; }
+
     public virtual DbSet<ContractTemplateField> ContractTemplateFields { get; set; }
 
     public virtual DbSet<ContractTerm> ContractTerms { get; set; }
@@ -712,6 +716,39 @@ public partial class MasterDbContext : DbContext
                 .HasDefaultValueSql("(sysutcdatetime())")
                 .HasColumnName("uploaded_at");
             entity.Property(e => e.UploadedByEmployeeid).HasColumnName("uploaded_by_employeeid");
+        });
+
+        modelBuilder.Entity<ContractFormatSetting>(entity =>
+        {
+            entity.ToTable("CONTRACT_FORMAT_SETTING");
+            entity.HasKey(e => e.SettingId);
+            entity.Property(e => e.SettingId).ValueGeneratedNever().HasColumnName("setting_id");
+            entity.Property(e => e.SettingValue).HasMaxLength(2000).HasColumnName("setting_value");
+            entity.Property(e => e.UpdatedDate).HasDefaultValueSql("(sysutcdatetime())").HasColumnName("updated_date");
+            entity.Property(e => e.UpdatedEmployeeId).HasColumnName("updated_employee_id");
+        });
+
+        modelBuilder.Entity<DocumentCategory>(entity =>
+        {
+            entity.ToTable("DOCUMENT_CATEGORY");
+            entity.HasIndex(e => e.DocumentCategoryName, "UQ_DOCUMENT_CATEGORY_NAME").IsUnique();
+            entity.Property(e => e.DocumentCategoryId).HasColumnName("document_category_id");
+            entity.Property(e => e.DocumentCategoryName).HasMaxLength(200).HasColumnName("document_category_name");
+            entity.Property(e => e.IsActive).HasDefaultValue(true).HasColumnName("is_active");
+            entity.Property(e => e.EffectiveLabel).HasMaxLength(100).HasColumnName("effective_label");
+            entity.Property(e => e.EffectiveRequired).HasColumnName("effective_required");
+            entity.Property(e => e.ExpireShown).HasColumnName("expire_shown");
+            entity.Property(e => e.ExpireLabel).HasMaxLength(100).HasColumnName("expire_label");
+            entity.Property(e => e.ExpireRequired).HasColumnName("expire_required");
+            entity.Property(e => e.ItemsLabel).HasMaxLength(100).HasColumnName("items_label");
+            entity.Property(e => e.ItemsRequired).HasColumnName("items_required");
+            entity.Property(e => e.ItemPrices).HasColumnName("item_prices");
+            entity.Property(e => e.AmountRequired).HasColumnName("amount_required");
+            entity.Property(e => e.Milestones).HasColumnName("milestones");
+            entity.Property(e => e.MilestonesRequired).HasColumnName("milestones_required");
+            entity.Property(e => e.ParentMilestone).HasColumnName("parent_milestone");
+            entity.Property(e => e.CreatedDate).HasDefaultValueSql("(sysutcdatetime())").HasColumnName("created_date");
+            entity.Property(e => e.UpdatedDate).HasColumnName("updated_date");
         });
 
         modelBuilder.Entity<ContractTemplate>(entity =>

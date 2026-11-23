@@ -28,6 +28,12 @@ public class TemplateHierarchyTests
     {
         var db = new MasterDbContext(new DbContextOptionsBuilder<MasterDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
         // 1: contract template with 2 (appendix) and 3 (handover) attached; 4: another contract template; 5: a free appendix.
+        // The five built-in document types (020-document-categories.sql).
+        db.DocumentCategories.AddRange(Enumerable.Range(1, 5).Select(type => DocumentRules.For(type)).Select(rule => new DocumentCategory
+        {
+            DocumentCategoryId = rule.Type, DocumentCategoryName = "Loại " + rule.Type, IsActive = true, EffectiveLabel = rule.EffectiveLabel,
+            ExpireShown = rule.ExpireShown, ExpireLabel = rule.ExpireLabel, ItemsLabel = rule.ItemsLabel, CreatedDate = DateTime.UtcNow
+        }));
         db.ContractTemplates.AddRange(Template(1, 1), Template(2, 2, 1), Template(3, 3, 1), Template(4, 1), Template(5, 2));
         db.ContractDocuments.AddRange(Document(100, 1, 1), Document(101, 2, 2));
         db.ContractDocumentRelations.Add(new ContractDocumentRelation { ParentDocumentId = 100, ChildDocumentId = 101,

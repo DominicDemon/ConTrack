@@ -588,7 +588,8 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
                 where rel.ChildDocumentId == d.ContractDocumentId && rel.ContractDocumentRelationType == InternalRepository.ChildRelation
                 select p.ContractDocumentName).FirstOrDefault()
             select new CustomerReviewSummary(r.ContractReviewRequestId, d.ContractDocumentName, v.ContractVersionVersionNo, r.ContractReviewRequestStatus,
-                r.SentAt, r.RespondedAt, r.FirstViewedAt, signed, parentName, d.ContractDocumentType))
+                r.SentAt, r.RespondedAt, r.FirstViewedAt, signed, parentName, d.ContractDocumentType,
+                db.DocumentCategories.Where(c => c.DocumentCategoryId == d.ContractDocumentType).Select(c => c.DocumentCategoryName).FirstOrDefault()))
             .ToListAsync(ct);
         return rows.OrderByDescending(r => !r.IsSigned && ContractReviewStatus.IsOpen(r.Status)).ThenByDescending(r => r.SentAt).ToList();
     }
@@ -789,11 +790,12 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             .Select(r => new { r.ContractDocumentId, r.ContractReviewRequestId, r.ContractReviewRequestStatus,
                 Signed = signedVersions.Any(s => s.ContractDocumentId == r.ContractDocumentId && s.ContractVersionId == r.ContractVersionId) })
             .ToListAsync(ct);
+        var typeNames = await db.DocumentCategories.AsNoTracking().ToDictionaryAsync(x => x.DocumentCategoryId, x => x.DocumentCategoryName, ct);
         return docs.Select(d =>
         {
             var latest = reviews.Where(r => r.ContractDocumentId == d.ContractDocumentId).MaxBy(r => r.ContractReviewRequestId);
             return new CustomerRelatedDocument(d.ContractDocumentId == parentId ? "PARENT" : "ATTACHMENT", d.ContractDocumentName, d.ContractDocumentType,
-                latest?.ContractReviewRequestId, latest?.ContractReviewRequestStatus, latest?.Signed ?? false);
+                latest?.ContractReviewRequestId, latest?.ContractReviewRequestStatus, latest?.Signed ?? false, typeNames.GetValueOrDefault(d.ContractDocumentType));
         }).OrderBy(d => d.Relation == "PARENT" ? 0 : 1).ThenBy(d => d.DocumentType).ToList();
     }
 }

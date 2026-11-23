@@ -15,13 +15,17 @@ public static class TemplateHierarchy
 
     public static void ValidateType(int documentType)
     {
-        if (documentType is < 1 or > 5) throw new ArgumentException("Chọn loại văn bản hợp lệ.");
+        if (documentType < 1) throw new ArgumentException("Chọn loại văn bản hợp lệ.");
     }
 
     /// <summary>Throws unless <paramref name="documentType"/> and <paramref name="parentId"/> fit the hierarchy for the template <paramref name="id"/> (null for a new one).</summary>
     public static async Task Validate(MasterDbContext db, long? id, int documentType, long? parentId, CancellationToken ct)
     {
         ValidateType(documentType);
+        // A type from the Loại văn bản page (DOCUMENT_CATEGORY); a template keeps a type that was hidden after it was made.
+        if (!await db.DocumentCategories.AnyAsync(c => c.DocumentCategoryId == documentType
+                && (c.IsActive || (id != null && db.ContractTemplates.Any(t => t.ContractTemplateId == id && t.ContractTemplateDocumentType == documentType))), ct))
+            throw new ArgumentException("Loại văn bản không tồn tại hoặc đã ẩn.");
         if (parentId is long parent)
         {
             if (documentType == Contract)

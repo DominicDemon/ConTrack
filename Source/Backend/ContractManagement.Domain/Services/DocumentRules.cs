@@ -12,8 +12,10 @@ namespace ContractManagement.Domain.Internal;
 /// <param name="MilestonesRequired">A schedule is needed: always (contract) or only once the document has items (appendix).</param>
 /// <param name="ExpireShown">The second date exists for this document; otherwise it is cleared.</param>
 /// <param name="ParentMilestone">Names the instalment of its contract it asks to be paid (payment request).</param>
+/// <param name="Name">The type's name (DOCUMENT_CATEGORY); empty for the built-in fallback.</param>
 public sealed record DocumentRule(int Type, string EffectiveLabel, bool EffectiveRequired, bool ExpireShown, string ExpireLabel, bool ExpireRequired,
-    string ItemsLabel, bool ItemsRequired, bool ItemPrices, bool AmountRequired, bool Milestones, bool? MilestonesRequired, bool ParentMilestone)
+    string ItemsLabel, bool ItemsRequired, bool ItemPrices, bool AmountRequired, bool Milestones, bool? MilestonesRequired, bool ParentMilestone,
+    string Name = "")
 {
     public bool NeedsMilestones(int itemCount) => Milestones && (MilestonesRequired ?? itemCount > 0);
 }
@@ -24,6 +26,9 @@ public static class DocumentRules
 
     public static readonly DocumentRule ContractRule = new(Contract, "Ngày hiệu lực", false, true, "Ngày hết hạn", true,
         "Hạng mục hợp đồng", true, true, false, true, true, false);
+
+    /// <summary>The rule the template carries (read from DOCUMENT_CATEGORY), else the built-in one of its type.</summary>
+    public static DocumentRule For(TemplateDefinition? template) => template?.Rule ?? For(template?.DocumentType);
 
     public static DocumentRule For(int? type) => type switch
     {

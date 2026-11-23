@@ -4,7 +4,9 @@ import { Eye, EyeOff, Sparkles } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { internalApi, DOCUMENT_TYPES, type BusinessOption, type CategoryOption, type CustomerRow, type DepartmentRow, type ProductRow, type TemplateSummary } from "@/services/internal-api";
+import { internalApi, type BusinessOption, type CategoryOption, type CustomerRow, type DepartmentRow, type DocumentCategory, type ProductRow, type TemplateSummary } from "@/services/internal-api";
+import { typeOptions, useDocumentCategories } from "@/components/internal/use-document-categories";
+import type { DocumentRule } from "../../../Shared/document-rules";
 import { internalStyles as ui } from "./internal-theme";
 import { CustomerCreateFields, customerCreateReady, newCustomer } from "./customer-create-fields";
 
@@ -217,7 +219,7 @@ export function ProductFormDialog({ product, categories, onClose, onSaved }: { p
 
 /** Name, document type and parent of a template; its Word content is replaced through the Word editor. */
 export function TemplateInfoDialog({ template, parents, onClose, onSaved }: { template: TemplateSummary; parents: TemplateSummary[]; onClose: () => void; onSaved: (row: TemplateSummary) => void }) {
-  const [name, setName] = useState(template.name); const [documentType, setDocumentType] = useState(template.documentType);
+  const [name, setName] = useState(template.name); const [documentType, setDocumentType] = useState(template.documentType); const categories = useDocumentCategories();
   const [parentId, setParentId] = useState(template.parentTemplateId ?? "");
   // Fields a document made from this template must fill before it is sent; the type's own rules (dates, items…) come on top.
   const [required, setRequired] = useState(() => new Set((template.fields ?? []).filter(f => f.required).map(f => f.key)));
@@ -231,7 +233,7 @@ export function TemplateInfoDialog({ template, parents, onClose, onSaved }: { te
     <label className={field}>Tên mẫu *<Input required maxLength={500} value={name} disabled={busy} onChange={e => setName(e.target.value)}/></label>
     <div className="grid gap-4 sm:grid-cols-2">
       <label className={field}>Loại văn bản *<select className={ui.field} value={documentType} disabled={busy || template.childCount > 0}
-        onChange={e => setDocumentType(Number(e.target.value))}>{DOCUMENT_TYPES.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}</select>
+        onChange={e => setDocumentType(Number(e.target.value))}>{typeOptions(categories, template.documentType).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
         {template.childCount > 0 && <span className="text-xs font-normal text-muted-foreground">Mẫu đang có {template.childCount} mẫu con nên giữ loại Hợp đồng.</span>}</label>
       <label className={field}>Mẫu hợp đồng cha<select className={ui.field} value={documentType === 1 ? "" : parentId} disabled={busy || documentType === 1}
         onChange={e => setParentId(e.target.value)}><option value="">Không gắn mẫu cha</option>{choices.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
@@ -252,5 +254,50 @@ export function DepartmentFormDialog({ department, onClose, onSaved }: { departm
     onSubmit={() => void save(() => internalApi<DepartmentRow>(`/org/departments/${department.id}`, "PUT", { name, description }))}>
     <label className={field}>Tên phòng ban *<Input required maxLength={500} value={name} disabled={busy} onChange={e => setName(e.target.value)}/></label>
     <label className={field}>Mô tả<textarea className={ui.field} rows={3} maxLength={2000} value={description} disabled={busy} onChange={e => setDescription(e.target.value)}/></label>
+  </FormDialog>;
+}
+
+/** Add or change a document type (Loại văn bản) and what a document of it needs before it is sent. */
+export function DocumentCategoryDialog({ category, onClose, onSaved }: { category: DocumentCategory | null; onClose: () => void; onSaved: (row: DocumentCategory) => void }) {
+  const start: Omit<DocumentRule, "type" | "name"> = category?.rule ?? { effectiveLabel: "Ngày lập", effectiveRequired: true, expireShown: false, expireLabel: "", expireRequired: false,
+    itemsLabel: "Nội dung", itemsRequired: false, itemPrices: false, amountRequired: false, milestones: false, milestonesRequired: false, parentMilestone: false };
+  const [name, setName] = useState(category?.name ?? ""); const [active, setActive] = useState(category?.active ?? true);
+  const [rule, setRule] = useState<Omit<DocumentRule, "type" | "name">>({ ...start });
+  const set = (patch: Partial<typeof rule>) => setRule(old => ({ ...old, ...patch }));
+  const { busy, error, save } = useSave(onSaved);
+  const check = (label: string, value: boolean, onChange: (value: boolean) => void, disabled = false) =>
+    <label className="flex items-center gap-2 text-sm font-normal"><input type="checkbox" checked={value} disabled={busy || disabled} onChange={e => onChange(e.target.checked)}/>{label}</label>;
+  return <FormDialog title={category ? `Sửa ${category.name}` : "Thêm loại văn bản"}
+    description="Quy tắc áp dụng cho văn bản tạo mới từ các mẫu thuộc loại này; văn bản đã tạo giữ quy tắc cũ."
+    busy={busy} error={error} ready={!!name.trim() && !!rule.effectiveLabel.trim() && !!rule.itemsLabel.trim() && (!rule.expireShown || !!rule.expireLabel.trim())}
+    submit={category ? "Lưu thay đổi" : "Thêm loại văn bản"} onClose={onClose}
+    onSubmit={() => void save(() => internalApi<DocumentCategory>(category ? `/document-categories/${category.id}` : "/document-categories", category ? "PUT" : "POST",
+      { name, active, ...rule }))}>
+    <label className={field}>Tên loại văn bản *<Input required maxLength={200} value={name} disabled={busy} placeholder="Ví dụ: Biên bản nghiệm thu" onChange={e => setName(e.target.value)}/></label>
+    <fieldset className={field} disabled={busy}><legend>Ngày trên văn bản</legend>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className={field}>Tên ngày thứ nhất *<Input maxLength={100} value={rule.effectiveLabel} placeholder="Ngày hiệu lực, Ngày bàn giao…" onChange={e => set({ effectiveLabel: e.target.value })}/>
+          {check("Bắt buộc", rule.effectiveRequired, value => set({ effectiveRequired: value }))}</label>
+        <label className={field}>Tên ngày thứ hai<Input maxLength={100} value={rule.expireLabel} disabled={!rule.expireShown} placeholder="Ngày hết hạn, Hạn thanh toán…" onChange={e => set({ expireLabel: e.target.value })}/>
+          {check("Có ngày này", rule.expireShown, value => set({ expireShown: value, expireRequired: value && rule.expireRequired }))}
+          {check("Bắt buộc", rule.expireRequired, value => set({ expireRequired: value }), !rule.expireShown)}</label>
+      </div></fieldset>
+    <fieldset className={field} disabled={busy}><legend>Bảng nội dung</legend>
+      <label className={field}>Tên bảng *<Input maxLength={100} value={rule.itemsLabel} placeholder="Danh mục bàn giao, Khoản thu…" onChange={e => set({ itemsLabel: e.target.value })}/></label>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {check("Phải có ít nhất một dòng", rule.itemsRequired, value => set({ itemsRequired: value }))}
+        {check("Có đơn giá và tổng tiền", rule.itemPrices, value => set({ itemPrices: value, amountRequired: value && rule.amountRequired, milestones: value && rule.milestones }))}
+        {check("Tổng tiền phải lớn hơn 0", rule.amountRequired, value => set({ amountRequired: value }), !rule.itemPrices)}
+      </div></fieldset>
+    <fieldset className={field} disabled={busy}><legend>Thanh toán</legend>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {check("Có lịch thanh toán", rule.milestones, value => set({ milestones: value, milestonesRequired: value ? rule.milestonesRequired : false }), !rule.itemPrices)}
+        <label className="flex items-center gap-2 text-sm font-normal">Lịch thanh toán<select className={ui.field} disabled={busy || !rule.milestones}
+          value={rule.milestonesRequired === null ? "ITEMS" : rule.milestonesRequired ? "ALWAYS" : "NEVER"}
+          onChange={e => set({ milestonesRequired: e.target.value === "ITEMS" ? null : e.target.value === "ALWAYS" })}>
+          <option value="ALWAYS">Luôn bắt buộc</option><option value="ITEMS">Bắt buộc khi có dòng</option><option value="NEVER">Không bắt buộc</option></select></label>
+        {check("Phải chọn đợt thanh toán của hợp đồng", rule.parentMilestone, value => set({ parentMilestone: value }))}
+      </div></fieldset>
+    {category && check("Đang dùng (bỏ chọn để ẩn khỏi danh sách chọn)", active, setActive)}
   </FormDialog>;
 }

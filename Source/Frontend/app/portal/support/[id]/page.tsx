@@ -26,6 +26,7 @@ import { toast } from "@/components/ui/sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import TicketReopen from "@/components/portal/ticket-reopen";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import PortalHeader from "@/components/portal/portal-header";
 import { cn } from "@/lib/utils";
@@ -543,13 +544,7 @@ export default function CustomerSupportTicketDetailPage({
               </div>
 
               {isResolved ? (
-                <div className="flex items-center justify-center gap-2 border-t bg-slate-100 px-4 py-3.5 text-xs font-medium text-slate-600 dark:bg-slate-900 dark:text-slate-400">
-                  <CheckCircle2 className="size-4 text-emerald-600" />
-                  <span>
-                    Yêu cầu hỗ trợ đã hoàn thành và đóng. Bạn chỉ có thể xem lại
-                    lịch sử tin nhắn và kết quả xử lý, không thể nhắn thêm.
-                  </span>
-                </div>
+                <TicketReopen ticketId={ticket.ticketSupportId} onReopened={setTicket} />
               ) : (
                 <form
                   onSubmit={handleSendReply}

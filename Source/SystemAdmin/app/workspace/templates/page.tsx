@@ -7,7 +7,8 @@ import { TemplateInfoDialog } from "@/components/internal/catalog-dialogs";
 import TemplateUpload from "@/components/internal/template-upload";
 import s from "@/components/internal/workspace.module.css";
 import { useInternalUser } from "@/components/internal/internal-shell";
-import { internalApi, dateTime, documentTypeLabel, DOCUMENT_TYPES, type TemplateSummary } from "@/services/internal-api";
+import { internalApi, dateTime, documentTypeLabel, type TemplateSummary } from "@/services/internal-api";
+import { typeOptions, useDocumentCategories } from "@/components/internal/use-document-categories";
 
 function searchText(value: string) {
   return value.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replaceAll("đ", "d").trim();
@@ -15,7 +16,7 @@ function searchText(value: string) {
 
 export default function TemplatesPage() {
   // Every document template (contract, appendix, handover record…), hidden ones included; Hành chính manages them.
-  const { canManageTemplates } = useInternalUser();
+  const { canManageTemplates } = useInternalUser(); const categories = useDocumentCategories();
   const [rows, setRows] = useState<TemplateSummary[]>([]); const [search, setSearch] = useState("");
   const [type, setType] = useState(""); const [status, setStatus] = useState(""); const [parent, setParent] = useState("");
   const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [busy, setBusy] = useState(true); const [acting, setActing] = useState(false); const [reload, setReload] = useState(0);
@@ -47,7 +48,7 @@ export default function TemplatesPage() {
       : internalApi<TemplateSummary>(`/contract-templates/${row.id}/restore`, "POST");
     void request.then(r => { replace(r); setNotice(r.active ? `Đã khôi phục ${r.name}.` : `Đã ẩn ${r.name}.`); }).catch(e => setError(e.message)).finally(() => setActing(false)); };
 
-  return <div className={s.page}><div className={s.titleRow}><div><span className={s.eyebrow}>Thư viện mẫu</span><h1>Tạo mẫu văn bản</h1><p className={s.muted}>Mọi mẫu hợp đồng, phụ lục, biên bản bàn giao, biên lai và đề nghị thanh toán. Gắn mẫu con vào mẫu hợp đồng để tạo văn bản đi kèm hợp đồng.</p></div>
+  return <div className={s.page}><div className={s.titleRow}><div><span className={s.eyebrow}>Thư viện mẫu</span><h1>Quản lý văn bản</h1><p className={s.muted}>Mọi mẫu hợp đồng, phụ lục, biên bản bàn giao, biên lai và đề nghị thanh toán. Gắn mẫu con vào mẫu hợp đồng để tạo văn bản đi kèm hợp đồng.</p></div>
     <TemplateUpload onImported={t => saved(`Đã lưu mẫu ${t.name}.`)}
       trigger={open => <button className={ui.primaryButton} disabled={busy} onClick={open}><FilePlus2 size={18}/>Tạo mẫu văn bản</button>}/></div>
     <div style={{ marginBottom: 24 }}><SummaryCards isLoading={busy} items={[
@@ -58,7 +59,7 @@ export default function TemplatesPage() {
     {error && <p role="alert" className={ui.error} style={{ marginBottom: 16 }}>{error}</p>}
     {notice && <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>{notice}</p>}
     <section className={ui.card}><div className={s.toolbar}><input aria-label="Tìm mẫu văn bản" className={ui.field} placeholder="Tìm tên mẫu hoặc mẫu hợp đồng cha…" value={search} onChange={e => setSearch(e.target.value)}/>
-      <select aria-label="Lọc loại văn bản" className={ui.field} style={{ maxWidth: 220 }} value={type} onChange={e => setType(e.target.value)}><option value="">Tất cả loại văn bản</option>{DOCUMENT_TYPES.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}</select>
+      <select aria-label="Lọc loại văn bản" className={ui.field} style={{ maxWidth: 220 }} value={type} onChange={e => setType(e.target.value)}><option value="">Tất cả loại văn bản</option>{typeOptions(categories, null, true).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
       <select aria-label="Lọc trạng thái" className={ui.field} style={{ maxWidth: 220 }} value={status} onChange={e => setStatus(e.target.value)}><option value="">Tất cả trạng thái</option><option value="ACTIVE">Đang dùng</option><option value="HIDDEN">Đã ẩn</option></select>
       <select aria-label="Lọc theo mẫu hợp đồng cha" className={ui.field} style={{ maxWidth: 240 }} value={parent} onChange={e => setParent(e.target.value)}><option value="">Mọi mẫu cha</option><option value="NONE">Không gắn mẫu cha</option>{contracts.map(c => <option key={c.id} value={c.id}>{c.name} và mẫu con</option>)}</select>
       <button className={ui.secondaryButton} disabled={busy} onClick={refresh} aria-label="Làm mới"><RefreshCw size={16}/></button></div>

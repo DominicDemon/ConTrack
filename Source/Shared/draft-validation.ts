@@ -1,6 +1,6 @@
 import type { DraftContent, DraftMilestone } from "../SystemAdmin/services/internal-api";
 import { renderContract } from "./contract-renderer";
-import { documentRule, needsMilestones } from "./document-rules";
+import { ruleFor, needsMilestones } from "./document-rules";
 export type DraftIssue = { code: string; path: string; message: string };
 export const roundMoney = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 export function paymentSummary(c: DraftContent) {
@@ -23,7 +23,7 @@ export function convertPayments(c: DraftContent, mode: "PERCENT" | "AMOUNT"): Dr
 export function draftIssues(c: DraftContent): DraftIssue[] {
   const issues: DraftIssue[]=[];
   const add=(code:string,path:string,message:string)=>issues.push({code,path,message});
-  const rule=documentRule(c.templateSnapshot?.documentType);
+  const rule=ruleFor(c.templateSnapshot);
   if(!c.name.trim()) add("required","name",rule.type===1 ? "Tên hợp đồng" : "Tên văn bản");
   if(rule.expireRequired && !c.expireDate) add("required","expireDate",rule.type===1 ? "Vui lòng nhập ngày hết hạn hợp đồng." : `Vui lòng nhập ${rule.expireLabel.toLowerCase()}.`);
   else if(rule.expireShown && c.expireDate && c.effectiveDate && c.expireDate < c.effectiveDate) add("invalid_date","expireDate",`${rule.expireLabel} phải sau hoặc bằng ${rule.effectiveLabel.toLowerCase()}.`);

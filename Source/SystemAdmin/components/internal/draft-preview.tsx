@@ -3,9 +3,12 @@ import { DEFAULT_PROVIDER_FIELDS } from "../../../Shared/draft-validation";
 import type { ReactNode } from "react";
 import { type DraftContent, money } from "@/services/internal-api";
 import s from "./workspace.module.css";
+import { paperStyle, useContractFormat } from "./use-contract-format";
 export default function DraftPreview({ content, code }: { content: DraftContent; code?: string }) {
   // Normalize only the display copy; stored snapshots and signing hashes stay unchanged.
   content = JSON.parse(JSON.stringify(content).normalize("NFC")) as DraftContent;
+  // The company print format (Thiết lập tham số hợp đồng), so the preview matches the printed PDF.
+  const format = useContractFormat();
   const rendered = renderContract(content); const totals = rendered.totals;
   // Bilingual (VI_EN), as in the company's printed contracts: English first, Vietnamese in italics.
   const bi = content.languageMode === "VI_EN";
@@ -26,9 +29,9 @@ export default function DraftPreview({ content, code }: { content: DraftContent;
   const both = (key: string, vi: ReactNode) => { const en = bi ? content.fieldsEn?.[key]?.trim() : ""; return en ? <>{en}<br/><em>{vi}</em></> : vi; };
   const date = (value: string | null) => value ? value.split("-").reverse().join("/") : <span className={s.missing}>Chưa điền ngày</span>;
   if ((content.formatVersion ?? 1) < 2 && content.templateSnapshot?.isImported) return <div className={s.previewPane}><article className={s.paper}><div className={s.demoStamp}>BẢN NHÁP • MẪU TẢI LÊN — CHƯA XÁC NHẬN PHÊ DUYỆT</div><h2>{content.name}</h2><p>Mã nháp: {code || "Được cấp khi lưu"}</p>{content.terms.map(t => <p key={t.key}>{t.content}</p>)}</article></div>;
-  return <div className={s.previewPane}><div className={s.previewLabel}><span>Bản xem trước • A4{bi ? " • Song ngữ Anh – Việt" : ""}</span><span>Chưa ký</span></div><article className={s.paper} aria-label="Bản xem trước hợp đồng">
+  return <div className={s.previewPane}><div className={s.previewLabel}><span>Bản xem trước • A4{bi ? " • Song ngữ Anh – Việt" : ""}</span><span>Chưa ký</span></div><article className={s.paper} style={paperStyle(format)} aria-label="Bản xem trước hợp đồng">
     <div className={s.demoStamp}>BẢN NHÁP • MẪU MINH HỌA — CHƯA ĐƯỢC CÔNG TY PHÊ DUYỆT</div>
-    <p style={{ textAlign: "center", fontWeight: 700, marginTop: 22 }}>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</p><p style={{ textAlign: "center" }}>Độc lập – Tự do – Hạnh phúc</p>
+    {format?.showNationalMotto !== false && <><p style={{ textAlign: "center", fontWeight: 700, marginTop: 22 }}>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</p><p style={{ textAlign: "center" }}>Độc lập – Tự do – Hạnh phúc</p></>}
     {bi ? <><h2>{content.nameEn?.trim() || <span className={s.missing}>Chưa điền tên hợp đồng tiếng Anh</span>}</h2><h2><em>{content.name || "Tên hợp đồng"}</em></h2></> : <h2>{content.name || "Tên hợp đồng"}</h2>}
     <p style={{ textAlign: "center", fontSize: 11 }}>{L("Số", "No.")}: {content.contractNumber || code || "Được cấp khi lưu nháp"}</p>
     {content.fields.CONTRACT_LEGAL_BASES && <p>{content.fields.CONTRACT_LEGAL_BASES}</p>}

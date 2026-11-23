@@ -10,7 +10,9 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 /// <param name="To">Last day (Vietnam time) the contract was created, inclusive.</param>
 public sealed record ProgressFilter(string? Search = null, long? OwnerId = null, string? Stage = null, int? WaitingDays = null, bool Mine = false, int Page = 1,
     DateOnly? From = null, DateOnly? To = null);
-public sealed record ProgressRow(long Id, string Code, string Name, string Customer, long OwnerId, string Owner, string Stage, string Department, DateTime? EnteredAt, string? LastActor, bool NeedsMe);
+/// <param name="CanDelete">A rejected or cancelled contract this employee may remove for good (ContractHardDelete).</param>
+public sealed record ProgressRow(long Id, string Code, string Name, string Customer, long OwnerId, string Owner, string Stage, string Department, DateTime? EnteredAt, string? LastActor, bool NeedsMe,
+    int Status = 0, bool CanDelete = false, DateTime? CreatedAt = null);
 public sealed record ProgressPage(List<ProgressRow> Items, int Total, int Page, int PageSize, Dictionary<string, int> Counts, DateTime ServerTime);
 
 public sealed class ContractProgressService(MasterDbContext db)
@@ -88,7 +90,8 @@ public sealed class ContractProgressService(MasterDbContext db)
                     ? "FINAL_CHECK" : "SIGNATURE", _ => stage };
                 entered = stage == "CUSTOMER" ? review.SentAt : review.RespondedAt;
             }
-            if (doc.ContractDocumentStatus is 4 or 5 or 6) { stage = "CLOSED"; entered = null; }
+            // Finished contracts: signed ones, and failed ones (cancelled, rejected) that can be deleted for good.
+            if (doc.ContractDocumentStatus is 4 or 5 or 6 or 7) { stage = doc.ContractDocumentStatus switch { 6 => "CANCELLED", 7 => "REJECTED", _ => "SIGNED" }; entered = null; }
             if (stage == "SIGNATURE" && snapshots.GetValueOrDefault(version.ContractVersionId)?
                     .Contains(InternalDraftPolicy.PartyTypeMarker("BUSINESS")!, StringComparison.Ordinal) == true)
             {
@@ -108,13 +111,14 @@ public sealed class ContractProgressService(MasterDbContext db)
             if (officeReady) stage = "OFFICE_SEND";
             var owner = doc.EmployeeId == actor.Id;
             var department = stage switch { "OFFICE" or "RETURNED" or "OFFICE_SEND" or "PAPER_REVIEW" => "Hành chính", "DIRECTOR" or "FINAL_CHECK" => "Sếp", "CUSTOMER" => "Khách hàng",
-                "SIGNATURE" => "Các bên ký", "PAPER_SIGNATURE" => "Hai bên ký giấy", "CLOSED" => "Đã đóng", _ => officeOrigin ? "Hành chính" : "Sale" };
+                "SIGNATURE" => "Các bên ký", "PAPER_SIGNATURE" => "Hai bên ký giấy", "SIGNED" => "Đã ký", "CANCELLED" or "REJECTED" => "Đã đóng", _ => officeOrigin ? "Hành chính" : "Sale" };
             var mine = stage switch { "OFFICE" or "RETURNED" or "PAPER_REVIEW" => actor.CanReviewLegal, "DIRECTOR" or "FINAL_CHECK" => actor.CanApprove,
                 "OFFICE_SEND" => actor.CanReviewLegal && owner, "DRAFT" or "CHANGES" when officeOrigin => actor.CanReviewLegal && owner,
                 "DRAFT" or "APPROVED" or "CHANGES" => !officeOrigin && actor.CanWrite && owner,
                 "PAPER_SIGNATURE" => actor.CanReviewLegal || actor.CanApprove || (actor.CanWrite && owner), _ => false };
             if (filter.Mine && !mine || filter.WaitingDays.HasValue && (entered is null || now - entered < TimeSpan.FromDays(filter.WaitingDays.Value))) continue;
-            rows.Add(new(doc.ContractDocumentId, doc.ContractDocumentCode ?? "", doc.ContractDocumentName, item.CustomerDisplayName, doc.EmployeeId, item.EmployeeDisplayName, stage, department, entered, lastActor, mine));
+            rows.Add(new(doc.ContractDocumentId, doc.ContractDocumentCode ?? "", doc.ContractDocumentName, item.CustomerDisplayName, doc.EmployeeId, item.EmployeeDisplayName, stage, department, entered, lastActor, mine,
+                doc.ContractDocumentStatus, ContractHardDelete.CanDelete(doc.ContractDocumentStatus) && (actor.CanManageContractWorkflow || (actor.CanWrite && owner)), doc.CreatedDate));
         }
         var counts = rows.GroupBy(x => x.Stage).ToDictionary(x => x.Key, x => x.Count());
         if (!string.IsNullOrEmpty(filter.Stage)) rows = rows.Where(x => x.Stage == filter.Stage).ToList();

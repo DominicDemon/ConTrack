@@ -70,6 +70,9 @@ public sealed class DepartmentEmployeeDto
     public int? DepartmentId { get; set; }
     public string? DepartmentName { get; set; }
     public bool IsManager { get; set; }
+    public string? EmployeePhone { get; set; }
+    /// <summary>Tickets not yet closed this employee is assigned to (shown when choosing whom to assign).</summary>
+    public int ActiveTicketCount { get; set; }
 }
 
 public sealed class SupportServiceItemDto

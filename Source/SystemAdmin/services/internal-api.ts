@@ -1,4 +1,5 @@
 import { requiredPartyFields } from "../../Shared/draft-validation";
+import type { DocumentRule } from "../../Shared/document-rules";
 export type InternalUser = { id: string; name: string; username: string; permissions: string[]; canManageAll: boolean; canManageLegal: boolean; canWrite: boolean; canCheck: boolean; canApprove: boolean; canManageTemplates: boolean; canManageEmployees: boolean; mustChangePassword: boolean; department: string | null; isManager: boolean };
 export type EmployeeAdminRow = { id: string; code: string; username: string; name: string; email: string | null; phone: string | null; status: "ACTIVE" | "LOCKED" | string; mustChangePassword: boolean; lastLoginAt: string | null; departmentId: string | null; isManager: boolean };
 /** staffPermissions is null when the department has a manager only (Ban Giám Đốc). */
@@ -6,10 +7,22 @@ export type DepartmentOption = { id: string; code: string; name: string; staffPe
 export type TemporaryPasswordResult = { employee: EmployeeAdminRow; temporaryPassword: string };
 export type DraftField = { key: string; label: string; required: boolean; dataType?: "TEXT" | "NUMBER" | "DATE" | "SELECT"; options?: string[]; min?: number | null; max?: number | null };
 export type DraftTerm = { key: string; title: string; content: string; editable: boolean; titleEn?: string | null; contentEn?: string | null };
-export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; documentType?: number; wordStorageKey?: string | null; wordSha256?: string | null; manualWordContent?: boolean; fields: DraftField[]; terms: DraftTerm[]; /** The contract template a child template (appendix, handover record…) belongs to. */ parentTemplateId?: string | null };
+export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; documentType?: number; rule?: DocumentRule | null; wordStorageKey?: string | null; wordSha256?: string | null; manualWordContent?: boolean; fields: DraftField[]; terms: DraftTerm[]; /** The contract template a child template (appendix, handover record…) belongs to. */ parentTemplateId?: string | null };
 /** Document types of a template and of a document made from it (CONTRACT_TEMPLATE / CONTRACT_DOCUMENT document_type). */
 export const DOCUMENT_TYPES = ["Hợp đồng", "Phụ lục", "Biên bản bàn giao", "Biên lai", "Đề nghị thanh toán"] as const;
-export const documentTypeLabel = (type: number | undefined) => DOCUMENT_TYPES[(type ?? 1) - 1] ?? "Văn bản";
+/** A document type from the Loại văn bản page (DOCUMENT_CATEGORY) and its sending rule. locked: the contract type, never changed. */
+export type DocumentCategory = { id: number; name: string; active: boolean; builtin: boolean; locked: boolean; templateCount: number; rule: DocumentRule };
+let categoryNames = new Map<number, string>(DOCUMENT_TYPES.map((name, index) => [index + 1, name]));
+/** Name of a document type; the built-in names until loadDocumentCategories has read the list. */
+export const documentTypeLabel = (type: number | undefined) => categoryNames.get(type ?? 1) ?? "Văn bản";
+let categoriesRequest: Promise<DocumentCategory[]> | null = null;
+/** Read once per page load (force after a change on the Loại văn bản page); also refreshes documentTypeLabel. */
+export function loadDocumentCategories(force = false) {
+  if (!categoriesRequest || force)
+    categoriesRequest = internalApi<DocumentCategory[]>("/document-categories").then(list => { categoryNames = new Map(list.map(c => [c.id, c.name])); return list; })
+      .catch(error => { categoriesRequest = null; throw error; });
+  return categoriesRequest;
+}
 /** One row of the template library (Tạo mẫu văn bản): every type, hidden ones included. */
 export type TemplateSummary = { id: string; name: string; documentType: number; parentTemplateId: string | null; parentName: string | null; active: boolean; word: boolean; childCount: number; documentCount: number; createdAt: string; updatedAt: string | null; fields?: { key: string; label: string; required: boolean }[] };
 export type RelatedDocument = { id: string; code: string | null; name: string; documentType: number; status: number; templateId: string; createdAt: string };
@@ -122,3 +135,14 @@ export type ServiceRow = { id: string; name: string; unit: string | null; price:
 export type DepartmentRow = { id: string; code: string; name: string; description: string | null; status: string; managerName: string | null; memberCount: number; staffRoleName: string | null; managerRoleName: string };
 
 export type CustomerLookupResult = { customer: CustomerOption; businessId: string | null; businessName: string | null };
+
+/** The company's contract print format (Thiết lập tham số hợp đồng); sizes in points, margins in millimetres. */
+export type ContractFormat = { fontFamily: string; titleFontSize: number; headingFontSize: number; bodyFontSize: number; marginTopMm: number; marginBottomMm: number;
+  marginLeftMm: number; marginRightMm: number; lineSpacing: number; titleUppercase: boolean; showNationalMotto: boolean };
+let formatRequest: Promise<{ format: ContractFormat; fonts: string[] }> | null = null;
+/** Read once per page load; force after saving it on the settings page. */
+export function loadContractFormat(force = false) {
+  if (!formatRequest || force)
+    formatRequest = internalApi<{ format: ContractFormat; fonts: string[] }>("/contract-format").catch(error => { formatRequest = null; throw error; });
+  return formatRequest;
+}

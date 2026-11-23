@@ -23,7 +23,7 @@ export interface UpdateEmployeePreferencesRequest {
 
 export const getStoredTablePageSize = (): number | null => {
   if (typeof window === "undefined") return null;
-  const value = Number(window.localStorage.getItem(TABLE_PAGE_SIZE_STORAGE_KEY));
+  const value = Number(window.sessionStorage.getItem(TABLE_PAGE_SIZE_STORAGE_KEY));
   return TABLE_PAGE_SIZE_OPTIONS.includes(
     value as (typeof TABLE_PAGE_SIZE_OPTIONS)[number],
   )
@@ -38,7 +38,7 @@ export const storeTablePageSize = (pageSize: number) => {
       pageSize as (typeof TABLE_PAGE_SIZE_OPTIONS)[number],
     )
   ) {
-    window.localStorage.setItem(TABLE_PAGE_SIZE_STORAGE_KEY, String(pageSize));
+    window.sessionStorage.setItem(TABLE_PAGE_SIZE_STORAGE_KEY, String(pageSize));
   }
 };
 

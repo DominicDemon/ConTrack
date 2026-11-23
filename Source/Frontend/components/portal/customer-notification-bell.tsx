@@ -28,10 +28,10 @@ type Entry = { key: string; kind: Kind; title: string; body: string; at: number;
 const utc = (s: string) => Date.parse(s + (/Z$|[+-]\d\d:\d\d$/.test(s) ? "" : "Z"));
 // shortcut: contract read state lives in this browser (no table), so another device shows those items as new again.
 function loadRead(): Set<string> | null {
-  try { const raw = localStorage.getItem(READ_STORE); return raw ? new Set(JSON.parse(raw) as string[]) : null; } catch { return null; }
+  try { const raw = sessionStorage.getItem(READ_STORE); return raw ? new Set(JSON.parse(raw) as string[]) : null; } catch { return null; }
 }
 function saveRead(keys: Set<string>) {
-  try { localStorage.setItem(READ_STORE, JSON.stringify([...keys].slice(-500))); } catch { /* private mode: kept in memory only */ }
+  try { sessionStorage.setItem(READ_STORE, JSON.stringify([...keys].slice(-500))); } catch { /* private mode: kept in memory only */ }
 }
 
 /**

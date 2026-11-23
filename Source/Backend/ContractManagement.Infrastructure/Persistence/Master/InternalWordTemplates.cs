@@ -53,7 +53,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         var document = InternalWordDocument.Decode(input.DocumentBase64);
         if (receipt.Fingerprint != input.FileName || receipt.SourceHash != Hash(original) || receipt.DocumentHash != Hash(document))
             throw new ArgumentException("File đã thay đổi. Hãy tải file lên lại.");
-        if (input.DocumentType is < 1 or > 5 || string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 500)
+        if (input.DocumentType < 1 || string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 500)
             throw new ArgumentException("Nhập tên và chọn loại mẫu hợp lệ.");
         if (input.Fields is null || input.Blocks is null || input.SampleValues is null
             || input.Fields.Any(f => f is null || CoreFields.Any(c => c.Key == f.Key))

@@ -68,6 +68,9 @@ export interface DepartmentStaffDto {
   departmentId?: number | null;
   departmentName?: string | null;
   isManager: boolean;
+  employeePhone?: string | null;
+  /** Open tickets this employee is assigned to. */
+  activeTicketCount?: number;
 }
 
 export interface TicketDto {

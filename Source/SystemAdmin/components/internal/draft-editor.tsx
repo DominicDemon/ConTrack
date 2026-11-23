@@ -1,7 +1,7 @@
 "use client";
 import { isGroupedWordSection, wordDisplaySections } from "../../../Shared/word-display-sections";
 import { sendIssues, focusIssue, DEFAULT_PROVIDER_FIELDS } from "../../../Shared/draft-validation";
-import { documentRule } from "../../../Shared/document-rules";
+import { ruleFor } from "../../../Shared/document-rules";
 import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 import { PartyEditor, PaymentEditor } from "./draft-details";
 import { keepInView } from "./word-clause-form";
@@ -13,7 +13,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, Files, GripVertical, ListChecks, Plus, RefreshCw, Save, Trash2, Users, Wallet } from "lucide-react";
-import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, documentStatusLabel, documentTypeLabel, DOCUMENT_TYPES, type DraftRelations, type DraftSummary, type DraftMilestone, type BusinessOption, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
+import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, documentStatusLabel, documentTypeLabel, type DraftRelations, type DraftSummary, type DraftMilestone, type BusinessOption, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
+import { typeOptions, useDocumentCategories } from "@/components/internal/use-document-categories";
 import { internalStyles as ui } from "./internal-theme";
 import DraftPreview from "./draft-preview";
 import WordDraftPreview from "./word-draft-preview";
@@ -34,7 +35,7 @@ const taxKey = (value: string) => value.replace(/[\s-]/g, "").toUpperCase();
 const ENGLISH_FIELDS = ["CUSTOMER_COMPANY", "CUSTOMER_ADDRESS", "CUSTOMER_CONTACT_TITLE", "CUSTOMER_BANK_NAME", "PROVIDER_LEGAL_NAME", "PROVIDER_ADDRESS", "PROVIDER_REPRESENTATIVE_TITLE", "PROVIDER_BANK_NAME"];
 function Field({ label, children }: { label: string; children: ReactNode }) { return <label className={s.label}>{label}{children}</label>; }
 export default function DraftEditor({ id }: { id?: string }) {
-  const user = useInternalUser(); const router = useRouter(); const [content, setContent] = useState<DraftContent>(blank); const [record, setRecord] = useState<DraftRecord | null>(null);
+  const user = useInternalUser(); const categories = useDocumentCategories(); const router = useRouter(); const [content, setContent] = useState<DraftContent>(blank); const [record, setRecord] = useState<DraftRecord | null>(null);
   const [templates, setTemplates] = useState<TemplateDefinition[]>([]); const [customers, setCustomers] = useState<CustomerLookupResult[]>([]); const [products, setProducts] = useState<ProductOption[]>([]);
   const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [success, setSuccess] = useState(""); const [conflict, setConflict] = useState(false);
   const [dirty, setDirty] = useState(false); const dirtyRef = useRef(false); const form = useRef<HTMLFormElement>(null);
@@ -65,7 +66,7 @@ export default function DraftEditor({ id }: { id?: string }) {
         const [contract, related] = attached;
         const allowed = ts.filter(t => related.childTemplates.some(c => c.id === String(t.id)));
         const chosen = allowed.find(t => String(t.id) === query?.get("template")) ?? allowed[0];
-        if (!chosen) throw new Error("Mẫu của hợp đồng này chưa có mẫu con. Tạo mẫu con ở trang Tạo mẫu văn bản trước.");
+        if (!chosen) throw new Error("Mẫu của hợp đồng này chưa có mẫu con. Tạo mẫu con ở trang Quản lý văn bản trước.");
         // Same customer and the same Bên A / Bên B as the contract; the rest comes from the child template.
         // Only the fields the child template has: the server refuses any other key ("Trường nhập không thuộc mẫu").
         const party = Object.fromEntries(Object.entries({ ...DEFAULT_PROVIDER_FIELDS, ...contract.content.fields })
@@ -158,7 +159,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   const sourceTemplate = content.templateSnapshot ?? templates.find(t => t.id === content.templateId);
   const template = sourceTemplate && (!record?.locked ? completePartyFields(sourceTemplate) : sourceTemplate);
   /** What this document type needs: its dates, whether it has prices and a payment schedule (Shared/document-rules). */
-  const rule = documentRule(template?.documentType);
+  const rule = ruleFor(template);
   // A payment request names one instalment of its contract: the contract is the one it was opened from, or the one it is attached to.
   const parentDocId = parent?.record.id ?? relations?.parent?.id ?? null;
   const [parentDraft, setParentDraft] = useState<{ id: string; milestones: DraftMilestone[] } | null>(null);
@@ -342,7 +343,7 @@ export default function DraftEditor({ id }: { id?: string }) {
         const first = templates.find(t => !next || (t.documentType ?? 1) === Number(next));
         if (!first || (next && (template.documentType ?? 1) === Number(next))) return;
         if (dirty && !window.confirm("Đổi loại văn bản sẽ chọn mẫu khác và thay nội dung theo mẫu đó. Tiếp tục?")) return;
-        void selectWordTemplate(first); }}>{!id && !parent && <option value="">Tất cả loại văn bản</option>}{DOCUMENT_TYPES.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}</select></Field>
+        void selectWordTemplate(first); }}>{!id && !parent && <option value="">Tất cả loại văn bản</option>}{typeOptions(categories, template.documentType ?? 1).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
       <Field label="Mẫu văn bản *"><select required className={ui.field} value={content.templateId} disabled={!!id} onChange={e => { const t = templates.find(t => String(t.id) === e.target.value)!; if (dirty && !window.confirm("Đổi mẫu sẽ thay nội dung theo mẫu mới. Tiếp tục?")) return; void selectWordTemplate(t); }}>{templates.filter(t => parent ? parent.relations.childTemplates.some(c => c.id === String(t.id)) : !typeFilter || (t.documentType ?? 1) === Number(typeFilter)).map(t => <option value={t.id} key={t.id}>{t.name}</option>)}{!templates.some(t => t.id === template.id) && <option value={template.id}>{template.name}</option>}</select></Field>
       {parent && <Field label="Thuộc hợp đồng"><p><Link href={`/workspace/contracts/drafts/${parent.record.id}`}>{parent.record.code} · {parent.record.content.name}</Link></p><span className={s.muted} style={{ fontWeight: 400 }}>Cùng khách hàng và thông tin hai bên với hợp đồng; chỉ chọn được mẫu con của mẫu hợp đồng này.</span></Field>}
       {pickingParent && (() => {
@@ -351,7 +352,7 @@ export default function DraftEditor({ id }: { id?: string }) {
         return <Field label="Thuộc hợp đồng">{parentTemplateId && <select className={ui.field} value="" disabled={!contracts || options.length === 0} onChange={e => attachTo(e.target.value, String(template.id))}>
             <option value="">{!contracts ? "Đang tải hợp đồng…" : options.length ? "Chọn hợp đồng để lấy khách hàng…" : "Chưa có hợp đồng dùng mẫu cha của mẫu này"}</option>
             {options.map(c => <option key={c.id} value={c.id}>{c.code} · {c.name} · {c.customerName}</option>)}</select>}
-          <span className={s.muted} style={{ fontWeight: 400 }}>{parentTemplateId ? "Chọn hợp đồng để lấy khách hàng và thông tin hai bên từ hợp đồng, khỏi phải nhập lại." : "Mẫu này chưa gắn mẫu hợp đồng cha nên phải nhập khách hàng. Gắn mẫu cha ở trang Tạo mẫu văn bản để lấy khách hàng từ hợp đồng."}</span></Field>;
+          <span className={s.muted} style={{ fontWeight: 400 }}>{parentTemplateId ? "Chọn hợp đồng để lấy khách hàng và thông tin hai bên từ hợp đồng, khỏi phải nhập lại." : "Mẫu này chưa gắn mẫu hợp đồng cha nên phải nhập khách hàng. Gắn mẫu cha ở trang Quản lý văn bản để lấy khách hàng từ hợp đồng."}</span></Field>;
       })()}
       {relations?.parent && <Field label="Thuộc hợp đồng"><p><Link href={`/workspace/contracts/drafts/${relations.parent.id}`}>{relations.parent.code} · {relations.parent.name}</Link></p></Field>}
       {!id && !parent && user.canManageTemplates && <TemplateUpload disabled={busy} onImported={t => { setTemplates(old => [t, ...old]); if (!dirty || window.confirm("Dùng mẫu vừa tải và bỏ thay đổi đang soạn?")) void selectWordTemplate(t); }}/>}

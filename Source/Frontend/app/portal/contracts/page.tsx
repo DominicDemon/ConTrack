@@ -51,7 +51,7 @@ export default function CustomerContracts() {
       </div>
       {!visibleRows ? <div className={s.empty}>{error ? "" : "Đang tải…"}</div> : visibleRows.length === 0 ? <div className={s.empty}><Files size={42} strokeWidth={1.3}/><strong>{filter === "signed" ? "Chưa có hợp đồng đã ký" : filter === "unsigned" ? "Không có hợp đồng chưa ký" : "Chưa có hợp đồng nào được gửi cho bạn"}</strong></div>
         : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Hợp đồng</th><th>Phiên bản</th><th>Trạng thái</th><th>Ngày gửi</th><th><span className="sr-only">Mở</span></th></tr></thead>
-          <tbody>{visibleRows.map(r => <tr key={r.id}><td><Link href={`/portal/contracts/${r.id}`}>{r.contractName}</Link>{r.parentName && <div className={s.muted} style={{ fontSize: 12, marginTop: 4 }}>{documentTypeLabel(r.documentType)} · thuộc {r.parentName}</div>}</td><td>{r.versionNo}</td>
+          <tbody>{visibleRows.map(r => <tr key={r.id}><td><Link href={`/portal/contracts/${r.id}`}>{r.contractName}</Link>{r.parentName && <div className={s.muted} style={{ fontSize: 12, marginTop: 4 }}>{r.documentTypeName ?? documentTypeLabel(r.documentType)} · thuộc {r.parentName}</div>}</td><td>{r.versionNo}</td>
             <td><span className={`${s.badge} ${!r.isSigned && isOpenReview(r.status) ? s.warning : ""}`}>{r.isSigned ? "Đã ký" : customerStatusLabel[r.status] ?? r.status}</span></td>
             <td className={s.muted}>{dateTime(r.sentAt)}</td><td><Link href={`/portal/contracts/${r.id}`} aria-label={r.isSigned ? undefined : `Mở ${r.contractName}`}>
               {r.isSigned ? "Xem hợp đồng đã ký" : r.status === "APPROVED" ? "Theo dõi và ký" : <ArrowUpRight size={18}/>}</Link></td></tr>)}</tbody></table></div>}

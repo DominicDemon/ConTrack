@@ -1,4 +1,5 @@
 "use client";
+import ContractTabs from "@/components/internal/contract-tabs";
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -145,7 +146,7 @@ function SignedContractsTable({ documentId }: { documentId: string | null }) {
     }, 200);
     return () => { active = false; clearTimeout(timer); };
   }, [search, page, refresh, documentId]);
-  return <main className={s.page}>
+  return <main className={s.page}><ContractTabs/>
     <div className={s.titleRow}><h1>Hợp đồng đã ký</h1></div>
     <section className={ui.card}>
       <div className={s.toolbar}>{documentId ? <Link href="/workspace/contracts/signed">Xem tất cả hợp đồng đã ký</Link> : <input className={ui.field} type="search" aria-label="Tìm hợp đồng đã ký"

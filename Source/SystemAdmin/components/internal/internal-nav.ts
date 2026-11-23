@@ -1,6 +1,4 @@
 import {
-  Activity,
-  Archive,
   Building2,
   Contact,
   FileSignature,
@@ -24,15 +22,13 @@ export type NavItem = { label: string; icon: LucideIcon; href: string; permissio
 /** Order follows the departments: Ban Giám Đốc, Kinh doanh, Kỹ thuật, Kế toán, Hành chính - Pháp chế (005-department-roles.sql). */
 export const NAV_ITEMS: NavItem[] = [
   { label: "Tổng quan", icon: LayoutDashboard, href: "/workspace", permissions: [] },
-  { label: "Tạo mẫu văn bản", icon: Files, href: "/workspace/templates", permissions: ["template.manage"] },
+  { label: "Quản lý văn bản", icon: Files, href: "/workspace/templates", permissions: ["template.manage"] },
+  { label: "Loại văn bản", icon: Files, href: "/workspace/document-categories", permissions: ["template.manage"] },
+  { label: "Định dạng hợp đồng", icon: Files, href: "/workspace/contract-format", permissions: ["template.manage"] },
   { label: "Quy tắc số hợp đồng", icon: Files, href: "/workspace/number-rules", permissions: ["contract.check"] },
   { label: "Nhân viên & phân quyền", icon: UsersRound, href: "/workspace/admin/employees", permissions: ["employee.manage"] },
   { label: "Phòng ban", icon: Building2, href: "/workspace/admin/departments", permissions: ["department.manage"] },
-  { label: "Hợp đồng nháp", icon: Files, href: "/workspace/contracts/drafts", permissions: ["draft.write", "contract.check", "contract.approve"] },
-  { label: "Ký phía công ty", icon: FileSignature, href: "/workspace/contracts/company-signing", permissions: ["contract.approve"] },
-  { label: "Hợp đồng đã ký", icon: FileSignature, href: "/workspace/contracts/signed", permissions: ["draft.write", "contract.check", "contract.approve"] },
-  { label: "Theo dõi ký", icon: Activity, href: "/workspace/contracts/signing", permissions: ["draft.manage.all", "contract.approve"] },
-  { label: "Kho hợp đồng", icon: Archive, href: "/workspace/contracts/archive", permissions: ["draft.manage.all"] },
+  { label: "Quản lý hợp đồng", icon: FileSignature, href: "/workspace/contracts", permissions: ["draft.write", "contract.check", "contract.approve", "draft.manage.all"] },
   { label: "Báo cáo hợp đồng", icon: FileChartColumnIncreasing, href: "/workspace/contract-reports", permissions: ["draft.manage.all"] },
   { label: "Bản ký giấy", icon: FileSignature, href: "/workspace/signed-contracts", permissions: ["contract.signed_evidence.view"], exclude: "/workspace/signed-contracts/search" },
   { label: "Hợp đồng giấy scan", icon: ScanLine, href: "/workspace/scanned-contracts", permissions: ["contract.scanned.view"] },
@@ -48,11 +44,8 @@ export const NAV_ITEMS: NavItem[] = [
 /** The legal role receives only existing contract workflow screens, based on its assigned permission. */
 const ADMIN_OFFICER_NAV_ITEMS: NavItem[] = [
   { label: "Tổng quan", icon: LayoutDashboard, href: "/workspace", permissions: [] },
-  { label: "Hợp đồng cần xử lý", icon: Files, href: "/workspace/contracts/drafts", permissions: ["legal.manage"] },
-  { label: "Kho hợp đồng", icon: Archive, href: "/workspace/contracts/archive", permissions: ["contract.read", "legal.manage"] },
-  { label: "Theo dõi ký", icon: Activity, href: "/workspace/contracts/signing", permissions: ["contract.read", "legal.manage"] },
-  { label: "Chờ Admin ký", icon: FileSignature, href: "/workspace/contracts/company-signing", permissions: ["legal.manage"] },
-  { label: "Tạo mẫu văn bản", icon: Files, href: "/workspace/templates", permissions: ["template.read", "template.manage"] },
+  { label: "Quản lý hợp đồng", icon: FileSignature, href: "/workspace/contracts", permissions: ["legal.manage", "contract.read"] },
+  { label: "Quản lý văn bản", icon: Files, href: "/workspace/templates", permissions: ["template.read", "template.manage"] },
   { label: "Hỗ trợ khách hàng", icon: LifeBuoy, href: "/workspace/support-tickets", permissions: ["ticket.handle", "ticket.manage.all"] },
 ];
 

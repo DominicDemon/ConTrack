@@ -198,6 +198,12 @@ public static class CustomerPortalEndpoints
             var customer = Current(c);
             return await s.AddCustomerMessageAsync(id, 0, "", "", TicketId(customer.Id), customer.Name, input, ct) is { } m ? Results.Ok(m) : throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ.");
         });
+        // Not satisfied with the result: the customer reopens their closed ticket with a reason.
+        api.MapPost("/support/tickets/{id:int}/reopen", async (int id, TicketReopenInput input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
+        {
+            var customer = Current(c);
+            return await s.ReopenByCustomerAsync(id, TicketId(customer.Id), customer.Name, input.Reason, ct) is { } t ? Results.Ok(t) : throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ.");
+        });
         api.MapGet("/notifications", async (string? status, int? limit, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
         {
             var (items, unreadCount) = await s.GetCustomerNotificationsAsync(TicketId(Current(c).Id), status ?? "all", Math.Clamp(limit ?? 20, 1, 50), ct);
@@ -233,4 +239,5 @@ public static class CustomerPortalEndpoints
     public sealed record CustomerEmailConfirmInput(string? Code);
     /// <summary>The ticket service (from main) keys people by int.</summary>
     internal static int TicketId(long id) => checked((int)id);
+    public sealed record TicketReopenInput(string? Reason);
 }

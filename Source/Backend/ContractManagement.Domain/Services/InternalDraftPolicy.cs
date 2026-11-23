@@ -12,7 +12,9 @@ public sealed record TemplateDefinition(long Id, string Name, string Revision, b
     List<DraftField> Fields, List<DraftTerm> Terms, bool IsImported = false,
     int DocumentType = 1, string? WordStorageKey = null, string? WordSha256 = null, bool ManualWordContent = false,
     // The contract template a child template (appendix, handover record…) belongs to; read from CONTRACT_TEMPLATE, not stored.
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ParentTemplateId = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ParentTemplateId = null,
+    // The rule of the template's document type (DOCUMENT_CATEGORY) when it was read; a draft keeps the rule it was made with.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DocumentRule? Rule = null);
 public sealed record DraftItem(long? ProductId, string Name, decimal Quantity, decimal UnitPrice,
     decimal DiscountPercent, decimal DiscountAmount);
 public sealed record DraftTotals(decimal Subtotal, decimal Discount, decimal Vat, decimal Total);
@@ -96,7 +98,7 @@ public static class InternalDraftPolicy
             throw new ArgumentException("Dữ liệu nháp không hợp lệ hoặc vượt quá 100 hạng mục/điều khoản.");
         if (input.VatPercent < 0 || input.VatPercent > 100 || Round(input.VatPercent) != input.VatPercent)
             throw new ArgumentException("VAT phải từ 0 đến 100, tối đa 2 số thập phân.");
-        var rule = DocumentRules.For(template.DocumentType);
+        var rule = DocumentRules.For(template);
         // A date the document does not have (a handover record has no end date) is cleared, never printed.
         if (!rule.ExpireShown) input.ExpireDate = null;
         if (input.EffectiveDate > input.ExpireDate)

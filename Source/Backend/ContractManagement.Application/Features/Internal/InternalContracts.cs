@@ -107,6 +107,10 @@ public sealed record DraftRecord(long Id, string Code, long EmployeeId, string E
 /// <summary>One row of the template library (Tạo mẫu văn bản): every type, hidden ones included.</summary>
 public sealed record TemplateSummary(long Id, string Name, int DocumentType, long? ParentTemplateId, string? ParentName, bool Active,
     bool Word, int ChildCount, int DocumentCount, DateTime CreatedAt, DateTime? UpdatedAt, List<TemplateFieldOption>? Fields = null);
+/// <summary>A document type and its sending rule. Builtin = one of the five original types; Locked = the contract type, never changed.</summary>
+public sealed record DocumentCategoryRow(int Id, string Name, bool Active, bool Builtin, bool Locked, int TemplateCount, DocumentRule Rule);
+public sealed record DocumentCategoryInput(string? Name, string? EffectiveLabel, bool EffectiveRequired, bool ExpireShown, string? ExpireLabel, bool ExpireRequired,
+    string? ItemsLabel, bool ItemsRequired, bool ItemPrices, bool AmountRequired, bool Milestones, bool? MilestonesRequired, bool ParentMilestone, bool Active = true);
 /// <summary>A field a document made from the template fills in; Required = it must be filled before sending.</summary>
 public sealed record TemplateFieldOption(string Key, string Label, bool Required);
 /// <param name="RequiredFields">Keys of the template's fields that must be filled before sending; null leaves them as they are.</param>
@@ -205,7 +209,7 @@ public sealed class InternalDraftService(IInternalRepository repository)
         if (template.WordStorageKey is null)
             template = template with { Terms = content.Terms.Select(t => t with { Editable = true }).ToList() };
         DraftValidation.RequireContractDates(content, template);
-        if (DocumentRules.For(template.DocumentType).ParentMilestone)
+        if (DocumentRules.For(template).ParentMilestone)
         {
             // A payment request names one instalment of its contract; the flag is the server's, never the client's.
             var parentId = id.HasValue ? await repository.ParentDocument(id.Value, ct) : request.ParentDocumentId;

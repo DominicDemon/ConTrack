@@ -178,7 +178,7 @@ public sealed class InternalSigningService(
             throw new InternalAppException(409, "Hợp đồng cá nhân ký điện tử bằng OTP, không in để ký giấy.");
         var pdf = content.TemplateSnapshot?.WordStorageKey is not null
             ? await word.Render(content, content.TemplateSnapshot, pdf: true, ct)
-            : RenderContractPdf(document, version, customer, content).Content;
+            : RenderContractPdf(document, version, customer, content, await ContractFormatSettings.Read(db, ct)).Content;
         return (pdf, (document.ContractDocumentCode ?? $"contract-{documentId}") + ".pdf");
     }
 
@@ -195,7 +195,7 @@ public sealed class InternalSigningService(
             return new(pdf, company, customerSlot);
         }
 
-        var rendered = RenderContractPdf(document, version, customer, content);
+        var rendered = RenderContractPdf(document, version, customer, content, await ContractFormatSettings.Read(db, ct));
         return new(rendered.Content,
             new(rendered.SignaturePage, rendered.CompanySignatureX, rendered.SignatureY, rendered.SignatureWidth, rendered.SignatureHeight),
             new(rendered.SignaturePage, rendered.CustomerSignatureX, rendered.SignatureY, rendered.SignatureWidth, rendered.SignatureHeight));
@@ -501,17 +501,18 @@ public sealed class InternalSigningService(
         return await File.ReadAllBytesAsync(Path.Combine(signingRoot, key), ct);
     }
 
-    internal static RenderedContractPdf RenderContractPdf(ContractDocument document, ContractVersion version, Customer customer, DraftContent content)
+    /// <param name="format">The company print format (Thiết lập tham số hợp đồng); null keeps the original layout.</param>
+    internal static RenderedContractPdf RenderContractPdf(ContractDocument document, ContractVersion version, Customer customer, DraftContent content, ContractFormat? format = null)
     {
         using var pdf = new PdfDocument();
         var pages = new List<PdfPage>();
         XGraphics graphics = null!;
         PdfPage page = null!;
         var pageNumber = 0;
-        const double marginLeft = 85;
-        const double marginRight = 57;
-        const double marginTop = 57;
-        const double marginBottom = 57;
+        var marginLeft = format is null ? 85 : ContractFormat.MmToPoints(format.MarginLeftMm);
+        var marginRight = format is null ? 57 : ContractFormat.MmToPoints(format.MarginRightMm);
+        var marginTop = format is null ? 57 : ContractFormat.MmToPoints(format.MarginTopMm);
+        var marginBottom = format is null ? 57 : ContractFormat.MmToPoints(format.MarginBottomMm);
         const double footerHeight = 43;
         double y = 0;
 
@@ -520,14 +521,17 @@ public sealed class InternalSigningService(
         var muted = XColor.FromArgb(70, 78, 82);
         var border = XColor.FromArgb(184, 198, 198);
         var pale = XColor.FromArgb(242, 248, 246);
-        var family = content.UseTimesNewRoman ? DraftContent.ContractFont : "Arial";
-        var titleFont = new XFont(family, 17, XFontStyleEx.Bold);
-        var headingFont = new XFont(family, 13, XFontStyleEx.Bold);
-        var bodyFont = new XFont(family, 13, XFontStyleEx.Regular);
-        var smallFont = new XFont(family, 11, XFontStyleEx.Regular);
-        var labelFont = new XFont(family, 13, XFontStyleEx.Bold);
-        var italicFont = new XFont(family, 13, XFontStyleEx.Italic);
-        var labelItalicFont = new XFont(family, 13, XFontStyleEx.BoldItalic);
+        var family = format?.FontFamily ?? (content.UseTimesNewRoman ? DraftContent.ContractFont : "Arial");
+        double titleSize = format?.TitleFontSize ?? 17, headingSize = format?.HeadingFontSize ?? 13, bodySize = format?.BodyFontSize ?? 13;
+        var lineSpacing = format?.LineSpacing ?? 1;
+        var titleFont = new XFont(family, titleSize, XFontStyleEx.Bold);
+        var headingFont = new XFont(family, headingSize, XFontStyleEx.Bold);
+        var bodyFont = new XFont(family, bodySize, XFontStyleEx.Regular);
+        var smallFont = new XFont(family, Math.Max(8, bodySize - 2), XFontStyleEx.Regular);
+        var labelFont = new XFont(family, bodySize, XFontStyleEx.Bold);
+        var italicFont = new XFont(family, bodySize, XFontStyleEx.Italic);
+        var labelItalicFont = new XFont(family, bodySize, XFontStyleEx.BoldItalic);
+        string Title(string text) => format?.TitleUppercase == true ? text.ToUpperInvariant() : text;
         // Bilingual layout of the company's printed contracts: English first, Vietnamese (in italics) under or after it.
         var bilingual = content.LanguageMode == InternalDraftPolicy.Bilingual;
         string L(string vi, string en) => bilingual ? $"{en} / {vi}" : vi;
@@ -555,14 +559,17 @@ public sealed class InternalSigningService(
             if (first)
             {
                 y = marginTop;
-                DrawCentered("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", headingFont, new XSolidBrush(navy), y, 15); y += 17;
-                DrawCentered("Độc lập – Tự do – Hạnh phúc", smallFont, new XSolidBrush(navy), y, 13); y += 21;
+                if (format?.ShowNationalMotto ?? true)
+                {
+                    DrawCentered("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", headingFont, new XSolidBrush(navy), y, headingSize + 2); y += headingSize + 4;
+                    DrawCentered("Độc lập – Tự do – Hạnh phúc", smallFont, new XSolidBrush(navy), y, smallFont.Size + 2); y += smallFont.Size + 10;
+                }
                 if (bilingual && !string.IsNullOrWhiteSpace(content.NameEn))
                 {
-                    DrawCentered(content.NameEn, titleFont, new XSolidBrush(navy), y, 24); y += 22;
-                    DrawCentered(document.ContractDocumentName, new XFont(family, 13, XFontStyleEx.BoldItalic), new XSolidBrush(navy), y, 20); y += 23;
+                    DrawCentered(Title(content.NameEn), titleFont, new XSolidBrush(navy), y, titleSize * 1.4); y += titleSize * 1.3;
+                    DrawCentered(Title(document.ContractDocumentName), new XFont(family, bodySize, XFontStyleEx.BoldItalic), new XSolidBrush(navy), y, bodySize * 1.5); y += bodySize * 1.8;
                 }
-                else { DrawCentered(document.ContractDocumentName, titleFont, new XSolidBrush(navy), y, 24); y += 25; }
+                else { DrawCentered(Title(document.ContractDocumentName), titleFont, new XSolidBrush(navy), y, titleSize * 1.4); y += titleSize * 1.45; }
                 DrawCentered($"{L("Số", "No.")}: {document.ContractDocumentCode ?? $"HD-{document.ContractDocumentId}"}", smallFont, new XSolidBrush(muted), y, 13); y += 24;
             }
             else
@@ -622,7 +629,7 @@ public sealed class InternalSigningService(
 
         void AddParagraph(string text, XFont font, XBrush brush, double indent = 0, double spaceAfter = 5)
         {
-            var lineHeight = font.Size * 1.2;
+            var lineHeight = font.Size * 1.2 * lineSpacing;
             foreach (var line in Wrap(text, font, innerWidth - indent))
             {
                 EnsureSpace(lineHeight + 2);
@@ -718,8 +725,8 @@ public sealed class InternalSigningService(
                 var textY = y + (rowHeight - lines.Count * 18) / 2;
                 foreach (var line in lines)
                 {
-                    var format = i >= 3 ? XStringFormats.TopRight : (i == 0 ? XStringFormats.TopCenter : XStringFormats.TopLeft);
-                    graphics.DrawString(line, bodyFont, new XSolidBrush(navy), new XRect(x + 5, textY, columns[i] - 10, 18), format);
+                    var align = i >= 3 ? XStringFormats.TopRight : (i == 0 ? XStringFormats.TopCenter : XStringFormats.TopLeft);
+                    graphics.DrawString(line, bodyFont, new XSolidBrush(navy), new XRect(x + 5, textY, columns[i] - 10, 18), align);
                     textY += 18;
                 }
                 x += columns[i];
@@ -827,11 +834,7 @@ public sealed class InternalSigningService(
     private static string? Clean(string? input, int max) => string.IsNullOrWhiteSpace(input) ? null : input.Trim()[..Math.Min(input.Trim().Length, max)];
     // Sếp (contract.approve) signs for the company and opens the signing session; Hành chính and Sale do not.
     private static void RequireManager(InternalUser actor) { if (!actor.CanApprove) throw new InternalAppException(403, "Chỉ Sếp (người ký cho công ty) được tạo phiên ký và ký."); }
-    private static byte[] DecodeSignature(string input)
-    {
-        if (string.IsNullOrWhiteSpace(input) || input.Length > 1_400_000) throw new ArgumentException("Ảnh chữ ký PNG không hợp lệ.");
-        var comma = input.IndexOf(',');
-        var data = comma >= 0 ? input[(comma + 1)..] : input;
-        try { return Convert.FromBase64String(data); } catch (FormatException) { throw new ArgumentException("Ảnh chữ ký PNG không hợp lệ."); }
-    }
+    /// <summary>A drawn signature must really be a PNG of at most 1 MB (UploadedImages).</summary>
+    private static byte[] DecodeSignature(string input) =>
+        ContractManagement.Application.Common.Files.UploadedImages.SignaturePng(input, "Ảnh chữ ký PNG không hợp lệ.");
 }

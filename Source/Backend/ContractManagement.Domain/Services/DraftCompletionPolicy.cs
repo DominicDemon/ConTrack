@@ -61,7 +61,7 @@ public static class DraftCompletionPolicy
         if (c.Milestones is null || c.Milestones.Count > 100 || c.Milestones.Select(x => x.Key).Distinct().Count() != c.Milestones.Count)
             throw new ArgumentException("Các đợt thanh toán phải có mã riêng, tối đa 100 đợt.");
         if (c.PaymentMode is not ("PERCENT" or "AMOUNT")) throw new ArgumentException("Cách phân bổ thanh toán không hợp lệ.");
-        var rule = DocumentRules.For(template.DocumentType);
+        var rule = DocumentRules.For(template);
         // A handover record, receipt or payment request has no schedule of its own.
         if (!rule.Milestones) { c.Milestones = []; return; }
         if (c.Milestones.Count == 0 && rule.NeedsMilestones(c.Items.Count)) c.MissingFields.Add("Lịch thanh toán");

@@ -1,4 +1,5 @@
 "use client";
+import ContractTabs from "@/components/internal/contract-tabs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Activity, AlertTriangle, Check, Clock3, FilePlus2, RefreshCw, Search } from "lucide-react";
@@ -51,7 +52,7 @@ export default function ContractSigningMonitorPage() {
 
   if (!user.canManageAll) return <div className={s.page}><p role="alert" className={ui.error}>Theo dõi ký chỉ dành cho quản trị viên công ty.</p></div>;
 
-  return <div className={`${s.page} ${s.signingPage}`} data-ui="signing-monitor">
+  return <div className={`${s.page} ${s.signingPage}`} data-ui="signing-monitor"><ContractTabs/>
     <div className={s.signingHeading}>
       <div><div className={s.signingKicker}><Activity size={15}/> VẬN HÀNH HỢP ĐỒNG</div><h1>Theo dõi ký hợp đồng</h1><p className={s.muted}>Xem tiến độ của từng hồ sơ, chữ ký đã ghi nhận và các bước đang chờ.</p></div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>

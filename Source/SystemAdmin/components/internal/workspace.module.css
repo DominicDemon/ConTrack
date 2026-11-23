@@ -184,10 +184,10 @@
 .previewPane { height: 100%; overflow: auto; padding: 24px; background: var(--secondary); }
 .previewLabel { display: flex; justify-content: space-between; gap: 10px; font-size: 11px; color: var(--muted-foreground); margin-bottom: 14px; letter-spacing: .8px; text-transform: uppercase; }
 .paper { box-sizing: border-box; width: 794px; max-width: 100%; min-height: 1123px; margin: auto; background: #fff; padding: 76px 76px 76px 113px; color: #000; box-shadow: 0 4px 20px #172b2c0d; font-family: 'Times New Roman', Times, serif; font-kerning: normal; font-variant-ligatures: none; letter-spacing: normal; word-spacing: normal; font-size: 17.33px; line-height: 1.2; overflow-wrap: anywhere; }
-.paper h2 { font-family: inherit; letter-spacing: normal; text-align: center; font-size: 23px; font-weight: 700; text-transform: uppercase; margin: 25px 0 12px; page-break-after: avoid; }
-.paper h3 { font-family: inherit; letter-spacing: normal; margin: 22px 0 10px; font-size: 17.33px; font-weight: 700; page-break-after: avoid; }
+.paper h2 { font-family: inherit; letter-spacing: normal; text-align: center; font-size: var(--paper-title, 23px); font-weight: 700; text-transform: var(--paper-title-case, uppercase); margin: 25px 0 12px; page-break-after: avoid; }
+.paper h3 { font-family: inherit; letter-spacing: normal; margin: 22px 0 10px; font-size: var(--paper-heading, 17.33px); font-weight: 700; page-break-after: avoid; }
 .paper p { white-space: pre-wrap; margin: 8px 0; }
-.paper table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 17.33px; table-layout: fixed; }
+.paper table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: inherit; table-layout: fixed; }
 .paper th, .paper td { border: 1px solid #9ca3af; padding: 7px 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
 .paper th { background: #eef2f5; }
 .missing { display: inline; padding: 1px 5px; border-radius: 3px; color: #805400; background: #fff5df; font-family: 'Segoe UI', sans-serif; font-size: 12px; }

@@ -1,4 +1,5 @@
 "use client";
+import ContractTabs from "@/components/internal/contract-tabs";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, FileSignature, RefreshCw, Trash2 } from "lucide-react";
@@ -93,7 +94,7 @@ export default function CompanySigningQueuePage() {
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
-  return <main className={`${s.page} ${s.signingPage}`} data-ui="company-signing-queue">
+  return <main className={`${s.page} ${s.signingPage}`} data-ui="company-signing-queue"><ContractTabs/>
     <div className={s.titleRow}><div><span className={s.eyebrow}>HỢP ĐỒNG ĐÃ ĐƯỢC PHÊ DUYỆT</span><h1>Ký phía công ty</h1><p className={s.muted}>Công ty ký trước. Sau đó khách đăng nhập Portal, xác minh OTP và ký trên hợp đồng của mình.</p></div>
       <button className={ui.secondaryButton} disabled={busy} onClick={() => void load()}><RefreshCw size={16}/> Làm mới</button></div>
     {error && <p role="alert" className={ui.error}>{error}</p>}{notice && <p role="status" className={ui.notice}>{notice}</p>}

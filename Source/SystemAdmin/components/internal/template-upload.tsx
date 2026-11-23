@@ -12,13 +12,13 @@ import { Input } from "@/components/ui/input";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import styles from "./template-workspace.module.css";
 import { internalApi, type DraftContent, type TemplateDefinition } from "@/services/internal-api";
+import { typeOptions, useDocumentCategories } from "./use-document-categories";
 
 type Block = DocumentBlock;
 type Extraction = { name: string; documentBase64: string; blocks: Block[]; sourceToken: string };
 export function wordBlob(base64: string, type: string) {
   return new Blob([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], { type });
 }
-const documentTypes = ["Hợp đồng", "Phụ lục", "Biên bản bàn giao", "Biên lai", "Đề nghị thanh toán"];
 /**
  * parent: the new template is a child (appendix, handover record…) of this contract template.
  * replace: new Word content for this existing template; drafts already made keep their own copy.
@@ -28,6 +28,7 @@ const documentTypes = ["Hợp đồng", "Phụ lục", "Biên bản bàn giao", 
 export default function TemplateUpload({ onImported, disabled, draft, locate, inline, parent, replace, trigger, editTemplate, onClose }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; saved?:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string};
   parent?: { id: string; name: string }; replace?: { id: string; name: string; documentType: number }; trigger?: (open: () => void) => ReactNode;
   editTemplate?: Pick<TemplateDefinition, "id" | "name">; onClose?: () => void }) {
+  const categories = useDocumentCategories();
   const endpoint = draft ? `/contract-drafts/${draft.id}/word` : inline ? `/contract-drafts/from-template/${inline.templateId}/word` : "/contract-templates/word";
   const [mobile, setMobile] = useState(false);
   const [tab, setTab] = useState("edit");
@@ -334,7 +335,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
           <label><span>File Word (.doc, .docx, tối đa 10 MB)<span className={styles.required} aria-hidden>*</span></span><Input type="file" accept=".doc,.docx" onChange={e => void extract(e.target.files?.[0])}/></label>
           <label><span>Tên mẫu<span className={styles.required} aria-hidden>*</span></span><Input value={name} maxLength={500} placeholder="Ví dụ: Hợp đồng cung cấp phần mềm 2026" onChange={e => {setName(e.target.value); invalidate();}}/></label>
           <label><span>Loại mẫu<span className={styles.required} aria-hidden>*</span></span><select className={styles.select} value={documentType} onChange={e => {setDocumentType(Number(e.target.value)); invalidate();}}>
-            {documentTypes.map((label,index) => <option value={index+1} key={label} disabled={!!parent && index === 0}>{label}</option>)}
+            {typeOptions(categories, documentType).map(c => <option value={c.id} key={c.id} disabled={!!parent && c.id === 1}>{c.name}</option>)}
           </select></label>
         </fieldset>
         <div className={styles.tabs}><Button type="button" variant={tab==="edit"?"default":"outline"} onClick={() => setTab("edit")}>Chỉnh mẫu</Button><Button type="button" variant={tab==="preview"?"default":"outline"} onClick={() => setTab("preview")}>Xem trước</Button></div>

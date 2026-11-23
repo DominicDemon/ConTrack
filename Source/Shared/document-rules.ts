@@ -18,6 +18,8 @@ export type DocumentRule = {
   milestonesRequired: boolean | null;
   /** Names the instalment of its contract it asks to be paid (payment request). */
   parentMilestone: boolean;
+  /** The type's name, when the rule comes from the Loại văn bản page. */
+  name?: string;
 };
 
 const contract: DocumentRule = { type: 1, effectiveLabel: "Ngày hiệu lực", effectiveRequired: false, expireShown: true, expireLabel: "Ngày hết hạn", expireRequired: true,
@@ -35,5 +37,9 @@ const rules: Record<number, DocumentRule> = {
     itemsLabel: "Khoản đề nghị thanh toán", itemsRequired: true, itemPrices: true, amountRequired: true, milestones: false, milestonesRequired: false, parentMilestone: true },
 };
 
+/** The built-in rule of one of the five original types. A custom type's rule comes with its template: use ruleFor. */
 export const documentRule = (type: number | null | undefined): DocumentRule => rules[type ?? 1] ?? contract;
+/** The rule a template (or a draft's template snapshot) carries from its document type, else the built-in one. */
+export const ruleFor = (template: { documentType?: number; rule?: DocumentRule | null } | null | undefined): DocumentRule =>
+  template?.rule ?? documentRule(template?.documentType);
 export const needsMilestones = (rule: DocumentRule, itemCount: number) => rule.milestones && (rule.milestonesRequired ?? itemCount > 0);

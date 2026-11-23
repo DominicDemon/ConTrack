@@ -16,8 +16,8 @@ public class MasterDatabaseTests
         using var db = new MasterDbContext(new DbContextOptionsBuilder<MasterDbContext>()
             .UseSqlServer("Server=unused;Database=unused;Integrated Security=True").Options);
         var entities = db.Model.GetEntityTypes().ToList();
-        Assert.Equal(75, entities.Count); // +2: CUSTOMER_ENCRYPTION_KEY, CUSTOMER_FILE_KEY (017)
-        Assert.Equal(849, entities.Sum(entity => entity.GetProperties().Count())); // +1 (016), +14 (017), +1 (019)
+        Assert.Equal(77, entities.Count); // +2: CUSTOMER_ENCRYPTION_KEY, CUSTOMER_FILE_KEY (017), +1 DOCUMENT_CATEGORY (020), +1 CONTRACT_FORMAT_SETTING (021)
+        Assert.Equal(870, entities.Sum(entity => entity.GetProperties().Count())); // +1 (016), +14 (017), +1 (019), +17 (020), +4 (021)
         Assert.All(entities, entity => Assert.NotNull(entity.FindPrimaryKey()));
         Assert.Empty(entities.SelectMany(entity => entity.GetForeignKeys()));
         Assert.Equal(new[] { "EmployeeId", "DepartmentId" },

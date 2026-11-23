@@ -8,7 +8,6 @@ import {
   ArrowLeft,
   ArrowRightLeft,
   Building2,
-  Check,
   CheckCheck,
   CheckCircle2,
   ClipboardCheck,
@@ -53,6 +52,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useTicketUser } from "@/components/internal/ticket-user";
+import StaffPicker from "@/components/internal/staff-picker";
 import { cn } from "@/lib/utils";
 import {
   DepartmentStaffDto,
@@ -1070,83 +1070,8 @@ export default function AdminSupportTicketDetailPage() {
                               Không tìm thấy nhân sự khả dụng trong phòng ban.
                             </div>
                           ) : (
-                            <div className="grid max-h-[280px] grid-cols-1 gap-2 overflow-y-auto rounded-xl border bg-background p-3 sm:grid-cols-2">
-                              {departmentStaff.map((staff) => {
-                                const isChecked = selectedStaffIds.includes(
-                                  staff.employeeId,
-                                );
-                                const isActiveAssignee =
-                                  activeAssigneeRecords.some(
-                                    (a) => a.employeeId === staff.employeeId,
-                                  );
-                                const wasPreviousAssignee =
-                                  !isActiveAssignee &&
-                                  pastAssigneeRecords.some(
-                                    (a) => a.employeeId === staff.employeeId,
-                                  );
-
-                                return (
-                                  <button
-                                    key={staff.employeeId}
-                                    type="button"
-                                    disabled={isTicketResolved}
-                                    onClick={() =>
-                                      toggleStaffSelection(staff.employeeId)
-                                    }
-                                    className={cn(
-                                      "flex items-start gap-2.5 rounded-lg border p-2.5 text-left transition-all",
-                                      isChecked
-                                        ? "border-blue-600 bg-blue-50/80 ring-1 ring-blue-600 dark:border-blue-400 dark:bg-blue-950/50"
-                                        : "border-border bg-card hover:border-blue-300 hover:bg-slate-50 dark:hover:bg-slate-900",
-                                      isTicketResolved &&
-                                      "cursor-not-allowed opacity-60",
-                                    )}
-                                  >
-                                    <div
-                                      className={cn(
-                                        "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border",
-                                        isChecked
-                                          ? "border-blue-600 bg-blue-600 text-white"
-                                          : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800",
-                                      )}
-                                    >
-                                      {isChecked && (
-                                        <Check className="size-3" />
-                                      )}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex flex-wrap items-center gap-1">
-                                        <span className="truncate text-xs font-bold text-foreground">
-                                          {staff.isManager
-                                            ? `⭐ [Trưởng phòng] ${staff.employeeName}`
-                                            : staff.employeeName}
-                                        </span>
-                                      </div>
-                                      <p className="truncate text-[11px] text-muted-foreground">
-                                        {staff.isManager
-                                          ? "Trưởng phòng trực tiếp xử lý"
-                                          : staff.employeeCode
-                                            ? `Mã NV: ${staff.employeeCode}`
-                                            : staff.employeeEmail ||
-                                            "Nhân viên phòng ban"}
-                                      </p>
-                                      <div className="mt-1 flex flex-wrap gap-1">
-                                        {isActiveAssignee && (
-                                          <span className="inline-flex rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                                            Đang phụ trách
-                                          </span>
-                                        )}
-                                        {wasPreviousAssignee && (
-                                          <span className="inline-flex rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                                            Đã bàn giao đợt trước
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </button>
-                                );
-                              })}
-                            </div>
+                            <StaffPicker staff={departmentStaff} selected={selectedStaffIds} onToggle={toggleStaffSelection} disabled={isTicketResolved}
+                              activeIds={activeAssigneeRecords.map(a => a.employeeId)} pastIds={pastAssigneeRecords.map(a => a.employeeId)}/>
                           )}
                         </div>
 

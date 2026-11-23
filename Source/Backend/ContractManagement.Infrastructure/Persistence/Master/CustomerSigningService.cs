@@ -388,13 +388,9 @@ public sealed class CustomerSigningService(
         return bytes;
     }
 
-    private static byte[] DecodeSignature(string input)
-    {
-        if (string.IsNullOrWhiteSpace(input) || input.Length > 1_400_000) throw new ArgumentException("Ảnh chữ ký PNG không hợp lệ.");
-        var comma = input.IndexOf(',');
-        try { return Convert.FromBase64String(comma >= 0 ? input[(comma + 1)..] : input); }
-        catch (FormatException) { throw new ArgumentException("Ảnh chữ ký PNG không hợp lệ."); }
-    }
+    /// <summary>A drawn signature must really be a PNG of at most 1 MB (UploadedImages).</summary>
+    private static byte[] DecodeSignature(string input) =>
+        ContractManagement.Application.Common.Files.UploadedImages.SignaturePng(input, "Ảnh chữ ký PNG không hợp lệ.");
 
     private static string? Cut(string? value, int max) => value is null || value.Length <= max ? value : value[..max];
 

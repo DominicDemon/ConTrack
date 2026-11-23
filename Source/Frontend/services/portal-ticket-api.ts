@@ -23,4 +23,6 @@ export const customerTicketApi = {
     ...payload, ticketSubject: payload.subject, ticketDescription: payload.description, ticketPriority: payload.priority,
   }),
   sendMessage: (id: number, payload: CustomerReplyTicketRequestDto) => call<TicketMessageDto>(`/support/tickets/${id}/messages`, "POST", payload),
+  /** Not satisfied with the result: reopen a closed ticket with the reason. */
+  reopen: (id: number, reason: string) => call<TicketDto>(`/support/tickets/${id}/reopen`, "POST", { reason }),
 };

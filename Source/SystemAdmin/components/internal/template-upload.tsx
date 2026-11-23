@@ -5,7 +5,7 @@ import WordClauseForm, { wordCards, wordCustomerValues, type Card } from "./word
 import WordPdfViewer from "./word-pdf-viewer";
 import WordTableEditor, { createTable, type AddedTable } from "./word-table-editor";
 import WordContentEditor, { type AddedContent } from "./word-content-editor";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,7 +19,13 @@ export function wordBlob(base64: string, type: string) {
   return new Blob([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], { type });
 }
 const documentTypes = ["Hợp đồng", "Phụ lục", "Biên bản bàn giao", "Biên lai", "Đề nghị thanh toán"];
-export default function TemplateUpload({ onImported, disabled, draft, locate, inline }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; saved?:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string} }) {
+/**
+ * parent: the new template is a child (appendix, handover record…) of this contract template.
+ * replace: new Word content for this existing template; drafts already made keep their own copy.
+ * trigger: the page's own button; without it a default "Tạo mẫu văn bản" button opens the editor.
+ */
+export default function TemplateUpload({ onImported, disabled, draft, locate, inline, parent, replace, trigger }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; saved?:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string};
+  parent?: { id: string; name: string }; replace?: { id: string; name: string; documentType: number }; trigger?: (open: () => void) => ReactNode }) {
   const endpoint = draft ? `/contract-drafts/${draft.id}/word` : inline ? `/contract-drafts/from-template/${inline.templateId}/word` : "/contract-templates/word";
   const [mobile, setMobile] = useState(false);
   const [tab, setTab] = useState("edit");
@@ -117,13 +123,15 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
       });
       const original = { fileName: file.name, base64 };
       const result = await internalApi<Extraction>("/contract-templates/word/extract", "POST", original);
-      setSource(original); setExtraction(result); setName(result.name); setBlocks(result.blocks);
+      setSource(original); setExtraction(result); setName(replace?.name ?? result.name); setBlocks(result.blocks);
       setActive("");
-      const type = /ĐNTT/i.test(file.name) ? 5 : /BienBan|Biên bản/i.test(file.name) ? 3 : /PLHD|PLHĐ/i.test(file.name) ? 2 : 1;
+      const guessed = /ĐNTT|DNTT/i.test(file.name) ? 5 : /BienBan|Biên bản/i.test(file.name) ? 3 : /PLHD|PLHĐ|PhuLuc|Phụ lục/i.test(file.name) ? 2 : 1;
+      // Replacing keeps the template's type; a child template is never a contract.
+      const type = replace ? replace.documentType : parent && guessed === 1 ? 2 : guessed;
       setDocumentType(type);
       await render({
         ...original, documentBase64: result.documentBase64, sourceToken: result.sourceToken,
-        name: result.name, documentType: type,
+        name: replace?.name ?? result.name, documentType: type,
         blocks: result.blocks.map(({ images, ...block }) => { void images; return block; }),
         fields: [], tables: [], additions: [], sampleValues: {}, manualContent: true, checklistRules: null,
       }, false);
@@ -153,9 +161,10 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     if (!draft && documentType === 1 && !checklistConfirmed) {setError("Xác nhận danh sách điều khoản cần rà soát trước khi kích hoạt."); return;}
     setBusy(true); setError("");
     try {
-      const template = await internalApi<TemplateDefinition>("/contract-templates/word/activate", "POST", { input: payload(), previewToken: preview.token });
-      if (documentType === 1) onImported(template);
-      setMessage("Đã kích hoạt mẫu " + name + ".");
+      const template = await internalApi<TemplateDefinition>("/contract-templates/word/activate", "POST",
+        { input: payload(), previewToken: preview.token, parentTemplateId: parent?.id ?? null, replaceTemplateId: replace?.id ?? null });
+      onImported(template);
+      setMessage((replace ? "Đã thay file Word của mẫu " : "Đã kích hoạt mẫu ") + name + ".");
       setOpen(false); invalidate();
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
@@ -291,16 +300,16 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     {inline.previewHost && createPortal(previewPane, inline.previewHost)}
   </>;
   return <>
-    <Button type="button" variant="outline" disabled={disabled} onClick={() => void openEditor()}>Tải mẫu Word</Button>
-    {message && <p role="status">{message}</p>}
+    {trigger ? trigger(() => void openEditor()) : <Button type="button" variant="outline" disabled={disabled} onClick={() => void openEditor()}>Tạo mẫu văn bản</Button>}
+    {message && !trigger && <p role="status">{message}</p>}
     <Dialog open={open} onOpenChange={value => {if (!busy) setOpen(value);}}>
       <DialogContent className={styles.dialog} style={{width:"98vw",maxWidth:"98vw",height:"96dvh",display:"flex",overflow:"hidden"}} onInteractOutside={e => e.preventDefault()}>
-        <DialogHeader><DialogTitle>Soạn mẫu Word</DialogTitle><DialogDescription>Bên trái sửa nội dung trực tiếp, thêm điều khoản, bảng và ảnh. Bên phải xem bản in giữ bố cục của file Word.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{replace ? `Thay file Word · ${replace.name}` : parent ? `Tạo mẫu con cho ${parent.name}` : "Tạo mẫu văn bản"}</DialogTitle><DialogDescription>Bên trái sửa nội dung trực tiếp, thêm điều khoản, bảng và ảnh. Bên phải xem bản in giữ bố cục của file Word.</DialogDescription></DialogHeader>
         <fieldset disabled={busy} className={styles.metadata} hidden={!!draft}>
           <label><span>File Word (.doc, .docx, tối đa 10 MB)<span className={styles.required} aria-hidden>*</span></span><Input type="file" accept=".doc,.docx" onChange={e => void extract(e.target.files?.[0])}/></label>
           <label><span>Tên mẫu<span className={styles.required} aria-hidden>*</span></span><Input value={name} maxLength={500} placeholder="Ví dụ: Hợp đồng cung cấp phần mềm 2026" onChange={e => {setName(e.target.value); invalidate();}}/></label>
           <label><span>Loại mẫu<span className={styles.required} aria-hidden>*</span></span><select className={styles.select} value={documentType} onChange={e => {setDocumentType(Number(e.target.value)); invalidate();}}>
-            {documentTypes.map((label,index) => <option value={index+1} key={label}>{label}</option>)}
+            {documentTypes.map((label,index) => <option value={index+1} key={label} disabled={!!parent && index === 0}>{label}</option>)}
           </select></label>
         </fieldset>
         {!draft && documentType === 1 && <details className={styles.checklist} data-done={checklistConfirmed}><summary>Điều khoản cần rà soát · {checklistConfirmed ? "Đã xác nhận" : "Cần xác nhận trước khi kích hoạt"}</summary>

@@ -6,7 +6,15 @@ export type DepartmentOption = { id: string; code: string; name: string; staffPe
 export type TemporaryPasswordResult = { employee: EmployeeAdminRow; temporaryPassword: string };
 export type DraftField = { key: string; label: string; required: boolean; dataType?: "TEXT" | "NUMBER" | "DATE" | "SELECT"; options?: string[]; min?: number | null; max?: number | null };
 export type DraftTerm = { key: string; title: string; content: string; editable: boolean; titleEn?: string | null; contentEn?: string | null };
-export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; documentType?: number; wordStorageKey?: string | null; wordSha256?: string | null; manualWordContent?: boolean; fields: DraftField[]; terms: DraftTerm[] };
+export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; documentType?: number; wordStorageKey?: string | null; wordSha256?: string | null; manualWordContent?: boolean; fields: DraftField[]; terms: DraftTerm[]; /** The contract template a child template (appendix, handover record…) belongs to. */ parentTemplateId?: string | null };
+/** Document types of a template and of a document made from it (CONTRACT_TEMPLATE / CONTRACT_DOCUMENT document_type). */
+export const DOCUMENT_TYPES = ["Hợp đồng", "Phụ lục", "Biên bản bàn giao", "Biên lai", "Đề nghị thanh toán"] as const;
+export const documentTypeLabel = (type: number | undefined) => DOCUMENT_TYPES[(type ?? 1) - 1] ?? "Văn bản";
+/** One row of the template library (Tạo mẫu văn bản): every type, hidden ones included. */
+export type TemplateSummary = { id: string; name: string; documentType: number; parentTemplateId: string | null; parentName: string | null; active: boolean; word: boolean; childCount: number; documentCount: number; createdAt: string; updatedAt: string | null };
+export type RelatedDocument = { id: string; code: string | null; name: string; documentType: number; status: number; templateId: string; createdAt: string };
+/** A contract and its attached documents: its parent (for a child), its children, and the child templates it can make them from. */
+export type DraftRelations = { parent: RelatedDocument | null; children: RelatedDocument[]; childTemplates: { id: string; name: string; documentType: number }[] };
 export type CustomerOption = { id: string; name: string; phone: string; fields: Record<string, string>; businessId?: string | null };
 export type CustomerInput = { name: string; phone: string; email: string; company: string; taxCode: string; address: string; partyType?: "PERSON" | "BUSINESS" };
 export type ProductOption = { id: string; name: string; price: number };
@@ -19,7 +27,7 @@ export type DraftContent = { numberingBusinessId?: string | null; contractNumber
 export type DraftIssue = { code: string; path: string; message: string };
 export type CarriedDraftComment = { id: string; termKey: string | null; content: string; sourceCommentId: string | null; sourceVersionId: string | null; resolved: boolean };
 export type DraftRecord = { paperEvidencePending?: boolean; issues?: DraftIssue[]; carriedComments?: CarriedDraftComment[]; id: string; code: string; employeeId: string; employeeName: string; rowVersion: string; versionRowVersion: string; updatedAt: string; content: DraftContent; status: number; versionNo: string; locked: boolean; canEdit: boolean; customerName: string; customerPhoneMasked: string; latestReviewStatus: string | null; sendBlockedReason: string | null; /** False for a prospect: no portal login yet, reads and signs through the emailed link. */ customerHasAccount?: boolean };
-export type DraftSummary = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; updatedAt: string; missingCount: number; status: number; latestReviewStatus: string | null };
+export type DraftSummary = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; updatedAt: string; missingCount: number; status: number; latestReviewStatus: string | null; templateId: string; documentType: number };
 export type ContractArchiveEntry = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; createdAt: string; updatedAt: string; status: number; versionNo: string; versionLocked: boolean; signatureCount: number; lastSignedAt: string | null; totalAmount: number; currencyCode: string; effectiveDate: string | null; expireDate: string | null };
 export type SigningMonitorEntry = { id: string; code: string; name: string; customerName: string; employeeId: string; employeeName: string; updatedAt: string; status: number; versionNo: string; signatureCount: number; signedCount: number; companySigned: boolean; customerSigned: boolean; latestReviewStatus: string | null; lastSignedAt: string | null; paper?: boolean };
 export type SigningTimelineEvent = { at: string; category: string; title: string; detail: string | null; state: string };

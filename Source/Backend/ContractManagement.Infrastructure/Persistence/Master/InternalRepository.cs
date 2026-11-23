@@ -65,17 +65,19 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     }
     public async Task<List<TemplateDefinition>> Templates(CancellationToken ct)
     {
-        var templates = await db.ContractTemplates.AsNoTracking().Where(t => t.IsActive && t.ContractTemplateDocumentType == 1).ToListAsync(ct);
+        // Every document type (contract, appendix, handover record, receipt, payment request): drafts are made from any of them.
+        var templates = await db.ContractTemplates.AsNoTracking().Where(t => t.IsActive).ToListAsync(ct);
         var result = new List<TemplateDefinition>();
         foreach (var t in templates)
         {
             var id = t.ContractTemplateId;
             var file = await db.FileStorages.AsNoTracking().Where(f => f.FileStorageObjecttype == "INTERNAL_TEMPLATE" && f.FileStorageObjectid == id)
                 .OrderByDescending(f => f.FileStorageFileid).FirstOrDefaultAsync(ct);
-            if (file is not null) { result.Add(DraftCompletionPolicy.UpgradeTemplate((await storage.Read(file, ct)) with { Name = t.ContractTemplateName })); continue; }
+            // The table's type wins over the stored definition, which older files wrote without one (read back as 1).
+            if (file is not null) { result.Add(DraftCompletionPolicy.UpgradeTemplate((await storage.Read(file, ct)) with { Name = t.ContractTemplateName, DocumentType = t.ContractTemplateDocumentType, ParentTemplateId = t.ParentTemplateId })); continue; }
             // An uploaded template whose definition file is missing is skipped, as before; only SQL-defined templates have no stored files.
             if (await db.FileStorages.AnyAsync(f => f.FileStorageObjecttype.StartsWith("INTERNAL_TEMPLATE") && f.FileStorageObjectid == id, ct)) continue;
-            if (await FromDatabase(t, ct) is { } defined) result.Add(DraftCompletionPolicy.UpgradeTemplate(defined));
+            if (await FromDatabase(t, ct) is { } defined) result.Add(DraftCompletionPolicy.UpgradeTemplate(defined with { DocumentType = t.ContractTemplateDocumentType, ParentTemplateId = t.ParentTemplateId }));
         }
         return result;
     }
@@ -99,8 +101,8 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         if (string.IsNullOrEmpty(name) || name.Length > 500)
             throw new ArgumentException("Tên mẫu phải có từ 1 đến 500 ký tự.");
         var template = await db.ContractTemplates.SingleOrDefaultAsync(
-            t => t.ContractTemplateId == id && t.IsActive && t.ContractTemplateDocumentType == 1, ct)
-            ?? throw new InternalAppException(404, "Không tìm thấy mẫu hợp đồng đang hoạt động.");
+            t => t.ContractTemplateId == id && t.IsActive, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy mẫu văn bản đang hoạt động.");
         if (template.ContractTemplateName == name) return name;
 
         var now = DateTime.UtcNow;
@@ -119,6 +121,125 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         template.UpdatedDate = now;
         await db.SaveChangesAsync(ct);
         return name;
+    }
+
+    /// <summary>
+    /// Takes a template out of use. Drafts and signed documents keep their own snapshot of it, so the row and its files stay
+    /// (they are the history of what was used); the template only leaves the template list and the draft editor.
+    /// </summary>
+    public async Task DeleteTemplate(long id, InternalUser actor, CancellationToken ct)
+    {
+        if (!actor.CanManageTemplates)
+            throw new InternalAppException(403, "Bạn không có quyền quản lý mẫu văn bản.");
+        var template = await db.ContractTemplates.SingleOrDefaultAsync(t => t.ContractTemplateId == id && t.IsActive, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy mẫu văn bản đang hoạt động.");
+        var now = DateTime.UtcNow;
+        db.AuditLogs.Add(new AuditLog
+        {
+            ActionType = "DELETE_TEMPLATE",
+            EntityName = "CONTRACT_TEMPLATE",
+            EntityId = id.ToString(),
+            ActorType = "EMPLOYEE",
+            ActorId = actor.Id,
+            CreatedAt = now,
+            OldData = JsonSerializer.Serialize(new { name = template.ContractTemplateName, documentType = template.ContractTemplateDocumentType, isActive = true }, Json),
+            NewData = JsonSerializer.Serialize(new { isActive = false }, Json)
+        });
+        template.IsActive = false;
+        template.UpdatedDate = now;
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>The template library: every template of every type, hidden ones included, with its parent and how often it is used.</summary>
+    public async Task<List<TemplateSummary>> TemplateLibrary(CancellationToken ct)
+    {
+        var rows = await db.ContractTemplates.AsNoTracking().OrderByDescending(t => t.ContractTemplateId).ToListAsync(ct);
+        var words = await db.FileStorages.AsNoTracking().Where(f => f.FileStorageObjecttype == "INTERNAL_TEMPLATE_WORD")
+            .Select(f => f.FileStorageObjectid).Distinct().ToListAsync(ct);
+        var used = await db.ContractDocuments.AsNoTracking().GroupBy(d => d.ContractTemplateId)
+            .Select(g => new { g.Key, Count = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Count, ct);
+        var names = rows.ToDictionary(t => t.ContractTemplateId, t => t.ContractTemplateName);
+        return rows.Select(t => new TemplateSummary(t.ContractTemplateId, t.ContractTemplateName, t.ContractTemplateDocumentType,
+            t.ParentTemplateId, t.ParentTemplateId is long p ? names.GetValueOrDefault(p) : null, t.IsActive, words.Contains(t.ContractTemplateId),
+            rows.Count(c => c.ParentTemplateId == t.ContractTemplateId), used.GetValueOrDefault(t.ContractTemplateId), t.CreatedDate, t.UpdatedDate)).ToList();
+    }
+
+    /// <summary>Name, document type and parent of a template; its Word content is replaced through the Word preview and activation.</summary>
+    public async Task<TemplateSummary> UpdateTemplate(long id, TemplateInfoInput input, InternalUser actor, CancellationToken ct)
+    {
+        if (!actor.CanManageTemplates) throw new InternalAppException(403, "Bạn không có quyền quản lý mẫu văn bản.");
+        var name = input.Name?.Trim();
+        if (string.IsNullOrEmpty(name) || name.Length > 500) throw new ArgumentException("Tên mẫu phải có từ 1 đến 500 ký tự.");
+        var template = await db.ContractTemplates.SingleOrDefaultAsync(t => t.ContractTemplateId == id && t.IsActive, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy mẫu văn bản đang dùng.");
+        await TemplateHierarchy.Validate(db, id, input.DocumentType, input.ParentTemplateId, ct);
+        var now = DateTime.UtcNow;
+        db.AuditLogs.Add(new AuditLog
+        {
+            ActionType = "UPDATE_TEMPLATE", EntityName = "CONTRACT_TEMPLATE", EntityId = id.ToString(), ActorType = "EMPLOYEE", ActorId = actor.Id, CreatedAt = now,
+            OldData = JsonSerializer.Serialize(new { name = template.ContractTemplateName, documentType = template.ContractTemplateDocumentType, parentTemplateId = template.ParentTemplateId }, Json),
+            NewData = JsonSerializer.Serialize(new { name, documentType = input.DocumentType, parentTemplateId = input.ParentTemplateId }, Json)
+        });
+        template.ContractTemplateName = name;
+        template.ContractTemplateDocumentType = input.DocumentType;
+        template.ParentTemplateId = input.ParentTemplateId;
+        template.UpdatedDate = now;
+        template.ModifiedEmployeeId = checked((int)actor.Id);
+        await db.SaveChangesAsync(ct);
+        return (await TemplateLibrary(ct)).Single(t => t.Id == id);
+    }
+
+    /// <summary>Puts a hidden template back in the template list and the draft editor.</summary>
+    public async Task<TemplateSummary> RestoreTemplate(long id, InternalUser actor, CancellationToken ct)
+    {
+        if (!actor.CanManageTemplates) throw new InternalAppException(403, "Bạn không có quyền quản lý mẫu văn bản.");
+        var template = await db.ContractTemplates.SingleOrDefaultAsync(t => t.ContractTemplateId == id && !t.IsActive, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy mẫu văn bản đã ẩn.");
+        // A child whose parent is hidden comes back attached: the parent check would refuse it, so only the type is checked.
+        TemplateHierarchy.ValidateType(template.ContractTemplateDocumentType);
+        var now = DateTime.UtcNow;
+        db.AuditLogs.Add(new AuditLog { ActionType = "RESTORE_TEMPLATE", EntityName = "CONTRACT_TEMPLATE", EntityId = id.ToString(),
+            ActorType = "EMPLOYEE", ActorId = actor.Id, CreatedAt = now,
+            OldData = JsonSerializer.Serialize(new { isActive = false }, Json), NewData = JsonSerializer.Serialize(new { isActive = true }, Json) });
+        template.IsActive = true;
+        template.UpdatedDate = now;
+        await db.SaveChangesAsync(ct);
+        return (await TemplateLibrary(ct)).Single(t => t.Id == id);
+    }
+
+    public const string ChildRelation = "ATTACHMENT";
+
+    /// <summary>A child document goes with a contract the actor works on, is made from a child template of that contract's template, for the same customer.</summary>
+    internal async Task CheckChildDocument(long parentId, DraftContent content, InternalUser actor, CancellationToken ct)
+    {
+        var parent = await db.ContractDocuments.AsNoTracking().SingleOrDefaultAsync(d => d.ContractDocumentId == parentId && d.TenantId == null, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng cha.");
+        InternalDraftService.RequireAccess(actor, parent.EmployeeId);
+        if (parent.ContractDocumentType != TemplateHierarchy.Contract)
+            throw new ArgumentException("Chỉ gắn văn bản đi kèm vào một hợp đồng.");
+        if (!await db.ContractTemplates.AnyAsync(t => t.ContractTemplateId == content.TemplateId && t.IsActive && t.ParentTemplateId == parent.ContractTemplateId, ct))
+            throw new ArgumentException("Chọn một mẫu con của mẫu hợp đồng này.");
+        if (content.CustomerId != parent.CustomerId)
+            throw new ArgumentException("Văn bản đi kèm phải cùng khách hàng với hợp đồng.");
+    }
+
+    public async Task<DraftRelations> Related(long id, InternalUser actor, CancellationToken ct)
+    {
+        var document = await db.ContractDocuments.AsNoTracking().SingleOrDefaultAsync(d => d.ContractDocumentId == id && d.TenantId == null, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy hồ sơ.");
+        InternalDraftService.RequireAccess(actor, document.EmployeeId);
+        var parentId = await db.ContractDocumentRelations.AsNoTracking().Where(r => r.ChildDocumentId == id && r.ContractDocumentRelationType == ChildRelation)
+            .Select(r => (long?)r.ParentDocumentId).FirstOrDefaultAsync(ct);
+        var childIds = await db.ContractDocumentRelations.AsNoTracking().Where(r => r.ParentDocumentId == id && r.ContractDocumentRelationType == ChildRelation)
+            .Select(r => r.ChildDocumentId).ToListAsync(ct);
+        var ids = childIds.Append(parentId ?? 0).ToList();
+        var related = await db.ContractDocuments.AsNoTracking().Where(d => ids.Contains(d.ContractDocumentId))
+            .Select(d => new RelatedDocument(d.ContractDocumentId, d.ContractDocumentCode, d.ContractDocumentName, d.ContractDocumentType,
+                d.ContractDocumentStatus, d.ContractTemplateId, d.CreatedDate)).ToListAsync(ct);
+        var childTemplates = document.ContractDocumentType != TemplateHierarchy.Contract ? [] : await db.ContractTemplates.AsNoTracking()
+            .Where(t => t.IsActive && t.ParentTemplateId == document.ContractTemplateId).OrderBy(t => t.ContractTemplateDocumentType).ThenBy(t => t.ContractTemplateName)
+            .Select(t => new ChildTemplateOption(t.ContractTemplateId, t.ContractTemplateName, t.ContractTemplateDocumentType)).ToListAsync(ct);
+        return new(related.SingleOrDefault(d => d.Id == parentId), related.Where(d => childIds.Contains(d.Id)).OrderBy(d => d.CreatedAt).ToList(), childTemplates);
     }
 
     public async Task<List<CustomerOption>> Customers(string? search, CancellationToken ct, long? owner = null)
@@ -297,7 +418,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 DraftValidation.Recheck(content);
             return new DraftSummary(x.d.ContractDocumentId, x.d.ContractDocumentCode!, x.d.ContractDocumentName,
             x.CustomerDisplayName, x.d.EmployeeId, x.EmployeeDisplayName, x.d.UpdatedDate ?? x.d.CreatedDate,
-            content.MissingFields.Count, x.d.ContractDocumentStatus, x.Latest); }).ToList();
+            content.MissingFields.Count, x.d.ContractDocumentStatus, x.Latest, x.d.ContractTemplateId, x.d.ContractDocumentType); }).ToList();
     }
     /// <summary>Documents whose current version's snapshot is of the given party type (all when party is null).</summary>
     private IQueryable<ContractDocument> OfParty(string? party) => party == null ? db.ContractDocuments.AsNoTracking()
@@ -605,6 +726,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 }
                 else
                 {
+                    if (request.ParentDocumentId is long parentId) await CheckChildDocument(parentId, content, actor, ct);
                     // The contract register follows Vietnam's calendar, including the New Year boundary.
                     var date = now.AddHours(7);
                     var owner = content.NumberingBusinessId ?? 0;
@@ -619,10 +741,13 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     var numbers = await db.Database.SqlQuery<string>($"EXEC dbo.AllocateFormattedContractNumber @owner={owner}, @day={date.Date}").ToListAsync(ct);
                     var code = numbers.Single();
                     document = new ContractDocument { CustomerId = content.CustomerId, EmployeeId = actor.Id, ContractTemplateId = content.TemplateId,
-                        ContractDocumentName = content.Name, ContractDocumentCode = code, ContractDocumentType = 1,
+                        ContractDocumentName = content.Name, ContractDocumentCode = code, ContractDocumentType = content.TemplateSnapshot?.DocumentType ?? 1,
                         ContractDocumentStatus = 0, CreatedDate = now };
                     db.ContractDocuments.Add(document);
                     await db.SaveChangesAsync(ct);
+                    if (request.ParentDocumentId is long attachedTo)
+                        db.ContractDocumentRelations.Add(new ContractDocumentRelation { ParentDocumentId = attachedTo, ChildDocumentId = document.ContractDocumentId,
+                            ContractDocumentRelationType = ChildRelation, CreatedDate = now });
                     version = new ContractVersion { ContractDocumentId = document.ContractDocumentId, ContractTemplateId = content.TemplateId,
                         ContractVersionVersionNo = 1, ContractVersionCurrencycode = "VND", ContractVersionCreatedDate = now };
                     db.ContractVersions.Add(version);

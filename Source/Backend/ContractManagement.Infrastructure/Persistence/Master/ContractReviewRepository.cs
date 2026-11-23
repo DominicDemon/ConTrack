@@ -557,8 +557,11 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             join v in db.ContractVersions on new { r.ContractDocumentId, r.ContractVersionId } equals new { v.ContractDocumentId, v.ContractVersionId }
             where r.CustomerId == customerId
             let signed = signedVersions.Any(s => s.ContractDocumentId == r.ContractDocumentId && s.ContractVersionId == r.ContractVersionId)
+            let parentName = (from rel in db.ContractDocumentRelations join p in db.ContractDocuments on rel.ParentDocumentId equals p.ContractDocumentId
+                where rel.ChildDocumentId == d.ContractDocumentId && rel.ContractDocumentRelationType == InternalRepository.ChildRelation
+                select p.ContractDocumentName).FirstOrDefault()
             select new CustomerReviewSummary(r.ContractReviewRequestId, d.ContractDocumentName, v.ContractVersionVersionNo, r.ContractReviewRequestStatus,
-                r.SentAt, r.RespondedAt, r.FirstViewedAt, signed))
+                r.SentAt, r.RespondedAt, r.FirstViewedAt, signed, parentName, d.ContractDocumentType))
             .ToListAsync(ct);
         return rows.OrderByDescending(r => !r.IsSigned && ContractReviewStatus.IsOpen(r.Status)).ThenByDescending(r => r.SentAt).ToList();
     }
@@ -720,7 +723,40 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             .AnyAsync(v => v.ContractDocumentId == review.ContractDocumentId && v.ContractVersionId == review.ContractVersionId, ct);
         return new(review.ContractReviewRequestId, doc.ContractDocumentName, versionNo, review.ContractReviewRequestStatus, review.SentAt, review.ContractReviewRequestMessage,
             review.ContractReviewRequestCustomerNote, review.RespondedAt, review.ContractReviewRequestDocumentHash, Convert.ToBase64String(review.Rowversion), content,
-            comments.GetValueOrDefault(review.ContractReviewRequestId) ?? [], signed);
+            comments.GetValueOrDefault(review.ContractReviewRequestId) ?? [], signed, await Related(review, ct));
+    }
+
+    /// <summary>The contract this document belongs to and the documents attached to it, each with the customer's latest review of it.</summary>
+    private async Task<List<CustomerRelatedDocument>> Related(ContractReviewRequest review, CancellationToken ct)
+    {
+        var id = review.ContractDocumentId;
+        var links = await db.ContractDocumentRelations.AsNoTracking()
+            .Where(r => r.ContractDocumentRelationType == InternalRepository.ChildRelation && (r.ParentDocumentId == id || r.ChildDocumentId == id))
+            .Select(r => new { r.ParentDocumentId, r.ChildDocumentId }).ToListAsync(ct);
+        if (links.Count == 0) return [];
+        var parentId = links.Where(l => l.ChildDocumentId == id).Select(l => (long?)l.ParentDocumentId).FirstOrDefault();
+        // Siblings too: a handover record opened from the portal shows its contract and the contract's other attachments.
+        if (parentId is { } p)
+            links.AddRange(await db.ContractDocumentRelations.AsNoTracking()
+                .Where(r => r.ContractDocumentRelationType == InternalRepository.ChildRelation && r.ParentDocumentId == p && r.ChildDocumentId != id)
+                .Select(r => new { r.ParentDocumentId, r.ChildDocumentId }).ToListAsync(ct));
+        var ids = links.Select(l => l.ParentDocumentId == id || l.ParentDocumentId == parentId ? l.ChildDocumentId : l.ParentDocumentId)
+            .Append(parentId ?? 0).Where(x => x != 0 && x != id).Distinct().ToList();
+        var docs = await db.ContractDocuments.AsNoTracking()
+            .Where(d => ids.Contains(d.ContractDocumentId) && d.CustomerId == review.CustomerId && d.ContractDocumentStatus != ContractDocumentStatus.Cancelled)
+            .Select(d => new { d.ContractDocumentId, d.ContractDocumentName, d.ContractDocumentType }).ToListAsync(ct);
+        var signedVersions = CustomerSigningService.CompletedVersions(db);
+        var reviews = await db.ContractReviewRequests.AsNoTracking()
+            .Where(r => ids.Contains(r.ContractDocumentId) && r.CustomerId == review.CustomerId)
+            .Select(r => new { r.ContractDocumentId, r.ContractReviewRequestId, r.ContractReviewRequestStatus,
+                Signed = signedVersions.Any(s => s.ContractDocumentId == r.ContractDocumentId && s.ContractVersionId == r.ContractVersionId) })
+            .ToListAsync(ct);
+        return docs.Select(d =>
+        {
+            var latest = reviews.Where(r => r.ContractDocumentId == d.ContractDocumentId).MaxBy(r => r.ContractReviewRequestId);
+            return new CustomerRelatedDocument(d.ContractDocumentId == parentId ? "PARENT" : "ATTACHMENT", d.ContractDocumentName, d.ContractDocumentType,
+                latest?.ContractReviewRequestId, latest?.ContractReviewRequestStatus, latest?.Signed ?? false);
+        }).OrderBy(d => d.Relation == "PARENT" ? 0 : 1).ThenBy(d => d.DocumentType).ToList();
     }
 }
 

@@ -4,7 +4,7 @@ import { Eye, EyeOff, Sparkles } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { internalApi, type BusinessOption, type CategoryOption, type CustomerRow, type DepartmentRow, type ProductRow } from "@/services/internal-api";
+import { internalApi, DOCUMENT_TYPES, type BusinessOption, type CategoryOption, type CustomerRow, type DepartmentRow, type ProductRow, type TemplateSummary } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import { CustomerCreateFields, customerCreateReady, newCustomer } from "./customer-create-fields";
 
@@ -211,6 +211,28 @@ export function ProductFormDialog({ product, categories, onClose, onSaved }: { p
       <label className={field}>Đơn vị tính<Input maxLength={100} value={unit} disabled={busy} placeholder="VD: Gói, Tháng" onChange={e => setUnit(e.target.value)}/></label>
       <label className={field}>Giá đề xuất (VND)<Input type="number" min={0} step="any" value={price} disabled={busy} onChange={e => setPrice(e.target.value)}/></label>
       <label className={`${field} sm:col-span-2`}>Mô tả ngắn<textarea className={ui.field} rows={3} maxLength={2000} value={description} disabled={busy} onChange={e => setDescription(e.target.value)}/></label>
+    </div>
+  </FormDialog>;
+}
+
+/** Name, document type and parent of a template; its Word content is replaced through the Word editor. */
+export function TemplateInfoDialog({ template, parents, onClose, onSaved }: { template: TemplateSummary; parents: TemplateSummary[]; onClose: () => void; onSaved: (row: TemplateSummary) => void }) {
+  const [name, setName] = useState(template.name); const [documentType, setDocumentType] = useState(template.documentType);
+  const [parentId, setParentId] = useState(template.parentTemplateId ?? "");
+  const { busy, error, save } = useSave(onSaved);
+  // A contract template is never a child; a child hangs under an active contract template other than itself.
+  const choices = parents.filter(p => p.active && p.documentType === 1 && p.id !== template.id);
+  return <FormDialog title={`Sửa ${template.name}`} description="Nội dung Word được thay ở nút Thay file Word; văn bản đã tạo giữ nguyên nội dung cũ."
+    busy={busy} error={error} ready={!!name.trim()} submit="Lưu thay đổi" onClose={onClose}
+    onSubmit={() => void save(() => internalApi<TemplateSummary>(`/contract-templates/${template.id}`, "PUT",
+      { name, documentType, parentTemplateId: documentType === 1 || !parentId ? null : parentId }))}>
+    <label className={field}>Tên mẫu *<Input required maxLength={500} value={name} disabled={busy} onChange={e => setName(e.target.value)}/></label>
+    <div className="grid gap-4 sm:grid-cols-2">
+      <label className={field}>Loại văn bản *<select className={ui.field} value={documentType} disabled={busy || template.childCount > 0}
+        onChange={e => setDocumentType(Number(e.target.value))}>{DOCUMENT_TYPES.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}</select>
+        {template.childCount > 0 && <span className="text-xs font-normal text-muted-foreground">Mẫu đang có {template.childCount} mẫu con nên giữ loại Hợp đồng.</span>}</label>
+      <label className={field}>Mẫu hợp đồng cha<select className={ui.field} value={documentType === 1 ? "" : parentId} disabled={busy || documentType === 1}
+        onChange={e => setParentId(e.target.value)}><option value="">Không gắn mẫu cha</option>{choices.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     </div>
   </FormDialog>;
 }

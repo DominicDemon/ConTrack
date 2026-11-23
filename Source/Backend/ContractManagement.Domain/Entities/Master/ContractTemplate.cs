@@ -17,6 +17,9 @@ public partial class ContractTemplate
 
     public int ContractTemplateDocumentType { get; set; }
 
+    /// <summary>The contract template (type 1) a child template (types 2-5) is attached to; 019-template-parent.sql.</summary>
+    public long? ParentTemplateId { get; set; }
+
     public int ContractTemplateLanguageMode { get; set; }
 
     public bool IsActive { get; set; }

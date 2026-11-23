@@ -729,6 +729,7 @@ public partial class MasterDbContext : DbContext
                 .HasMaxLength(2000)
                 .HasColumnName("contract_template_description");
             entity.Property(e => e.ContractTemplateDocumentType).HasColumnName("contract_template_document_type");
+            entity.Property(e => e.ParentTemplateId).HasColumnName("parent_template_id");
             entity.Property(e => e.ContractTemplateLanguageMode)
                 .HasDefaultValue(1)
                 .HasColumnName("contract_template_language_mode");

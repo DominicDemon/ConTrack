@@ -10,7 +10,9 @@ public sealed record DraftTerm(string Key, string Title, string Content, bool Ed
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ContentEn = null);
 public sealed record TemplateDefinition(long Id, string Name, string Revision, bool IsDemo,
     List<DraftField> Fields, List<DraftTerm> Terms, bool IsImported = false,
-    int DocumentType = 1, string? WordStorageKey = null, string? WordSha256 = null, bool ManualWordContent = false);
+    int DocumentType = 1, string? WordStorageKey = null, string? WordSha256 = null, bool ManualWordContent = false,
+    // The contract template a child template (appendix, handover record…) belongs to; read from CONTRACT_TEMPLATE, not stored.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ParentTemplateId = null);
 public sealed record DraftItem(long? ProductId, string Name, decimal Quantity, decimal UnitPrice,
     decimal DiscountPercent, decimal DiscountAmount);
 public sealed record DraftTotals(decimal Subtotal, decimal Discount, decimal Vat, decimal Total);

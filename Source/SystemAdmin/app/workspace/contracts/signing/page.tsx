@@ -55,7 +55,7 @@ export default function ContractSigningMonitorPage() {
     <div className={s.signingHeading}>
       <div><div className={s.signingKicker}><Activity size={15}/> VẬN HÀNH HỢP ĐỒNG</div><h1>Theo dõi ký hợp đồng</h1><p className={s.muted}>Xem tiến độ của từng hồ sơ, chữ ký đã ghi nhận và các bước đang chờ.</p></div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        <Link href="/workspace/contracts/drafts/new" className={ui.primaryButton}><FilePlus2 size={16}/>Tạo hợp đồng nháp</Link>
+        <Link href="/workspace/contracts/drafts/new" className={ui.primaryButton}><FilePlus2 size={16}/>Tạo hợp đồng</Link>
         <button className={ui.secondaryButton} disabled={busy} onClick={() => setReload(v => v + 1)}><RefreshCw size={15}/> Làm mới</button>
       </div>
     </div>

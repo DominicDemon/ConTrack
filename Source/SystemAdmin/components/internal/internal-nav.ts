@@ -24,7 +24,7 @@ export type NavItem = { label: string; icon: LucideIcon; href: string; permissio
 /** Order follows the departments: Ban Giám Đốc, Kinh doanh, Kỹ thuật, Kế toán, Hành chính - Pháp chế (005-department-roles.sql). */
 export const NAV_ITEMS: NavItem[] = [
   { label: "Tổng quan", icon: LayoutDashboard, href: "/workspace", permissions: [] },
-  { label: "Mẫu hợp đồng", icon: Files, href: "/workspace/templates", permissions: ["template.manage"] },
+  { label: "Tạo mẫu văn bản", icon: Files, href: "/workspace/templates", permissions: ["template.manage"] },
   { label: "Quy tắc số hợp đồng", icon: Files, href: "/workspace/number-rules", permissions: ["contract.check"] },
   { label: "Nhân viên & phân quyền", icon: UsersRound, href: "/workspace/admin/employees", permissions: ["employee.manage"] },
   { label: "Phòng ban", icon: Building2, href: "/workspace/admin/departments", permissions: ["department.manage"] },
@@ -52,7 +52,7 @@ const ADMIN_OFFICER_NAV_ITEMS: NavItem[] = [
   { label: "Kho hợp đồng", icon: Archive, href: "/workspace/contracts/archive", permissions: ["contract.read", "legal.manage"] },
   { label: "Theo dõi ký", icon: Activity, href: "/workspace/contracts/signing", permissions: ["contract.read", "legal.manage"] },
   { label: "Chờ Admin ký", icon: FileSignature, href: "/workspace/contracts/company-signing", permissions: ["legal.manage"] },
-  { label: "Mẫu hợp đồng", icon: Files, href: "/workspace/templates", permissions: ["template.read", "template.manage"] },
+  { label: "Tạo mẫu văn bản", icon: Files, href: "/workspace/templates", permissions: ["template.read", "template.manage"] },
   { label: "Hỗ trợ khách hàng", icon: LifeBuoy, href: "/workspace/support-tickets", permissions: ["ticket.handle", "ticket.manage.all"] },
 ];
 

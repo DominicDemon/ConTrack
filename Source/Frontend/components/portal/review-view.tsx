@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, MessageSquare, Pencil, PenLine, Trash2, XCircle } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Check, Files, MessageSquare, Pencil, PenLine, Trash2, XCircle } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,7 +13,7 @@ import s from "@/components/internal/workspace.module.css";
 import PortalHeader from "./portal-header";
 import PortalSigningPanel from "./portal-signing-panel";
 import { dateTime } from "@/services/internal-api";
-import { CustomerApiError, customerApi, customerStatusLabel, handleAuthError, isOpenReview, type CustomerReviewDetail, type ReviewComment } from "@/services/customer-api";
+import { CustomerApiError, customerApi, customerStatusLabel, documentTypeLabel, handleAuthError, isOpenReview, type CustomerReviewDetail, type ReviewComment } from "@/services/customer-api";
 import { onNotificationRefresh } from "../../../Shared/notification-navigation";
 
 type Decision = "APPROVE" | "REQUEST_CHANGES" | "REJECT";
@@ -91,6 +91,16 @@ export default function ReviewView({ id, onAuthLost }: { id: string; onAuthLost?
     <div className={s.titleRow}><div>{!onAuthLost && <Link href="/portal/contracts" className={s.muted} style={{ display: "inline-flex", gap: 6, alignItems: "center" }}><ArrowLeft size={16}/>Hợp đồng của bạn</Link>}
       <h1>{review.contractName}</h1><p className={s.muted}>Phiên bản {review.versionNo} · gửi lúc {dateTime(review.sentAt)}</p></div>
       <span className={`${s.badge} ${open ? s.warning : ""}`}>{review.isSigned ? "Đã ký" : customerStatusLabel[review.status] ?? review.status}</span></div>
+    {review.related && review.related.length > 0 && <section className={ui.card} style={{ marginBottom: 16 }} aria-label="Văn bản liên quan">
+      <h2 style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 16 }}><Files size={18}/>{review.related.some(d => d.relation === "ATTACHMENT") ? "Văn bản đi kèm" : "Thuộc hợp đồng"}</h2>
+      <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Văn bản</th><th>Loại</th><th>Trạng thái</th><th><span className="sr-only">Mở</span></th></tr></thead>
+        <tbody>{review.related.map(d => <tr key={`${d.relation}-${d.reviewId ?? d.name}`}>
+          <td>{d.reviewId && !onAuthLost ? <Link href={`/portal/contracts/${d.reviewId}`}>{d.name}</Link> : <strong>{d.name}</strong>}</td>
+          <td>{d.relation === "PARENT" ? "Hợp đồng gốc" : documentTypeLabel(d.documentType)}</td>
+          <td>{d.reviewId ? <span className={`${s.badge} ${!d.isSigned && d.status && isOpenReview(d.status) ? s.warning : ""}`}>{d.isSigned ? "Đã ký" : customerStatusLabel[d.status ?? ""] ?? d.status}</span>
+            : <span className={s.muted}>Công ty đang chuẩn bị, sẽ gửi bạn sau</span>}</td>
+          <td>{d.reviewId && !onAuthLost && <Link href={`/portal/contracts/${d.reviewId}`} aria-label={`Mở ${d.name}`}><ArrowUpRight size={18}/></Link>}</td></tr>)}</tbody></table></div>
+    </section>}
     {review.message && <p className={ui.notice} style={{ marginBottom: 16 }}>Lời nhắn của nhân viên: {review.message}</p>}
     {error && <p role="alert" className={ui.error} style={{ marginBottom: 16 }}>{error}</p>}
     {!open && <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>{review.respondedAt ? `Bạn đã phản hồi lúc ${dateTime(review.respondedAt)}.` : "Lần gửi này không còn nhận phản hồi."}{review.customerNote ? ` Ghi chú: ${review.customerNote}` : ""}</p>}

@@ -64,6 +64,28 @@ export default function InternalShell({ children }: { children: ReactNode }) {
       });
   }, [router, path, attempt]);
 
+  // One session cookie serves every tab: signing in as someone else in another tab changes who this tab acts as.
+  // Coming back to the tab re-checks the account, so nobody sends or approves under a name the header no longer shows.
+  const userId = user?.id;
+  useEffect(() => {
+    if (!userId) return;
+    let checking = false;
+    const check = () => {
+      if (document.visibilityState !== "visible" || checking) return;
+      checking = true;
+      void internalApi<InternalUser>("/auth/me").then((u) => {
+        if (u.id === userId) return;
+        window.alert(`Trình duyệt này vừa đăng nhập tài khoản khác (${u.name}). Trang sẽ tải lại theo tài khoản ${u.name}.`);
+        window.location.reload();
+      }).catch((e) => {
+        if (e instanceof InternalApiError && e.status === 401) router.replace(`/internal-login?next=${encodeURIComponent(window.location.pathname)}`);
+      }).finally(() => { checking = false; });
+    };
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => { window.removeEventListener("focus", check); document.removeEventListener("visibilitychange", check); };
+  }, [userId, router]);
+
   async function logout() {
     try {
       await internalApi("/auth/logout", "POST");

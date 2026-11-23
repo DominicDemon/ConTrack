@@ -13,7 +13,8 @@ const nextConfig = {
   // Shared TypeScript sources live beside this app in the monorepo.
   turbopack: { root: path.resolve(process.cwd(), "..") },
   experimental: {
-    agentUpgrade: "security",
+    // No upgrade reminder during `next dev`/`next build`: its prompt stops the dev server. Upgrade Next.js deliberately instead.
+    agentUpgrade: false,
     // Scans go through the /api/internal proxy: up to 20 MB each, and OCR-related calls can take a while.
     proxyClientMaxBodySize: 210 * 1024 * 1024,
     proxyTimeout: 15 * 60 * 1000,

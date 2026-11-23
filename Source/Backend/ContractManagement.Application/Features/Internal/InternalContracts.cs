@@ -86,7 +86,7 @@ public sealed record BusinessOption(long Id, string Name, string TaxCode, string
 public sealed record ProductOption(long Id, string Name, decimal Price);
 public sealed record EmployeeOption(long Id, string Name);
 public sealed record DraftSummary(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName, DateTime UpdatedAt, int MissingCount,
-    int Status, string? LatestReviewStatus);
+    int Status, string? LatestReviewStatus, long TemplateId = 0, int DocumentType = 1);
 public sealed record ContractArchiveEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
     DateTime CreatedAt, DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, int SignatureCount, DateTime? LastSignedAt,
     decimal TotalAmount, string CurrencyCode, DateTime? EffectiveDate, DateTime? ExpireDate);
@@ -104,8 +104,17 @@ public sealed record SigningArtifactInfo(string FileName, string ContentType, lo
 public sealed record DraftRecord(long Id, string Code, long EmployeeId, string EmployeeName, string RowVersion, string VersionRowVersion, DateTime UpdatedAt, DraftContent Content,
     int Status, long VersionNo, bool Locked, bool CanEdit, string CustomerName, string CustomerPhoneMasked, string? LatestReviewStatus, string? SendBlockedReason,
     List<DraftIssue>? Issues = null, List<CarriedDraftComment>? CarriedComments = null, bool CustomerHasAccount = false, bool PaperEvidencePending = false);
+/// <summary>One row of the template library (Tạo mẫu văn bản): every type, hidden ones included.</summary>
+public sealed record TemplateSummary(long Id, string Name, int DocumentType, long? ParentTemplateId, string? ParentName, bool Active,
+    bool Word, int ChildCount, int DocumentCount, DateTime CreatedAt, DateTime? UpdatedAt);
+public sealed record TemplateInfoInput(string? Name, int DocumentType, long? ParentTemplateId);
 public sealed record CarriedDraftComment(long Id, string? TermKey, string Content, long? SourceCommentId, long? SourceVersionId, bool Resolved);
-public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion, string? WordPreviewToken = null);
+/// <param name="ParentDocumentId">On create: attach the new document (appendix, handover record…) to this contract.</param>
+public sealed record SaveDraftRequest(DraftContent Content, string? RowVersion, string? VersionRowVersion, string? WordPreviewToken = null, long? ParentDocumentId = null);
+public sealed record RelatedDocument(long Id, string? Code, string Name, int DocumentType, int Status, long TemplateId, DateTime CreatedAt);
+public sealed record ChildTemplateOption(long Id, string Name, int DocumentType);
+/// <summary>A contract and the documents attached to it: its parent (for a child), its children, and the child templates of its template.</summary>
+public sealed record DraftRelations(RelatedDocument? Parent, List<RelatedDocument> Children, List<ChildTemplateOption> ChildTemplates);
 public sealed class InternalAppException(int status, string message, string? code = null) : Exception(message)
 {
     public int Status { get; } = status;

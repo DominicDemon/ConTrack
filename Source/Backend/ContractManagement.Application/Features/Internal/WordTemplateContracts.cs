@@ -19,7 +19,9 @@ public sealed record WordTemplateInput(string FileName, string Base64, string Do
     int DocumentType, List<WordBlock> Blocks, List<DraftField> Fields, Dictionary<string, string> SampleValues, string SourceToken,
     List<WordTable>? Tables = null, List<WordContent>? Additions = null, bool ManualContent = false, string[]? ChecklistRules = null, List<WordBodyEntry>? BodyOrder = null);
 public sealed record WordPreview(string PdfBase64, string PreviewToken);
-public sealed record WordActivation(WordTemplateInput Input, string PreviewToken);
+/// <param name="ParentTemplateId">Attach the new child template (types 2-5) to this contract template.</param>
+/// <param name="ReplaceTemplateId">Replace the Word content of this existing template instead of creating one.</param>
+public sealed record WordActivation(WordTemplateInput Input, string PreviewToken, long? ParentTemplateId = null, long? ReplaceTemplateId = null);
 public sealed record WordDraftPreview(long? DraftId, DraftContent Content, bool Pdf = true);
 public sealed record WordEditorPreview(WordTemplateInput Document, DraftContent Content);
 public sealed record WordStoredPreview(bool Pdf = true);

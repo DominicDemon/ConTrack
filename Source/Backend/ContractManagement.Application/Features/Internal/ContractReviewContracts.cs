@@ -73,9 +73,13 @@ public sealed record CustomerSession(long Id, string Name, bool MustChangePasswo
 /// <summary>One portal bell item. Key is stable per event (the browser remembers which keys were read); ReviewId opens the contract.</summary>
 public sealed record CustomerContractNotice(string Key, string Code, string Title, string Body, long ReviewId, DateTime At);
 public sealed record CustomerReviewSummary(long Id, string ContractName, long VersionNo, string Status, DateTime SentAt, DateTime? RespondedAt,
-    DateTime? FirstViewedAt = null, bool IsSigned = false);
+    DateTime? FirstViewedAt = null, bool IsSigned = false, string? ParentName = null, int DocumentType = 1);
 public sealed record CustomerReviewDetail(long Id, string ContractName, long VersionNo, string Status, DateTime SentAt, string? Message, string? CustomerNote,
-    DateTime? RespondedAt, string DocumentHash, string RowVersion, DraftContent Content, List<ReviewComment> Comments, bool IsSigned = false);
+    DateTime? RespondedAt, string DocumentHash, string RowVersion, DraftContent Content, List<ReviewComment> Comments, bool IsSigned = false,
+    List<CustomerRelatedDocument>? Related = null);
+/// <summary>A document linked to the one the customer opened: its contract (Parent) or an attached appendix/handover record (Attachment).
+/// ReviewId is null while the company has not sent it to the customer yet.</summary>
+public sealed record CustomerRelatedDocument(string Relation, string Name, int DocumentType, long? ReviewId, string? Status, bool IsSigned);
 public sealed record CustomerLoginInput(string? Phone, string? Password);
 public sealed record CustomerChangePasswordInput(string? CurrentPassword, string? NewPassword);
 public sealed record CustomerRespondInput(string? Decision, string? Note, string? DocumentHash, string? RowVersion);

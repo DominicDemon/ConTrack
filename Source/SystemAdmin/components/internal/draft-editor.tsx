@@ -11,8 +11,8 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, GripVertical, ListChecks, Plus, RefreshCw, Save, Send, Trash2, Users, Wallet } from "lucide-react";
-import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, type BusinessOption, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
+import { ArrowLeft, ArrowDown, ArrowUp, Building2, FileText, Files, GripVertical, ListChecks, Plus, RefreshCw, Save, Send, Trash2, Users, Wallet } from "lucide-react";
+import { completePartyFields, internalApi, InternalApiError, estimateTotals, money, dateTime, documentStatusLabel, documentTypeLabel, DOCUMENT_TYPES, type DraftRelations, type DraftSummary, type BusinessOption, type DraftContent, type DraftRecord, type TemplateDefinition, type CustomerOption, type CustomerLookupResult, type CustomerInput, type ProductOption, type DraftItem } from "@/services/internal-api";
 import { internalStyles as ui } from "./internal-theme";
 import DraftPreview from "./draft-preview";
 import WordDraftPreview from "./word-draft-preview";
@@ -37,6 +37,11 @@ export default function DraftEditor({ id }: { id?: string }) {
   const [customerSearch, setCustomerSearch] = useState(""); const [searching, setSearching] = useState(false); const [lookupError, setLookupError] = useState(""); const [loadAttempt, setLoadAttempt] = useState(0);
   const [locate, setLocate] = useState<{location:string|null;request:number}|null>(null);
   const [wordInfo, setWordInfo] = useState("");
+  /** A new document attached to this contract (?parent=…&template=…): made from one of its child templates, for its customer. */
+  const [parent, setParent] = useState<{ record: DraftRecord; relations: DraftRelations } | null>(null);
+  /** The contract this saved document belongs to, and the documents attached to it. */
+  const [related, setRelated] = useState<{ id: string; data: DraftRelations } | null>(null);
+  const [typeFilter, setTypeFilter] = useState("");
   /** Result of refilling Bên A from the customer record (shown in the Bên A section). */
   const [customerNotice, setCustomerNotice] = useState("");
   const [customerCreateError, setCustomerCreateError] = useState("");
@@ -48,12 +53,47 @@ export default function DraftEditor({ id }: { id?: string }) {
   const retryLoad = (next: (v: number) => number) => { setLoading(true); setError(""); setLoadAttempt(next); };
   useEffect(() => { const mq = window.matchMedia("(max-width: 850px)"); const update = () => setMobile(mq.matches); update(); mq.addEventListener("change", update); return () => mq.removeEventListener("change", update); }, []);
   useEffect(() => { let active = true;
-    void Promise.all([internalApi<TemplateDefinition[]>("/contract-templates"), internalApi<ProductOption[]>("/products"), id ? internalApi<DraftRecord>(`/contract-drafts/${id}`) : Promise.resolve(null)]).then(([ts, ps, draft]) => {
+    const query = id ? null : new URLSearchParams(window.location.search); const parentId = query?.get("parent") ?? null;
+    void Promise.all([internalApi<TemplateDefinition[]>("/contract-templates"), internalApi<ProductOption[]>("/products"), id ? internalApi<DraftRecord>(`/contract-drafts/${id}`) : Promise.resolve(null),
+      parentId ? Promise.all([internalApi<DraftRecord>(`/contract-drafts/${parentId}`), internalApi<DraftRelations>(`/contract-drafts/${parentId}/related`)]) : Promise.resolve(null)]).then(([ts, ps, draft, attached]) => {
       if (!active) return; ts = ts.map(completePartyFields); setTemplates(ts); setProducts(ps); setRecord(draft);
+      if (attached) {
+        const [contract, related] = attached;
+        const allowed = ts.filter(t => related.childTemplates.some(c => c.id === String(t.id)));
+        const chosen = allowed.find(t => String(t.id) === query?.get("template")) ?? allowed[0];
+        if (!chosen) throw new Error("Mẫu của hợp đồng này chưa có mẫu con. Tạo mẫu con ở trang Tạo mẫu văn bản trước.");
+        // Same customer and the same Bên A / Bên B as the contract; the rest comes from the child template.
+        // Only the fields the child template has: the server refuses any other key ("Trường nhập không thuộc mẫu").
+        const party = Object.fromEntries(Object.entries({ ...DEFAULT_PROVIDER_FIELDS, ...contract.content.fields })
+          .filter(([key]) => (key.startsWith("CUSTOMER_") || key.startsWith("PROVIDER_")) && chosen.fields.some(f => f.key === key)));
+        setParent({ record: contract, relations: related });
+        setContent({ ...blank(), templateId: String(chosen.id), templateSnapshot: chosen, terms: structuredClone(chosen.terms), name: chosen.name,
+          customerId: contract.content.customerId, partyType: contract.content.partyType, customerBusinessId: contract.content.customerBusinessId,
+          fields: party });
+      } else
       setContent(draft?.content ? { ...draft.content, fields: { ...DEFAULT_PROVIDER_FIELDS, ...draft.content.fields } } : { ...blank(), templateId: ts[0]?.id ?? "", templateSnapshot: ts[0] ?? null, terms: structuredClone(ts[0]?.terms ?? []) });
       receipt.current = undefined; setDirty(false); dirtyRef.current = false;
     }).catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; };
   }, [id, loadAttempt]);
+  const recordId = record?.id;
+  useEffect(() => { if (!recordId) return; let active = true;
+    void internalApi<DraftRelations>(`/contract-drafts/${recordId}/related`).then(r => { if (active) setRelated({ id: recordId, data: r }); }).catch(() => undefined);
+    return () => { active = false; }; }, [recordId]);
+  // Only the relations of the record on screen: a stale answer for another record is never shown.
+  const relations = related && related.id === recordId ? related.data : null;
+  /** Contracts a new attached document (biên bản, phụ lục…) can belong to; loaded once a non-contract type is chosen. */
+  const [contracts, setContracts] = useState<DraftSummary[] | null>(null);
+  const pickingParent = !id && !parent && !loading && (content.templateSnapshot?.documentType ?? 1) !== 1;
+  useEffect(() => { if (!pickingParent || contracts) return; let active = true;
+    void internalApi<DraftSummary[]>("/contract-drafts").then(list => { if (active) setContracts(list.filter(c => c.documentType === 1)); }).catch(() => { if (active) setContracts([]); });
+    return () => { active = false; }; }, [pickingParent, contracts]);
+  /** Re-opens this form as a document attached to the chosen contract: its customer and both parties come from the contract. */
+  function attachTo(contractId: string, templateId: string) {
+    if (!contractId || (dirty && !window.confirm("Lấy khách hàng từ hợp đồng sẽ bỏ nội dung đang soạn. Tiếp tục?"))) return;
+    dirtyRef.current = false;
+    window.history.replaceState(null, "", `/workspace/contracts/drafts/new?parent=${encodeURIComponent(contractId)}&template=${encodeURIComponent(templateId)}`);
+    retryLoad(v => v + 1);
+  }
   useEffect(() => {
     let generation = 0;
     const unsubscribe = onNotificationRefresh(() => {
@@ -265,7 +305,7 @@ export default function DraftEditor({ id }: { id?: string }) {
   async function save() { if (!form.current?.reportValidity()) return;
     if (!content.customerId) { setError("Tìm và chọn khách hàng trước khi lưu nháp."); focusIssue("partyType"); return; } setBusy(true); setError(""); setSuccess(""); setConflict(false);
     try { if (receipt.current === null) throw new Error("Cập nhật bản xem trước Word trước khi lưu nháp.");
-      const saved = await internalApi<DraftRecord>(id ? `/contract-drafts/${id}` : "/contract-drafts", id ? "PUT" : "POST", { content, wordPreviewToken:receipt.current, rowVersion: record?.rowVersion, versionRowVersion: record?.versionRowVersion });
+      const saved = await internalApi<DraftRecord>(id ? `/contract-drafts/${id}` : "/contract-drafts", id ? "PUT" : "POST", { content, wordPreviewToken:receipt.current, rowVersion: record?.rowVersion, versionRowVersion: record?.versionRowVersion, parentDocumentId: id ? null : parent?.record.id ?? null });
       receipt.current = undefined;
       refilled.current = `${saved.id}:${saved.versionNo}`;
       setRecord(saved);
@@ -284,8 +324,24 @@ export default function DraftEditor({ id }: { id?: string }) {
   const inlineWord = !!template.wordStorageKey && canEditTerms && !readOnly;
   const editor = <div className={s.formPane}><form ref={form} onSubmit={e => { e.preventDefault(); void save(); }}><fieldset disabled={busy || readOnly} style={{ border: 0, padding: 0, minWidth: 0 }}>
     <section id="contract-info" tabIndex={-1} className={s.section}><h2><FileText/>Thông tin hợp đồng</h2><div className={s.fields}>
-      <Field label="Mẫu hợp đồng *"><select required className={ui.field} value={content.templateId} disabled={!!id} onChange={e => { const t = templates.find(t => String(t.id) === e.target.value)!; if (dirty && !window.confirm("Đổi mẫu sẽ thay nội dung theo mẫu mới. Tiếp tục?")) return; void selectWordTemplate(t); }}>{templates.map(t => <option value={t.id} key={t.id}>{t.name}</option>)}{!templates.some(t => t.id === template.id) && <option value={template.id}>{template.name}</option>}</select></Field>
-      {!id && user.canManageTemplates && <TemplateUpload disabled={busy} onImported={t => { setTemplates(old => [t, ...old]); if (!dirty || window.confirm("Dùng mẫu vừa tải và bỏ thay đổi đang soạn?")) void selectWordTemplate(t); }}/>}
+      <Field label="Loại văn bản"><select className={ui.field} value={id || parent ? String(template.documentType ?? 1) : typeFilter} disabled={!!id || !!parent} onChange={e => {
+        const next = e.target.value; setTypeFilter(next);
+        const first = templates.find(t => !next || (t.documentType ?? 1) === Number(next));
+        if (!first || (next && (template.documentType ?? 1) === Number(next))) return;
+        if (dirty && !window.confirm("Đổi loại văn bản sẽ chọn mẫu khác và thay nội dung theo mẫu đó. Tiếp tục?")) return;
+        void selectWordTemplate(first); }}>{!id && !parent && <option value="">Tất cả loại văn bản</option>}{DOCUMENT_TYPES.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}</select></Field>
+      <Field label="Mẫu văn bản *"><select required className={ui.field} value={content.templateId} disabled={!!id} onChange={e => { const t = templates.find(t => String(t.id) === e.target.value)!; if (dirty && !window.confirm("Đổi mẫu sẽ thay nội dung theo mẫu mới. Tiếp tục?")) return; void selectWordTemplate(t); }}>{templates.filter(t => parent ? parent.relations.childTemplates.some(c => c.id === String(t.id)) : !typeFilter || (t.documentType ?? 1) === Number(typeFilter)).map(t => <option value={t.id} key={t.id}>{t.name}</option>)}{!templates.some(t => t.id === template.id) && <option value={template.id}>{template.name}</option>}</select></Field>
+      {parent && <Field label="Thuộc hợp đồng"><p><Link href={`/workspace/contracts/drafts/${parent.record.id}`}>{parent.record.code} · {parent.record.content.name}</Link></p><span className={s.muted} style={{ fontWeight: 400 }}>Cùng khách hàng và thông tin hai bên với hợp đồng; chỉ chọn được mẫu con của mẫu hợp đồng này.</span></Field>}
+      {pickingParent && (() => {
+        const parentTemplateId = template.parentTemplateId ? String(template.parentTemplateId) : "";
+        const options = (contracts ?? []).filter(c => String(c.templateId) === parentTemplateId);
+        return <Field label="Thuộc hợp đồng">{parentTemplateId && <select className={ui.field} value="" disabled={!contracts || options.length === 0} onChange={e => attachTo(e.target.value, String(template.id))}>
+            <option value="">{!contracts ? "Đang tải hợp đồng…" : options.length ? "Chọn hợp đồng để lấy khách hàng…" : "Chưa có hợp đồng dùng mẫu cha của mẫu này"}</option>
+            {options.map(c => <option key={c.id} value={c.id}>{c.code} · {c.name} · {c.customerName}</option>)}</select>}
+          <span className={s.muted} style={{ fontWeight: 400 }}>{parentTemplateId ? "Chọn hợp đồng để lấy khách hàng và thông tin hai bên từ hợp đồng, khỏi phải nhập lại." : "Mẫu này chưa gắn mẫu hợp đồng cha nên phải nhập khách hàng. Gắn mẫu cha ở trang Tạo mẫu văn bản để lấy khách hàng từ hợp đồng."}</span></Field>;
+      })()}
+      {relations?.parent && <Field label="Thuộc hợp đồng"><p><Link href={`/workspace/contracts/drafts/${relations.parent.id}`}>{relations.parent.code} · {relations.parent.name}</Link></p></Field>}
+      {!id && !parent && user.canManageTemplates && <TemplateUpload disabled={busy} onImported={t => { setTemplates(old => [t, ...old]); if (!dirty || window.confirm("Dùng mẫu vừa tải và bỏ thay đổi đang soạn?")) void selectWordTemplate(t); }}/>}
       {wordInfo && <p role="status" className={s.muted}>{wordInfo}</p>}
       <p className={s.muted}>{template.manualWordContent ? "Đối chiếu thông tin đã điền từ Word. Bạn có thể sửa văn bản, bảng và ảnh trong phần Nội dung hợp đồng." : template.isImported ? "Mẫu tải lên chưa được phê duyệt. Sửa nội dung file tại phần Nội dung hợp đồng; thông tin khách hàng không tự thay vào văn bản." : "Mẫu minh họa, chưa được công ty phê duyệt. Nội dung trống cần được người soạn bổ sung."}</p>
       <Field label="Ngôn ngữ hợp đồng"><select className={ui.field} value={bilingual ? "VI_EN" : "VI"} disabled={!!template.wordStorageKey} title={template.wordStorageKey ? "Mẫu Word giữ nguyên nội dung của file" : undefined}
@@ -302,8 +358,21 @@ export default function DraftEditor({ id }: { id?: string }) {
       {bilingual && <Field label="Tên hợp đồng tiếng Anh *"><input maxLength={1000} className={ui.field} lang="en" placeholder="Ví dụ: Supply and installation contract" value={content.nameEn ?? ""} onChange={e => { const value = e.target.value; change(c => ({ ...c, nameEn: value })); }}/></Field>}
       <div className={s.columns}><Field label="Ngày hiệu lực"><input type="date" className={ui.field} value={content.effectiveDate ?? ""} onChange={e => change(c => ({ ...c, effectiveDate: e.target.value || null }))}/></Field><Field label="Ngày hết hạn *"><input required aria-label="Ngày hết hạn" type="date" className={ui.field} min={content.effectiveDate ?? undefined} value={content.expireDate ?? ""} onChange={e => change(c => ({ ...c, expireDate: e.target.value || null }))}/></Field></div>
     </div></section>
+    {relations && (relations.childTemplates.length > 0 || relations.children.length > 0) && <section id="attached-documents" tabIndex={-1} className={s.section}><h2><Files/>Văn bản đi kèm</h2>
+      <p className={s.muted}>Phụ lục, biên bản bàn giao… làm từ các mẫu con của mẫu hợp đồng này. Mỗi văn bản đi đủ quy trình như hợp đồng: lưu nháp, gửi khách xem, duyệt và ký.</p>
+      <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Mẫu con</th><th>Văn bản</th><th>Trạng thái</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
+        <tbody>{[...relations.childTemplates.map(t => ({ template: t, documents: relations.children.filter(d => d.templateId === t.id) })),
+          // A document whose template was hidden or detached later still shows, under its own type.
+          ...relations.children.filter(d => !relations.childTemplates.some(t => t.id === d.templateId)).map(d => ({ template: null, documents: [d] }))]
+          .map(({ template: child, documents }) => <tr key={child?.id ?? documents[0].id}>
+            <td><strong>{child?.name ?? documentTypeLabel(documents[0].documentType)}</strong><div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{documentTypeLabel(child?.documentType ?? documents[0].documentType)}</div></td>
+            <td>{documents.length ? documents.map(d => <div key={d.id}><Link href={`/workspace/contracts/drafts/${d.id}`}>{d.code ?? `#${d.id}`} · {d.name}</Link></div>) : <span className={s.muted}>Chưa tạo</span>}</td>
+            <td>{documents.length ? documents.map(d => <div key={d.id}><span className={s.badge}>{documentStatusLabel[d.status] ?? `Trạng thái ${d.status}`}</span></div>) : <span className={s.muted}>—</span>}</td>
+            <td><div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>{child && record && user.canWrite && <Link className={ui.secondaryButton} href={`/workspace/contracts/drafts/new?parent=${record.id}&template=${child.id}`}><Plus size={15}/>Tạo {documentTypeLabel(child.documentType).toLowerCase()}</Link>}</div></td>
+          </tr>)}</tbody></table></div>
+    </section>}
     <section id="customer-fields" tabIndex={-1} className={s.section}><h2><Users/>Khách hàng · Bên A</h2><div className={s.fields}>
-      {!id && <><Field label="Tìm khách hàng"><input type="search" className={ui.field} placeholder="Nhập email, mã số thuế hoặc số điện thoại…" value={customerSearch}
+      {!id && !parent && <><Field label="Tìm khách hàng"><input type="search" className={ui.field} placeholder="Nhập email, mã số thuế hoặc số điện thoại…" value={customerSearch}
           onChange={event => {
             setCustomerSearch(event.target.value);
             setCustomers([]);
@@ -391,7 +460,7 @@ export default function DraftEditor({ id }: { id?: string }) {
       </select>}
     </fieldset></section><PaymentEditor content={content} change={change}/><section className={s.section}><h2>Thông tin bổ sung theo mẫu</h2>{template.fields.filter(f => !f.key.startsWith("CUSTOMER_") && !f.key.startsWith("PROVIDER_") && f.key !== "CONTRACT_LEGAL_BASES").map(f => <Field key={f.key} label={f.label + (f.required ? " *" : "")} >{f.dataType === "SELECT" ? <select className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}><option value="">Chọn giá trị</option>{f.options?.map(o => <option key={o}>{o}</option>)}</select> : <input className={ui.field} type={f.dataType === "DATE" ? "date" : f.dataType === "NUMBER" ? "number" : "text"} step="any" min={f.min ?? undefined} max={f.max ?? undefined} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key,e.target.value)}/>}</Field>)}</section><section className={ui.notice}><strong>Nháp có thể lưu khi chưa hoàn thiện</strong>{issues.length > 0 && <ul>{issues.map((issue,i) => <li key={i}><button type="button" className={ui.secondaryButton} onClick={() => focusIssue(issue.path)}>{issue.message}</button></li>)}</ul>}<p className={s.muted} style={{ marginTop: 6 }}>{missing.length ? `Cần bổ sung: ${missing.join(", ")}.` : "Đã đủ các trường thông tin của mẫu. Hợp đồng vẫn là bản nháp, chưa được duyệt hoặc ký."}</p></section>
   </fieldset></form></div>;
-  return <><div className={s.editorHeader}><Link href="/workspace/contracts/drafts" className={s.iconButton} aria-label="Về danh sách"><ArrowLeft size={20}/></Link><div><h1>{readOnly ? "Xem hợp đồng" : id ? "Chỉnh sửa hợp đồng nháp" : "Tạo hợp đồng nháp"}</h1><p className={s.muted}>{record ? `${record.employeeName} · Cập nhật ${dateTime(record.updatedAt)}` : "Bắt đầu từ mẫu, hoàn thiện theo nhu cầu"}</p></div><div className={s.actions}><span className={`${s.badge} ${dirty ? s.warning : ""}`}>{dirty ? "Chưa lưu thay đổi" : record ? "Đã lưu" : "Nháp mới"}</span>{!readOnly && <button disabled={busy || customerBusy} className={ui.primaryButton} onClick={save}><Save size={17}/>{busy ? "Đang lưu…" : "Lưu nháp"}</button>}</div></div>
+  return <><div className={s.editorHeader}><Link href="/workspace/contracts/drafts" className={s.iconButton} aria-label="Về danh sách"><ArrowLeft size={20}/></Link><div><h1>{readOnly ? `Xem ${documentTypeLabel(template.documentType).toLowerCase()}` : id ? `Chỉnh sửa ${documentTypeLabel(template.documentType).toLowerCase()}` : parent ? "Tạo văn bản đi kèm" : "Tạo hợp đồng"}</h1><p className={s.muted}>{record ? `${record.employeeName} · Cập nhật ${dateTime(record.updatedAt)}` : "Bắt đầu từ mẫu, hoàn thiện theo nhu cầu"}</p></div><div className={s.actions}><span className={`${s.badge} ${dirty ? s.warning : ""}`}>{dirty ? "Chưa lưu thay đổi" : record ? "Đã lưu" : "Nháp mới"}</span>{!readOnly && <button disabled={busy || customerBusy} className={ui.primaryButton} onClick={save}><Save size={17}/>{busy ? "Đang lưu…" : "Lưu nháp"}</button>}</div></div>
     {(error || success) && <div className={s.messages}>{error && <div role="alert" className={ui.error}>{error}{conflict && <button className={ui.secondaryButton} style={{ marginLeft: 12 }} onClick={reload}>Tải lại bản mới</button>}</div>}{success && <div role="status" className={ui.notice}>{success}</div>}</div>}
     {!record && <div className={s.messages}><section className={ui.card} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }} aria-label="Gửi khách xem"><button type="button" className={ui.primaryButton} disabled aria-describedby="new-draft-send-guidance"><Send size={16}/>Gửi khách xem</button><p id="new-draft-send-guidance" className={s.muted}>Lưu nháp trước, sau đó hoàn thiện các mục còn thiếu để gửi khách xem.</p></section></div>}
     {record && <div className={s.messages}><ChecklistPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)} onLocate={location => { setTab("edit"); if (template.wordStorageKey && canEditTerms && !readOnly && !dirty) setLocate({location,request:Date.now()}); else requestAnimationFrame(() => { const target = document.getElementById(`contract-term-${location}`) ?? document.getElementById("contract-terms"); target?.scrollIntoView({behavior:"smooth"}); target?.focus({preventScroll:true}); }); }}/><ApprovalPanel record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/><ReviewPanel onLocate={path => { setTab("edit"); requestAnimationFrame(() => focusIssue(path)); }} record={record} dirty={dirty} onChanged={() => retryLoad(v => v + 1)}/></div>}

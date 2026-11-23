@@ -347,8 +347,9 @@ public static class InternalHost
             var legalContractRead = user.CanManageLegal && HttpMethods.IsGet(c.Request.Method)
                 && (path is "/api/internal/contract-drafts" or "/api/internal/contract-progress" or "/api/internal/contract-archive"
                     or "/api/internal/contract-signing-monitor" or "/api/internal/company-signing/queue" or "/api/internal/contract-templates"
+                    or "/api/internal/contract-template-library"
                     || System.Text.RegularExpressions.Regex.IsMatch(path,
-                        @"^/api/internal/(contract-drafts/\d+(/(approval|internal-approval|internal-comments|checklist|reviews|versions|word/content|print-pdf))?|contract-signing-monitor/\d+|company-signing/\d+/document|contract-templates/\d+(/checklist)?)$"));
+                        @"^/api/internal/(contract-drafts/\d+(/(approval|internal-approval|internal-comments|checklist|reviews|versions|word/content|print-pdf|related))?|contract-signing-monitor/\d+|company-signing/\d+/document|contract-templates/\d+(/checklist)?)$"));
             var legalWorkflowAction = user.CanManageLegal && HttpMethods.IsPost(c.Request.Method)
                 && System.Text.RegularExpressions.Regex.IsMatch(path,
                     @"^/api/internal/(contract-drafts/\d+/(approval/(approve|return)|internal-approval|internal-comments|checklist|start-signing)|contract-comments/\d+/resolve)$");
@@ -375,6 +376,14 @@ public static class InternalHost
         });
         secured.MapPatch("/contract-templates/{id:long}/name", async (long id, TemplateNameInput input, HttpContext c, InternalRepository repository, CancellationToken ct) =>
             Results.Ok(new { name = await repository.RenameTemplate(id, input.Name, Current(c), ct) }));
+        secured.MapDelete("/contract-templates/{id:long}", async (long id, HttpContext c, InternalRepository repository, CancellationToken ct) =>
+        { await repository.DeleteTemplate(id, Current(c), ct); return Results.NoContent(); });
+        // The template library (Tạo mẫu văn bản): every type, hidden ones included; changing a template needs template.manage.
+        secured.MapGet("/contract-template-library", async (InternalRepository repository, CancellationToken ct) => Results.Ok(await repository.TemplateLibrary(ct)));
+        secured.MapPut("/contract-templates/{id:long}", async (long id, TemplateInfoInput input, HttpContext c, InternalRepository repository, CancellationToken ct) =>
+            Results.Ok(await repository.UpdateTemplate(id, input, Current(c), ct)));
+        secured.MapPost("/contract-templates/{id:long}/restore", async (long id, HttpContext c, InternalRepository repository, CancellationToken ct) =>
+            Results.Ok(await repository.RestoreTemplate(id, Current(c), ct)));
         // The contract bell: every signed-in employee sees their own contract notifications; the item opens the contract.
         api.MapGet("/contract-notifications", async (int? limit, HttpContext c, IInternalRepository r, ContractNotificationFeed feed, CancellationToken ct) =>
             Results.Ok(await feed.List(await User(c, r, ct), limit ?? 20, ct)));
@@ -541,6 +550,8 @@ public static class InternalHost
             return await r.SigningMonitorDetail(id, ct) is { } detail ? Results.Ok(detail) : Results.NotFound();
         });
         secured.MapGet("/contract-drafts/{id:long}", async (long id, HttpContext c, InternalDraftService s, CancellationToken ct) => Results.Ok(await s.Get(id, Current(c), ct)));
+        // A contract's attached documents (appendix, handover record…) and the child templates it can make them from.
+        secured.MapGet("/contract-drafts/{id:long}/related", async (long id, HttpContext c, InternalRepository r, CancellationToken ct) => Results.Ok(await r.Related(id, Current(c), ct)));
         secured.MapPost("/contract-drafts", async (SaveDraftRequest request, HttpContext c, InternalDraftService s, CancellationToken ct) => Results.Ok(await s.Save(null, request, Current(c), ct)));
         secured.MapPut("/contract-drafts/{id:long}", async (long id, SaveDraftRequest request, HttpContext c, InternalDraftService s, CancellationToken ct) => Results.Ok(await s.Save(id, request, Current(c), ct)));
         secured.MapPost("/contract-drafts/{id:long}/send-review", async (long id, SendReviewRequest input, HttpContext c, IContractReviewRepository r, CancellationToken ct) =>

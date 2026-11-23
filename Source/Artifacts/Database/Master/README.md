@@ -138,3 +138,4 @@ live column names, SQL reads for every table and a department insert with databa
 defaults followed by rollback. Without the environment variable, the live test is
 explicitly skipped. The live test was executed locally and all three tests passed.
 The running API also returned `{"status":"Ready"}` from `/health/master`.
+`019-template-parent.sql` adds `CONTRACT_TEMPLATE.parent_template_id`: a child template (appendix, handover, receipt, payment request) attached to a contract template. Run after MasterDB-ConTrack.sql.

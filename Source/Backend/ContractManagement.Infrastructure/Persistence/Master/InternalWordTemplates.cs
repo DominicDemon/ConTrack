@@ -130,15 +130,38 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             var commitAttempted = false;
             try
             {
-                var template = new ContractTemplate { ContractTemplateCode = code, ContractTemplateName = input.Name.Trim(),
-                    ContractTemplateDocumentType = input.DocumentType, ContractTemplateLanguageMode = 1, IsActive = true,
-                    CreatedEmployeeId = checked((int)actor), CreatedDate = DateTime.UtcNow };
-                db.ContractTemplates.Add(template);
+                ContractTemplate template;
+                if (request.ReplaceTemplateId is long replaceId)
+                {
+                    // New Word content for an existing template: drafts keep the snapshot they were made from.
+                    template = await db.ContractTemplates.SingleOrDefaultAsync(t => t.ContractTemplateId == replaceId && t.IsActive, ct)
+                        ?? throw new InternalAppException(404, "Không tìm thấy mẫu văn bản đang dùng.");
+                    await TemplateHierarchy.Validate(db, replaceId, input.DocumentType, template.ParentTemplateId, ct);
+                    template.ContractTemplateName = input.Name.Trim();
+                    template.ContractTemplateDocumentType = input.DocumentType;
+                    template.UpdatedDate = DateTime.UtcNow;
+                    template.ModifiedEmployeeId = checked((int)actor);
+                    db.ContractTemplateFields.RemoveRange(await db.ContractTemplateFields.Where(f => f.ContractTemplateId == replaceId).ToListAsync(ct));
+                }
+                else
+                {
+                    await TemplateHierarchy.Validate(db, null, input.DocumentType, request.ParentTemplateId, ct);
+                    template = new ContractTemplate { ContractTemplateCode = code, ContractTemplateName = input.Name.Trim(),
+                        ContractTemplateDocumentType = input.DocumentType, ContractTemplateLanguageMode = 1, IsActive = true,
+                        CreatedEmployeeId = checked((int)actor), CreatedDate = DateTime.UtcNow, ParentTemplateId = request.ParentTemplateId };
+                    db.ContractTemplates.Add(template);
+                }
                 await db.SaveChangesAsync(ct);
                 Directory.CreateDirectory(storage.Root);
                 if (input.DocumentType == 1)
-                    db.Set<ContractChecklist>().Add(new() { TemplateId = template.ContractTemplateId, Configured = true,
-                        Rules = JsonSerializer.Serialize(input.ChecklistRules) });
+                {
+                    var checklist = request.ReplaceTemplateId is null ? null : await db.Set<ContractChecklist>()
+                        .SingleOrDefaultAsync(x => x.TemplateId == template.ContractTemplateId && x.VersionId == null, ct);
+                    if (checklist is null)
+                        db.Set<ContractChecklist>().Add(new() { TemplateId = template.ContractTemplateId, Configured = true,
+                            Rules = JsonSerializer.Serialize(input.ChecklistRules) });
+                    else { checklist.Rules = JsonSerializer.Serialize(input.ChecklistRules); checklist.Configured = true; }
+                }
                 async Task<string> Store(byte[] bytes, string extension, string objectType, string mime, string filename)
                 {
                     var key = Guid.NewGuid().ToString("N") + extension;
@@ -171,14 +194,14 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                     terms = grouped;
                 }
                 var definition = new TemplateDefinition(template.ContractTemplateId, template.ContractTemplateName, code, false,
-                    fields, terms, true, input.DocumentType, key, Hash(document), input.ManualContent);
+                    fields, terms, true, input.DocumentType, key, Hash(document), input.ManualContent, template.ParentTemplateId);
                 await Store(JsonSerializer.SerializeToUtf8Bytes(definition, InternalRepository.Json), ".json", "INTERNAL_TEMPLATE", "application/json", input.Name + ".json");
                 foreach (var field in fields) db.ContractTemplateFields.Add(new() { ContractTemplateId = template.ContractTemplateId,
                     ContractTemplateFieldKey = field.Key, ContractTemplateFieldLabel = field.Label, ContractTemplateFieldDataType = field.DataType,
                     IsRequired = field.Required, ExtraOptions = JsonSerializer.Serialize(new { field.Options, field.Min, field.Max }, InternalRepository.Json) });
-                db.AuditLogs.Add(new() { ActionType = "CREATE", EntityName = "CONTRACT_TEMPLATE", EntityId = template.ContractTemplateId.ToString(),
-                    ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow,
-                    NewData = JsonSerializer.Serialize(new { checklistRules = input.ChecklistRules }) });
+                db.AuditLogs.Add(new() { ActionType = request.ReplaceTemplateId is null ? "CREATE" : "REPLACE_TEMPLATE_WORD", EntityName = "CONTRACT_TEMPLATE",
+                    EntityId = template.ContractTemplateId.ToString(), ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow,
+                    NewData = JsonSerializer.Serialize(new { checklistRules = input.ChecklistRules, parentTemplateId = template.ParentTemplateId, documentType = input.DocumentType }) });
                 await db.SaveChangesAsync(ct);
                 commitAttempted = true;
                 await tx.CommitAsync(ct);

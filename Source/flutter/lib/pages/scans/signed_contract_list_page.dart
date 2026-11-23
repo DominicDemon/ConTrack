@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import '../../models/scans/signed_scan_dto.dart';
 import '../../services/scans/customer_scan_api.dart';
 import 'signed_contract_detail_page.dart';
 
@@ -13,7 +14,7 @@ class SignedContractListPage extends StatefulWidget {
 
 class _SignedContractListPageState extends State<SignedContractListPage> {
   final _search = TextEditingController();
-  final _key = TextEditingController();
+  final _key = TextEditingController(text: RememberedFileKey.value);
   List<CustomerScan>? _scans;
   List<SignedContractItem>? _contracts;
   bool? _hasKey;
@@ -55,7 +56,7 @@ class _SignedContractListPageState extends State<SignedContractListPage> {
       if (!mounted) return;
       final contentType = response.headers['content-type'] ?? 'application/octet-stream';
       if (!contentType.startsWith('image/')) {
-        await FilePicker.platform.saveFile(fileName: scan.fileName, bytes: response.bodyBytes);
+        await FilePicker.saveFile(fileName: scan.fileName, bytes: response.bodyBytes);
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Đã tải bản scan về thiết bị.')));
         return;
       }
@@ -98,17 +99,23 @@ class _SignedContractListPageState extends State<SignedContractListPage> {
     final theme = Theme.of(context), muted = theme.colorScheme.onSurface.withValues(alpha: .62);
     return Scaffold(appBar: AppBar(title: const Text('Bản scan hợp đồng'), actions: [IconButton(onPressed: _loading ? null : _load, tooltip: 'Tải lại', icon: const Icon(Icons.refresh)), IconButton(onPressed: _logout, tooltip: 'Đăng xuất', icon: const Icon(Icons.logout))]),
       body: RefreshIndicator(onRefresh: _load, child: ListView(physics: const AlwaysScrollableScrollPhysics(), padding: const EdgeInsets.all(16), children: [
-        Text('Theo dõi và mở bản scan thuộc các hợp đồng của bạn.', style: TextStyle(color: muted)),
-        const SizedBox(height: 16),
+        Text('Bản giấy của hợp đồng đã ký với công ty: chọn hợp đồng để tải lên hoặc chụp, rồi mở lại tại đây. Nhân viên phụ trách hợp đồng cũng xem được.', style: TextStyle(color: muted)),
+        const SizedBox(height: 12),
+        Card(color: theme.colorScheme.primaryContainer.withValues(alpha: .45), child: ListTile(
+          leading: const Icon(Icons.inventory_2_outlined), title: const Text('Kho lưu trữ riêng'),
+          subtitle: const Text('Scan và lưu tài liệu bất kỳ, kể cả hợp đồng với đối tác khác. Chỉ bạn xem được.'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () async { await Navigator.of(context).pushNamed('/scans/vault'); if (mounted) setState(() { if (_key.text.isEmpty) _key.text = RememberedFileKey.value; }); })),
+        const SizedBox(height: 12),
         if (_hasKey == false) Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Row(children: [const Icon(Icons.key_outlined), const SizedBox(width: 12), Expanded(child: Text('Bạn chưa có key xem bản scan.', style: TextStyle(color: muted)))]), const SizedBox(height: 8), Align(alignment: Alignment.centerRight, child: TextButton.icon(onPressed: _createKey, icon: const Icon(Icons.add), label: const Text('Tạo key')))]))),
-        if (_hasKey == true) Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Key xem bản scan', style: theme.textTheme.labelLarge), const SizedBox(height: 8), TextField(controller: _key, obscureText: !_showKey, decoration: InputDecoration(isDense: true, border: const OutlineInputBorder(), suffixIcon: IconButton(onPressed: () => setState(() => _showKey = !_showKey), icon: Icon(_showKey ? Icons.visibility_off : Icons.visibility)))), Align(alignment: Alignment.centerRight, child: Wrap(children: [TextButton(onPressed: _changeKey, child: const Text('Đổi key')), TextButton(onPressed: () => _createKey(reset: true), child: const Text('Quên key?'))]))]))),
+        if (_hasKey == true) Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Key xem bản scan', style: theme.textTheme.labelLarge), const SizedBox(height: 8), TextField(controller: _key, obscureText: !_showKey, decoration: InputDecoration(isDense: true, border: const OutlineInputBorder(), suffixIcon: IconButton(onPressed: () => setState(() => _showKey = !_showKey), icon: Icon(_showKey ? Icons.visibility_off : Icons.visibility)))), Align(alignment: Alignment.centerRight, child: Wrap(children: [TextButton(onPressed: _changeKey, child: const Text('Đổi key')), TextButton(onPressed: () => _createKey(reset: true), child: const Text('Quên key?'))])), if (RememberedFileKey.value.isNotEmpty) Text('Key được nhớ trên máy này ${RememberedFileKey.minutes} phút kể từ lần dùng cuối.', style: TextStyle(fontSize: 11, color: muted))]))),
         const SizedBox(height: 12),
         SegmentedButton<bool>(showSelectedIcon: false, segments: const [ButtonSegment(value: true, label: Text('Hợp đồng của tôi')), ButtonSegment(value: false, label: Text('Bản scan'))], selected: {_showContracts}, onSelectionChanged: (value) => setState(() => _showContracts = value.first)),
         const SizedBox(height: 12), TextField(controller: _search, onChanged: (_) => setState(() {}), decoration: InputDecoration(prefixIcon: const Icon(Icons.search), hintText: _showContracts ? 'Tìm theo mã hoặc tên hợp đồng' : 'Tìm theo tệp hoặc hợp đồng', border: const OutlineInputBorder(), isDense: true)),
         if (_error != null) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_error!, style: TextStyle(color: theme.colorScheme.error))),
         const SizedBox(height: 12),
         if ((_showContracts ? _contracts : _scans) == null && _error == null) const Padding(padding: EdgeInsets.all(36), child: Center(child: CircularProgressIndicator())),
-        if (_showContracts && _contracts != null && _visibleContracts.isEmpty) _empty(muted, 'Chưa có hợp đồng nào phù hợp', 'Hợp đồng được gán cho bạn sẽ hiển thị ở đây.'),
+        if (_showContracts && _contracts != null && _visibleContracts.isEmpty) _empty(muted, _search.text.trim().isEmpty ? 'Bạn chưa có hợp đồng nào với công ty' : 'Chưa có hợp đồng nào phù hợp', _search.text.trim().isEmpty ? 'Muốn lưu tài liệu riêng? Dùng Kho lưu trữ riêng ở trên.' : ''),
         if (_showContracts) ..._visibleContracts.map((contract) => Card(margin: const EdgeInsets.only(bottom: 10), child: ListTile(title: Text(contract.documentCode ?? 'Chưa cấp mã'), subtitle: Text('${contract.documentName}\n${SignedScanLabels.contractStatus(contract.contractStatus)}'), isThreeLine: true, trailing: const Icon(Icons.chevron_right), onTap: () => _openContract(contract)))),
         if (!_showContracts && _scans == null && _error == null) const Padding(padding: EdgeInsets.all(36), child: Center(child: CircularProgressIndicator())),
         if (!_showContracts && _scans?.isEmpty == true) _empty(muted, 'Chưa có bản scan nào', 'Bản scan hợp đồng sẽ hiện ở đây khi được chia sẻ với bạn.'),

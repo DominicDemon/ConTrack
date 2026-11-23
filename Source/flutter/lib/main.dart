@@ -6,6 +6,7 @@ import 'pages/catalog/service-types/service_type_list_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/scans/scan_login_page.dart';
 import 'pages/scans/signed_contract_list_page.dart';
+import 'pages/scans/customer_vault_page.dart';
 import 'pages/support/ticket_list_page.dart';
 import 'pages/support/create_ticket_page.dart';
 import 'pages/support/ticket_detail_page.dart';
@@ -100,6 +101,11 @@ class MyApp extends StatelessWidget {
             if (settings.name == '/scans/contracts') {
               return MaterialPageRoute(
                 builder: (context) => const SignedContractListPage(),
+              );
+            }
+            if (settings.name == '/scans/vault') {
+              return MaterialPageRoute(
+                builder: (context) => const CustomerVaultPage(),
               );
             }
             if (settings.name == '/support/tickets') {

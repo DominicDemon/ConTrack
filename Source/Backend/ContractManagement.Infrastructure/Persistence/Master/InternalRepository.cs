@@ -600,6 +600,38 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             version?.ContractVersionVersionNo ?? 0, version?.ContractVersionIslocked ?? false, version?.ContractVersionSnapshothash,
             events, signers, artifacts);
     }
+    internal static bool ResolveOfficeOrigin(bool? snapshotOrigin, string? creationAudit)
+    {
+        if (snapshotOrigin is { } origin) return origin;
+        if (string.IsNullOrWhiteSpace(creationAudit)) return false;
+        try
+        {
+            using var json = JsonDocument.Parse(creationAudit);
+            return json.RootElement.ValueKind == JsonValueKind.Object
+                && json.RootElement.TryGetProperty("officeOrigin", out var source)
+                && source.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException) { return false; }
+    }
+
+    internal static async Task<bool> IsOfficeOrigin(DraftContent content, long documentId, MasterDbContext db, CancellationToken ct)
+    {
+        if (content.OfficeOrigin is { } origin) return origin;
+        var creationAudit = await db.AuditLogs.AsNoTracking()
+            .Where(a => a.EntityName == "CONTRACT_DOCUMENTS" && a.ActionType == "CREATE" && a.EntityId == documentId.ToString())
+            .OrderBy(a => a.AuditLogId).Select(a => a.NewData).FirstOrDefaultAsync(ct);
+        return ResolveOfficeOrigin(null, creationAudit);
+    }
+
+    internal static string? OfficeSendBlockedReason(DraftContent content, int status, string? latestReview, bool locked, string? phone, string? email)
+    {
+        if (ContractReviewPolicy.CanSend(status, latestReview, locked, 0) is { } stateReason) return stateReason;
+        if (content.ExpireDate is null || content.EffectiveDate > content.ExpireDate) return "Kiểm tra thời hạn hợp đồng.";
+        if (content.FormatVersion < 2 || content.TemplateSnapshot is null) return "Mở và lưu lại nháp trước khi gửi khách.";
+        if (DraftValidation.SendIssues(content).Count > 0) return "Còn thiếu thông tin bắt buộc.";
+        if (ReviewLink.ContactPhone(content.Fields, phone) is null) return "Khách hàng chưa có số điện thoại hợp lệ.";
+        return ReviewLink.ContactEmail(content.Fields, email) is null ? "Nhập email khách hàng trong hợp đồng để gửi link xem." : null;
+    }
     public async Task<DraftRecord?> Draft(long id, CancellationToken ct)
     {
         var d = await db.ContractDocuments.AsNoTracking().SingleOrDefaultAsync(d => d.ContractDocumentId == id && d.TenantId == null, ct);
@@ -613,10 +645,13 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var latest = await db.ContractReviewRequests.AsNoTracking().Where(r => r.ContractDocumentId == id).OrderByDescending(r => r.ContractReviewRequestId)
             .Select(r => r.ContractReviewRequestStatus).FirstOrDefaultAsync(ct);
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!;
+        content.OfficeOrigin = await IsOfficeOrigin(content, id, db, ct);
         if (!v.ContractVersionIslocked) DraftValidation.Recheck(content);
         var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone);
         var internallyApproved = await db.ContractApprovalRequests.AnyAsync(a => a.ContractDocumentId == id && a.ContractVersionId == v.ContractVersionId && (a.InternalStage == "APPROVED" || a.InternalStage == "DIRECTOR"), ct);
-        var blocked = !internallyApproved ? "Cần Hành chính duyệt trước khi gửi khách." : ContractReviewPolicy.CanSend(d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? ContractDocumentStatus.Draft : d.ContractDocumentStatus, latest, d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? false : v.ContractVersionIslocked, content.MissingFields.Count)
+        var blocked = content.OfficeOrigin == true
+            ? OfficeSendBlockedReason(content, d.ContractDocumentStatus, latest, v.ContractVersionIslocked, customer.CustomerPersonalPhone, customer.CustomerEmail)
+            : !internallyApproved ? "Cần Hành chính duyệt trước khi gửi khách." : ContractReviewPolicy.CanSend(d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? ContractDocumentStatus.Draft : d.ContractDocumentStatus, latest, d.ContractDocumentStatus == ContractDocumentStatus.PendingApproval ? false : v.ContractVersionIslocked, content.MissingFields.Count)
             ?? (phone is null ? "Khách hàng chưa có số điện thoại hợp lệ." : null)
             ?? (ReviewLink.ContactEmail(content.Fields, customer.CustomerEmail) is null ? "Nhập email khách hàng trong hợp đồng để gửi link xem." : null);
         var carried = await (from comment in db.ContractNegotiationComments.AsNoTracking()
@@ -664,6 +699,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 await using var transaction = await db.Database.BeginTransactionAsync(ct);
                 var now = DateTime.UtcNow;
                 var content = request.Content;
+                content.OfficeOrigin = actor.CanCheck && !actor.CanWrite;
                 ContractDocument document;
                 ContractVersion version;
                 string? oldData = null;
@@ -682,6 +718,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     var values = await db.ContractDynamicValues.Where(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId).ToListAsync(ct);
                     oldData = values.FirstOrDefault(x => x.FieldKey == SnapshotKey)?.FieldValue;
                     var savedContent = oldData == null ? null : JsonSerializer.Deserialize<DraftContent>(oldData, Json);
+                    content.OfficeOrigin = savedContent is not null && await IsOfficeOrigin(savedContent, document.ContractDocumentId, db, ct);
                     content.NumberingBusinessId = savedContent?.NumberingBusinessId;
                     content.ContractNumber = savedContent?.ContractNumber ?? (document.ContractDocumentCode?.StartsWith("HD-", StringComparison.Ordinal) == true
                         ? document.ContractDocumentCode : null);
@@ -709,7 +746,6 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                         db.ContractVersions.Add(version);
                         await db.SaveChangesAsync(ct);
                         document.ContractDocumentCurrentVersionId = version.ContractVersionId;
-                        await ContractChecklistService.Capture(db, document.ContractTemplateId, version.ContractVersionId, previous.ContractVersionId, ct);
                     }
                     else
                     {
@@ -754,7 +790,6 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     db.ContractVersions.Add(version);
                     await db.SaveChangesAsync(ct);
                     document.ContractDocumentCurrentVersionId = version.ContractVersionId;
-                    await ContractChecklistService.Capture(db, content.TemplateId, version.ContractVersionId, null, ct);
                 }
                 if (wordKey != null) db.FileStorages.Add(new() { FileStorageObjecttype = "CONTRACT_VERSION", FileStorageObjectid = version.ContractVersionId,
                     FileStorageStoragekey = wordKey, FileStorageSha256 = content.TemplateSnapshot!.WordSha256!, FileStorageContenttype = InternalWordDocument.Mime,

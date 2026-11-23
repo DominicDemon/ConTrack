@@ -51,7 +51,6 @@ public static class InternalHost
         builder.Services.AddScoped<InternalWordDocument>();
         builder.Services.AddScoped<InternalWordTemplates>();
         builder.Services.AddScoped<InternalApprovalService>();
-        builder.Services.AddScoped<ContractChecklistService>();
         builder.Services.AddScoped<ContractProgressService>();
         builder.Services.AddScoped<IEmployeeAdmin, EmployeeAdminRepository>();
         builder.Services.AddScoped<EmployeeProfileService>();
@@ -393,11 +392,6 @@ public static class InternalHost
         { await feed.MarkRead(await User(c, r, ct), null, ct); return Results.NoContent(); });
         secured.MapGet("/contract-templates", async (IInternalRepository r, CancellationToken ct) => Results.Ok(await r.Templates(ct)));
         secured.MapGet("/contract-progress", async ([AsParameters] ProgressFilter filter, HttpContext c, ContractProgressService service, CancellationToken ct) => Results.Ok(await service.List(filter, Current(c), ct)));
-        secured.MapGet("/checklist-rules", () => Results.Ok(ContractChecklistService.Catalog));
-        secured.MapGet("/contract-templates/{id:long}/checklist", async (long id, HttpContext c, ContractChecklistService service, CancellationToken ct) => Results.Ok(await service.Template(id, Current(c), ct)));
-        secured.MapPut("/contract-templates/{id:long}/checklist", async (long id, ChecklistInput input, HttpContext c, ContractChecklistService service, CancellationToken ct) => { await service.SaveTemplate(id, input, Current(c), ct); return Results.NoContent(); });
-        secured.MapGet("/contract-drafts/{id:long}/checklist", async (long id, HttpContext c, ContractChecklistService service, CancellationToken ct) => Results.Ok(await service.Inspect(id, Current(c), ct)));
-        secured.MapPost("/contract-drafts/{id:long}/checklist", async (long id, ChecklistDecision input, HttpContext c, ContractChecklistService service, CancellationToken ct) => { await service.Decide(id, input, Current(c), ct); return Results.NoContent(); });
         secured.MapGet("/contract-drafts/{id:long}/word/content", async (long id, HttpContext c, InternalDraftService drafts, InternalWordTemplates service, CancellationToken ct) => {
             var draft = await drafts.Get(id, Current(c), ct);
             var bytes = await service.ReadWord(draft.Content.TemplateSnapshot!, ct);

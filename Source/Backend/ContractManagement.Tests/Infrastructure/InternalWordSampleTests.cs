@@ -127,7 +127,7 @@ public class InternalWordSampleTests
             values["REQUEST_AMOUNT"] = "7500000";
             if (type != 5) { values.Remove("APPENDIX_CODE"); values.Remove("REQUEST_AMOUNT"); }
             var input = new WordTemplateInput(source.FileName, source.Base64, extraction.DocumentBase64, "TEST_WORD_" + type,
-                type, blocks, fields, values, extraction.SourceToken, ChecklistRules: ["payment", "responsibility"]);
+                type, blocks, fields, values, extraction.SourceToken);
             if (type == 1)
             {
                 input = input with { Tables = [new("acceptance-table", blocks[0].Id, true,

@@ -66,6 +66,8 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
                 if (!ContractReviewPolicy.CanEdit(doc.ContractDocumentStatus, version.ContractVersionIslocked)) throw new InternalAppException(409, "Phiên bản đã khóa.");
                 var snapshot = await db.ContractDynamicValues.SingleAsync(x => x.ContractDocumentId == id && x.ContractVersionId == version.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
                 var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
+                if (await InternalRepository.IsOfficeOrigin(content, id, db, ct))
+                    throw new InternalAppException(409, "Hợp đồng do Hành chính tạo được gửi trực tiếp cho khách.");
                 DraftValidation.Prepare(content, content.TemplateSnapshot!);
                 if (content.MissingFields.Count > 0) throw new DraftValidationException(DraftValidation.Missing(content));
                 if (!content.UseTimesNewRoman)
@@ -121,6 +123,8 @@ public sealed class InternalApprovalService(MasterDbContext db, InternalWordTemp
             return true;
         }, ct);
     }
+
+    internal Task<byte[]> VerifyWord(TemplateDefinition template, CancellationToken ct) => word.ReadWord(template, ct);
 
     public async Task RequireApproved(long id, long version, CancellationToken ct)
     {

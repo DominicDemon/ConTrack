@@ -21,6 +21,8 @@ public sealed class DraftContent
     public const string ContractFont = "Times New Roman";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool UseTimesNewRoman { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? OfficeOrigin { get; set; }
     public int FormatVersion { get; set; } = 1;
     public string PartyType { get; set; } = "";
     public long? CustomerBusinessId { get; set; }

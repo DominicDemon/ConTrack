@@ -17,7 +17,7 @@ public sealed record WordContent(string Id, string AfterBlockId, string Kind, st
 public sealed record WordBodyEntry(string Id, string? Text = null, bool Heading = false);
 public sealed record WordTemplateInput(string FileName, string Base64, string DocumentBase64, string Name,
     int DocumentType, List<WordBlock> Blocks, List<DraftField> Fields, Dictionary<string, string> SampleValues, string SourceToken,
-    List<WordTable>? Tables = null, List<WordContent>? Additions = null, bool ManualContent = false, string[]? ChecklistRules = null, List<WordBodyEntry>? BodyOrder = null);
+    List<WordTable>? Tables = null, List<WordContent>? Additions = null, bool ManualContent = false, List<WordBodyEntry>? BodyOrder = null);
 public sealed record WordPreview(string PdfBase64, string PreviewToken);
 /// <param name="ParentTemplateId">Attach the new child template (types 2-5) to this contract template.</param>
 /// <param name="ReplaceTemplateId">Replace the Word content of this existing template instead of creating one.</param>

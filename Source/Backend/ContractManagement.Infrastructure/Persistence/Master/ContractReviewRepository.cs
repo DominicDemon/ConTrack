@@ -26,7 +26,7 @@ public sealed class ContractReviewRepository(
     {
         var mail = await ReviewData.InTransaction<LinkMail?>(db, async () =>
     {
-        if (!actor.CanWrite) throw new InternalAppException(403, "Chỉ kinh doanh được gửi khách.");
+
         var doc = await OwnedDocument(documentId, actor, ct);
         // A customer with a portal account logs in to read it; a prospect gets a one-contract link opened by phone check plus an emailed OTP.
         var hasAccount = await ReviewData.HasAccount(db, doc.CustomerId, ct);
@@ -34,11 +34,29 @@ public sealed class ContractReviewRepository(
         ReviewData.Expect(doc.RowVersion, request.RowVersion);
         var version = await db.ContractVersions.SingleAsync(v => v.ContractVersionId == doc.ContractDocumentCurrentVersionId, ct);
         ReviewData.Expect(version.ContractVersionRowversion, request.VersionRowVersion);
-        await approval.RequireApproved(documentId, version.ContractVersionId, ct);
+
         var latest = await Latest(documentId, ct);
-        var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleAsync(x => x.ContractDocumentId == documentId
+        var snapshot = await db.ContractDynamicValues.SingleAsync(x => x.ContractDocumentId == documentId
             && x.ContractVersionId == version.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
+        var officeOrigin = await InternalRepository.IsOfficeOrigin(content, documentId, db, ct);
+        if (officeOrigin)
+        {
+            if (!actor.CanCheck || actor.Id != doc.EmployeeId)
+                throw new InternalAppException(403, "Chỉ Hành chính phụ trách hợp đồng này được gửi khách.");
+            if (content.OfficeOrigin is null)
+            {
+                content.OfficeOrigin = true;
+                snapshot.FieldValue = JsonSerializer.Serialize(content, InternalRepository.Json);
+            }
+        }
+        else
+        {
+            if (!actor.CanWrite) throw new InternalAppException(403, "Chỉ kinh doanh được gửi khách.");
+            await approval.RequireApproved(documentId, version.ContractVersionId, ct);
+        }
+        if (officeOrigin && content.TemplateSnapshot?.WordStorageKey != null)
+            await approval.VerifyWord(content.TemplateSnapshot, ct);
         DraftValidation.RequireContractDates(content);
         if (content.FormatVersion < 2) throw new InternalAppException(422, "Mở nháp, bổ sung pháp nhân/lịch thanh toán và lưu lại trước khi gửi.");
         DraftValidation.Prepare(content, content.TemplateSnapshot ?? throw new InternalAppException(409, "Thiếu bản chụp mẫu."));
@@ -85,20 +103,30 @@ public sealed class ContractReviewRepository(
     /// <summary>Replaces the link of an open review: for a lost or failed email, or to give the customer a new deadline. The old link stops working.</summary>
     public async Task<ReviewSummary> ResendLink(long reviewId, ResendLinkRequest request, InternalUser actor, CancellationToken ct)
     {
-        if (!actor.CanWrite) throw new InternalAppException(403, "Chỉ kinh doanh được gửi lại link.");
+
         var mail = await ReviewData.InTransaction(db, async () =>
         {
             var now = DateTime.UtcNow;
             var expires = ReviewLink.Expiry(request.LinkExpiresAt, now) ?? throw new ArgumentException("Chọn thời gian hết hạn link sau thời điểm hiện tại.");
             var review = await db.ContractReviewRequests.SingleOrDefaultAsync(r => r.ContractReviewRequestId == reviewId, ct) ?? throw new InternalAppException(404, "Không tìm thấy lần gửi.");
             var doc = await OwnedDocument(review.ContractDocumentId, actor, ct);
-            await approval.RequireApproved(doc.ContractDocumentId, review.ContractVersionId, ct);
+
             ReviewData.Expect(review.Rowversion, request.RowVersion);
             if (ReviewData.CanReissueLink(review.ContractReviewRequestStatus) is { } error) throw new InternalAppException(409, error);
             if (await ReviewData.HasAccount(db, review.CustomerId, ct)) throw new InternalAppException(409, "Khách đã có tài khoản: khách đăng nhập Cổng khách hàng để xem, không dùng link.");
             var snapshot = await db.ContractDynamicValues.AsNoTracking().SingleAsync(x => x.ContractDocumentId == doc.ContractDocumentId
                 && x.ContractVersionId == review.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey, ct);
             var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, InternalRepository.Json)!;
+            if (await InternalRepository.IsOfficeOrigin(content, doc.ContractDocumentId, db, ct))
+            {
+                if (!actor.CanCheck || actor.Id != doc.EmployeeId)
+                    throw new InternalAppException(403, "Chỉ Hành chính phụ trách hợp đồng này được gửi lại link.");
+            }
+            else
+            {
+                if (!actor.CanWrite) throw new InternalAppException(403, "Chỉ kinh doanh được gửi lại link.");
+                await approval.RequireApproved(doc.ContractDocumentId, review.ContractVersionId, ct);
+            }
             var customer = await db.Customers.AsNoTracking().SingleAsync(c => c.CustomerId == review.CustomerId, ct);
             var email = ReviewLink.ContactEmail(content.Fields, customer.CustomerEmail) ?? throw new InternalAppException(409, "Hợp đồng chưa có email khách hàng hợp lệ để gửi link.");
             var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone) ?? throw new InternalAppException(409, "Khách hàng chưa có số điện thoại hợp lệ.");
@@ -254,7 +282,6 @@ public sealed class ContractReviewRepository(
             db.ContractVersions.Add(next);
             await db.SaveChangesAsync(ct);
             var from = current.ContractVersionId;
-            await ContractChecklistService.Capture(db, current.ContractTemplateId, next.ContractVersionId, from, ct);
             foreach (var x in await db.ContractDocumentItems.AsNoTracking().Where(x => x.ContractDocumentId == documentId && x.ContractVersionId == from).ToListAsync(ct))
             { x.ContractDocumentItemId = 0; x.ContractVersionId = next.ContractVersionId; db.ContractDocumentItems.Add(x); }
             var termMap = new Dictionary<long, ContractTerm>();
@@ -658,8 +685,16 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
             doc.ContractDocumentStatus = next.Document; doc.UpdatedDate = now;
             var approved = next.Review == ContractReviewStatus.Approved;
             (string Email, string Name, string Phone, string Password)? credentials = null;
+            var directSigning = false;
+            var paperSigning = false;
             if (approved)
             {
+                var raw = await db.ContractDynamicValues.Where(x => x.ContractDocumentId == doc.ContractDocumentId && x.ContractVersionId == review.ContractVersionId && x.FieldKey == InternalRepository.SnapshotKey)
+                    .Select(x => x.FieldValue).SingleAsync(ct);
+                var snapshot = JsonSerializer.Deserialize<DraftContent>(raw, InternalRepository.Json)!;
+                directSigning = await InternalRepository.IsOfficeOrigin(snapshot, doc.ContractDocumentId, db, ct);
+                paperSigning = snapshot.PartyType == "BUSINESS";
+                if (directSigning) doc.ContractDocumentStatus = ContractDocumentStatus.PendingSignature;
                 // Serialize first-time account issuance across simultaneous approvals for one customer.
                 var customer = await db.Customers.FromSqlInterpolated($"SELECT * FROM CUSTOMER WITH (UPDLOCK, ROWLOCK) WHERE customer_id = {customerId}")
                     .SingleAsync(ct);
@@ -674,16 +709,19 @@ public sealed class CustomerPortalRepository(MasterDbContext db, IOptions<EsmsOp
                 var workflow = await db.ApprovalWorkflows.Where(w => w.ApprovalWorkflowCode == ContractReviewRepository.InternalCheckWorkflow && w.ApprovalWorkflowIsactive)
                     .Select(w => (long?)w.ApprovalWorkflowId).FirstOrDefaultAsync(ct) ?? throw new InvalidOperationException("Missing CONTRACT_INTERNAL_CHECK workflow; seed it in the MASTER database script.");
                 db.ContractApprovalRequests.Add(new ContractApprovalRequest { ContractDocumentId = doc.ContractDocumentId, ContractVersionId = review.ContractVersionId,
-                    ApprovalWorkflowId = workflow, SubmittedByEmployeeId = doc.EmployeeId, SubmittedAt = now, ContractApprovalRequestStatus = 0, ContractReviewRequestId = reviewId });
+                    ApprovalWorkflowId = workflow, SubmittedByEmployeeId = doc.EmployeeId, SubmittedAt = now,
+                    ContractApprovalRequestStatus = directSigning ? 1 : 0, ContractApprovalRequestResolvedAt = directSigning ? now : null,
+                    ContractApprovalRequestDecisioncomment = directSigning ? "Tự động chuyển sang ký sau khi khách đồng ý." : null,
+                    ContractReviewRequestId = reviewId });
             }
             // The Sale in charge and Hành chính both hear of every customer answer: an agreed version is Hành chính's turn,
             // a change request may be revised by either of them.
             var who = await ReviewData.CustomerLabel(db, customerId, ct);
-            var title = next.Review switch { ContractReviewStatus.Approved => $"{who} đã đồng ý hợp đồng — chờ Hành chính duyệt bản chốt",
+            var title = next.Review switch { ContractReviewStatus.Approved => $"{who} đã đồng ý hợp đồng — " + (directSigning ? paperSigning ? "chờ ký giấy" : "chờ Sếp ký" : "chờ Hành chính duyệt bản chốt"),
                 ContractReviewStatus.ChangesRequested => $"{who} yêu cầu sửa hợp đồng", _ => $"{who} từ chối hợp đồng" };
             await ReviewData.Notify(db, doc, $"review:{reviewId}:{next.Review}", "REVIEW_" + next.Review, title,
                 $"{doc.ContractDocumentCode} · {doc.ContractDocumentName}" + (note is { Length: > 0 } ? $". Ghi chú của khách: {note}" : ""),
-                await ReviewData.WithPermission(db, "contract.check", ct), now, ct);
+                await ReviewData.WithPermission(db, directSigning && !paperSigning ? "contract.approve" : "contract.check", ct), now, ct);
             ReviewData.Audit(db, "REVIEW_" + next.Review, "CONTRACT_REVIEW_REQUEST", reviewId, "CUSTOMER", customerId, now);
             await db.SaveChangesAsync(ct);
             return credentials;

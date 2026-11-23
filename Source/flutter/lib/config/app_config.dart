@@ -17,6 +17,13 @@ abstract class AppConfig {
     return url.replaceFirst(RegExp(r'/+$'), '').replaceFirst(RegExp(r'/api$'), '');
   }
 
+  /// Optional: the host Android uses instead of `localhost` (e.g. 10.0.2.2 on the emulator). Empty: keep localhost,
+  /// reached through `adb reverse`.
+  static String? get androidHostAlias {
+    final alias = dotenv.env['API_ANDROID_HOST']?.trim();
+    return alias == null || alias.isEmpty ? null : alias;
+  }
+
   static const String appName = 'Digitizing Contract';
 
   static const int apiTimeoutSeconds = 30;

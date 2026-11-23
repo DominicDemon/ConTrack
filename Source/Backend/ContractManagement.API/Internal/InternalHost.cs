@@ -416,7 +416,8 @@ public static class InternalHost
         });
         var newDraftWord = secured.MapGroup("/contract-drafts/from-template/{id:long}/word").AddEndpointFilter(async (invocation, next) => {
             var context = invocation.HttpContext;
-            if (!Current(context).CanWrite) throw new InternalAppException(403, "Bạn không có quyền tạo nháp.");
+            var actor = Current(context);
+            if (!actor.CanWrite && !actor.CanCheck) throw new InternalAppException(403, "Bạn không có quyền tạo nháp.");
             var templates = await context.RequestServices.GetRequiredService<IInternalRepository>().Templates(context.RequestAborted);
             context.Items["draftWordSource"] = templates.SingleOrDefault(t => t.Id == invocation.GetArgument<long>(0) && t.WordStorageKey != null)
                 ?? throw new InternalAppException(404, "Không tìm thấy mẫu Word đang hoạt động.");
@@ -442,6 +443,22 @@ public static class InternalHost
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
         wordDrafts.MapPost("/activate", async (long id, WordDraftSave input, HttpContext c, InternalWordTemplates service, CancellationToken ct) => { await service.SaveDraftWord(id, input, Current(c), ct); return Results.NoContent(); })
             .WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
+        var management = secured.MapGroup("/template-library").AddEndpointFilter(async (ctx, next) =>
+        {
+            if (!Current(ctx.HttpContext).CanManageTemplates) return Results.StatusCode(403);
+            return await next(ctx);
+        });
+        management.MapGet("", async (InternalRepository r, CancellationToken ct) => Results.Ok(await r.TemplateLibrary(true, ct)));
+        management.MapGet("/{id:long}/editor", async (long id, InternalRepository r, MasterDbContext db, InternalWordTemplates service, HttpContext c, CancellationToken ct) =>
+        {
+            var row = await db.ContractTemplates.AsNoTracking().SingleOrDefaultAsync(t => t.ContractTemplateId == id && t.IsActive, ct);
+            var template = (await r.TemplateLibrary(true, ct)).FirstOrDefault(t => t.Id == id);
+            if (row == null || template == null) return Results.NotFound();
+            return Results.Ok(new { extraction = await service.OpenTemplate(template, Current(c).Id, ct),
+                stamp = (row.UpdatedDate ?? row.CreatedDate).Ticks.ToString(), template });
+        });
+        management.MapPut("/{id:long}", async (long id, string stamp, WordActivation input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
+            Results.Ok(await service.Activate(input, Current(c).Id, ct, id, stamp))).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
         secured.MapPost("/contract-templates/word/extract", async (TemplateFileInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
             Results.Ok(await service.Extract(input, Current(c).Id, ct)));
         secured.MapPost("/contract-templates/word/preview", async (WordTemplateInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>

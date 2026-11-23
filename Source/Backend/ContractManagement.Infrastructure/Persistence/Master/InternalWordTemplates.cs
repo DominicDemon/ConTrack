@@ -106,7 +106,35 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         return new(Convert.ToBase64String(pdf), token);
     }
 
-    public async Task<TemplateDefinition> Activate(WordActivation request, long actor, CancellationToken ct)
+    public async Task<WordExtraction> OpenTemplate(TemplateDefinition template, long actor, CancellationToken ct)
+    {
+        byte[] bytes;
+        if (template.WordStorageKey != null) bytes = await ReadWord(template, ct);
+        else
+        {
+            using var stream = new MemoryStream();
+            using (var doc = DocumentFormat.OpenXml.Packaging.WordprocessingDocument.Create(stream, DocumentFormat.OpenXml.WordprocessingDocumentType.Document))
+            {
+                var body = new DocumentFormat.OpenXml.Wordprocessing.Body();
+                doc.AddMainDocumentPart().Document = new DocumentFormat.OpenXml.Wordprocessing.Document(body);
+                void Paragraph(string text) => body.AppendChild(new DocumentFormat.OpenXml.Wordprocessing.Paragraph(
+                    new DocumentFormat.OpenXml.Wordprocessing.Run(new DocumentFormat.OpenXml.Wordprocessing.Text(text))));
+                Paragraph(template.Name);
+                foreach (var field in template.Fields) Paragraph(field.Label + ": {{" + field.Key + "}}");
+                foreach (var term in template.Terms)
+                {
+                    Paragraph(term.Title);
+                    foreach (var line in term.Content.Replace("\r", "").Split('\n')) Paragraph(line);
+                }
+            }
+            bytes = stream.ToArray();
+        }
+        var hash = Hash(bytes);
+        var receipt = new Receipt(actor, "template.docx", hash, hash, DateTime.UtcNow.AddHours(8));
+        return new(template.Name, Convert.ToBase64String(bytes), InternalWordDocument.Blocks(bytes, true), CoreFields.ToList())
+        { SourceToken = protector.Protect(JsonSerializer.Serialize(receipt)) };
+    }
+    public async Task<TemplateDefinition> Activate(WordActivation request, long actor, CancellationToken ct, long? editId = null, string? expectedStamp = null)
     {
         var input = request.Input;
         if (input.DocumentType == 1) ContractChecklistService.ValidateRules(input.ChecklistRules);
@@ -121,9 +149,11 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             db.ChangeTracker.Clear();
             await using var tx = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
             var existing = await db.ContractTemplates.SingleOrDefaultAsync(t => t.ContractTemplateCode == code, ct);
-            if (existing is not null)
+            // Editing in the Word editor (editId, with its stamp) and replacing the Word file (ReplaceTemplateId) both update one template in place.
+            var targetId = editId ?? request.ReplaceTemplateId;
+            if (targetId is null && existing is not null)
             {
-                var metadata = await db.FileStorages.SingleAsync(f => f.FileStorageObjecttype == "INTERNAL_TEMPLATE" && f.FileStorageObjectid == existing.ContractTemplateId, ct);
+                var metadata = await db.FileStorages.Where(f => f.FileStorageObjecttype == "INTERNAL_TEMPLATE" && f.FileStorageObjectid == existing.ContractTemplateId).OrderByDescending(f => f.FileStorageFileid).FirstAsync(ct);
                 return await storage.Read(metadata, ct);
             }
             var paths = new List<string>();
@@ -131,11 +161,13 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             try
             {
                 ContractTemplate template;
-                if (request.ReplaceTemplateId is long replaceId)
+                if (targetId is long replaceId)
                 {
                     // New Word content for an existing template: drafts keep the snapshot they were made from.
                     template = await db.ContractTemplates.SingleOrDefaultAsync(t => t.ContractTemplateId == replaceId && t.IsActive, ct)
                         ?? throw new InternalAppException(404, "Không tìm thấy mẫu văn bản đang dùng.");
+                    if (expectedStamp is not null && (template.UpdatedDate ?? template.CreatedDate).Ticks.ToString() != expectedStamp)
+                        throw new InternalAppException(409, "Mẫu đã thay đổi. Hãy mở lại trước khi sửa.");
                     await TemplateHierarchy.Validate(db, replaceId, input.DocumentType, template.ParentTemplateId, ct);
                     template.ContractTemplateName = input.Name.Trim();
                     template.ContractTemplateDocumentType = input.DocumentType;
@@ -155,7 +187,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                 Directory.CreateDirectory(storage.Root);
                 if (input.DocumentType == 1)
                 {
-                    var checklist = request.ReplaceTemplateId is null ? null : await db.Set<ContractChecklist>()
+                    var checklist = targetId is null ? null : await db.Set<ContractChecklist>()
                         .SingleOrDefaultAsync(x => x.TemplateId == template.ContractTemplateId && x.VersionId == null, ct);
                     if (checklist is null)
                         db.Set<ContractChecklist>().Add(new() { TemplateId = template.ContractTemplateId, Configured = true,
@@ -199,7 +231,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                 foreach (var field in fields) db.ContractTemplateFields.Add(new() { ContractTemplateId = template.ContractTemplateId,
                     ContractTemplateFieldKey = field.Key, ContractTemplateFieldLabel = field.Label, ContractTemplateFieldDataType = field.DataType,
                     IsRequired = field.Required, ExtraOptions = JsonSerializer.Serialize(new { field.Options, field.Min, field.Max }, InternalRepository.Json) });
-                db.AuditLogs.Add(new() { ActionType = request.ReplaceTemplateId is null ? "CREATE" : "REPLACE_TEMPLATE_WORD", EntityName = "CONTRACT_TEMPLATE",
+                db.AuditLogs.Add(new() { ActionType = targetId is null ? "CREATE" : editId.HasValue ? "UPDATE" : "REPLACE_TEMPLATE_WORD", EntityName = "CONTRACT_TEMPLATE",
                     EntityId = template.ContractTemplateId.ToString(), ActorType = "EMPLOYEE", ActorId = actor, CreatedAt = DateTime.UtcNow,
                     NewData = JsonSerializer.Serialize(new { checklistRules = input.ChecklistRules, parentTemplateId = template.ParentTemplateId, documentType = input.DocumentType }) });
                 await db.SaveChangesAsync(ct);
@@ -210,6 +242,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
             catch
             {
                 // A lost commit response can mean the rows are already durable. Verify before removing their files.
+                if (commitAttempted && targetId.HasValue) throw;
                 if (commitAttempted)
                 {
                     await tx.DisposeAsync();

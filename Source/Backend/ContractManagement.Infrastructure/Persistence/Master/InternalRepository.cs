@@ -63,10 +63,11 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions, employee.EmployeeMustChangePassword,
             departmentRow?.DepartmentName, isManager || isSysAdmin);
     }
-    public async Task<List<TemplateDefinition>> Templates(CancellationToken ct)
+    public Task<List<TemplateDefinition>> Templates(CancellationToken ct) => TemplateLibrary(false, ct);
+    public async Task<List<TemplateDefinition>> TemplateLibrary(bool allTypes, CancellationToken ct)
     {
         // Every document type (contract, appendix, handover record, receipt, payment request): drafts are made from any of them.
-        var templates = await db.ContractTemplates.AsNoTracking().Where(t => t.IsActive).ToListAsync(ct);
+        var templates = await db.ContractTemplates.AsNoTracking().Where(t => t.IsActive).ToListAsync(ct); _ = allTypes;
         var result = new List<TemplateDefinition>();
         foreach (var t in templates)
         {

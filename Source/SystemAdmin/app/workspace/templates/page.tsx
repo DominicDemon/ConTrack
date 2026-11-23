@@ -19,7 +19,7 @@ export default function TemplatesPage() {
   const [rows, setRows] = useState<TemplateSummary[]>([]); const [search, setSearch] = useState("");
   const [type, setType] = useState(""); const [status, setStatus] = useState(""); const [parent, setParent] = useState("");
   const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [busy, setBusy] = useState(true); const [acting, setActing] = useState(false); const [reload, setReload] = useState(0);
-  const [editing, setEditing] = useState<TemplateSummary | null>(null);
+  const [editing, setEditing] = useState<TemplateSummary | null>(null); const [editingWord, setEditingWord] = useState<TemplateSummary | null>(null);
   useEffect(() => { if (!canManageTemplates) return; let active = true;
     void internalApi<TemplateSummary[]>("/contract-template-library").then(list => { if (active) setRows(list); })
       .catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setBusy(false); });
@@ -72,6 +72,7 @@ export default function TemplatesPage() {
           <td className={s.muted}>{dateTime(r.updatedAt ?? r.createdAt)}</td>
           <td><div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
             {r.active && <button className={ui.secondaryButton} disabled={acting} onClick={() => setEditing(r)}>Sửa</button>}
+            {r.active && <button className={ui.secondaryButton} disabled={acting} title="Sửa chữ, điều khoản, bảng ngay trên nội dung Word của mẫu" onClick={() => setEditingWord(r)}>Sửa nội dung</button>}
             {r.active && r.word && <TemplateUpload replace={{ id: r.id, name: r.name, documentType: r.documentType }} onImported={t => saved(`Đã thay file Word của ${t.name}.`)}
               trigger={open => <button className={ui.secondaryButton} disabled={acting} onClick={open}>Thay file Word</button>}/>}
             {r.active && r.documentType === 1 && <TemplateUpload parent={{ id: r.id, name: r.name }} onImported={t => saved(`Đã tạo mẫu con ${t.name} cho ${r.name}.`)}
@@ -79,6 +80,7 @@ export default function TemplatesPage() {
             <button className={ui.secondaryButton} disabled={acting} onClick={() => toggle(r)}>{r.active ? "Ẩn" : "Khôi phục"}</button>
           </div></td></tr>)}</tbody></table></div>}
     </section>
+    {editingWord && <TemplateUpload key={editingWord.id} editTemplate={editingWord} onClose={() => setEditingWord(null)} onImported={t => saved(`Đã lưu nội dung mẫu ${t.name}.`)}/>}
     {editing && <TemplateInfoDialog template={editing} parents={rows} onClose={() => setEditing(null)}
       onSaved={row => { setEditing(null); replace(row); setNotice(`Đã cập nhật ${row.name}.`); }}/>}
   </div>;

@@ -22,10 +22,12 @@ const documentTypes = ["Hợp đồng", "Phụ lục", "Biên bản bàn giao", 
 /**
  * parent: the new template is a child (appendix, handover record…) of this contract template.
  * replace: new Word content for this existing template; drafts already made keep their own copy.
+ * editTemplate: opens this template's own Word content in the editor (no new file), saved in place.
  * trigger: the page's own button; without it a default "Tạo mẫu văn bản" button opens the editor.
  */
-export default function TemplateUpload({ onImported, disabled, draft, locate, inline, parent, replace, trigger }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; saved?:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string};
-  parent?: { id: string; name: string }; replace?: { id: string; name: string; documentType: number }; trigger?: (open: () => void) => ReactNode }) {
+export default function TemplateUpload({ onImported, disabled, draft, locate, inline, parent, replace, trigger, editTemplate, onClose }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; saved?:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string};
+  parent?: { id: string; name: string }; replace?: { id: string; name: string; documentType: number }; trigger?: (open: () => void) => ReactNode;
+  editTemplate?: Pick<TemplateDefinition, "id" | "name">; onClose?: () => void }) {
   const endpoint = draft ? `/contract-drafts/${draft.id}/word` : inline ? `/contract-drafts/from-template/${inline.templateId}/word` : "/contract-templates/word";
   const [mobile, setMobile] = useState(false);
   const [tab, setTab] = useState("edit");
@@ -37,7 +39,11 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!editTemplate);
+  const [stamp, setStamp] = useState("");
+  const [editFields, setEditFields] = useState<TemplateDefinition["fields"]>([]);
+  const [manual, setManual] = useState(true);
+  function closeEditor() { setOpen(false); onClose?.(); }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -123,17 +129,17 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
       });
       const original = { fileName: file.name, base64 };
       const result = await internalApi<Extraction>("/contract-templates/word/extract", "POST", original);
-      setSource(original); setExtraction(result); setName(replace?.name ?? result.name); setBlocks(result.blocks);
+      setSource(original); setExtraction(result); setName(editTemplate ? name : replace?.name ?? result.name); setBlocks(result.blocks);
       setActive("");
       const guessed = /ĐNTT|DNTT/i.test(file.name) ? 5 : /BienBan|Biên bản/i.test(file.name) ? 3 : /PLHD|PLHĐ|PhuLuc|Phụ lục/i.test(file.name) ? 2 : 1;
-      // Replacing keeps the template's type; a child template is never a contract.
-      const type = replace ? replace.documentType : parent && guessed === 1 ? 2 : guessed;
+      // Editing or replacing keeps the template's type; a child template is never a contract.
+      const type = editTemplate ? documentType : replace ? replace.documentType : parent && guessed === 1 ? 2 : guessed;
       setDocumentType(type);
       await render({
         ...original, documentBase64: result.documentBase64, sourceToken: result.sourceToken,
-        name: replace?.name ?? result.name, documentType: type,
+        name: editTemplate ? name : replace?.name ?? result.name, documentType: type,
         blocks: result.blocks.map(({ images, ...block }) => { void images; return block; }),
-        fields: [], tables: [], additions: [], sampleValues: {}, manualContent: true, checklistRules: null,
+        fields: editFields, tables: [], additions: [], sampleValues: {}, manualContent: manual, checklistRules: null,
       }, false);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
@@ -143,7 +149,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     const byId = new Map(blocks.map(b=>[b.id,b]));
     const bodyOrder = inline ? [...new Set(cards.flatMap(c=>c.ids.map(id=>byId.get(id)!.bodyUnit!)))].map(id=>({id,text:original.has(id)?undefined:byId.get(id)!.text,heading:cards.some(c=>c.title===id&&!c.fixed)})) : undefined;
     return { ...source!, documentBase64: extraction!.documentBase64, sourceToken: extraction!.sourceToken,
-      name, documentType, bodyOrder, blocks: blocks.filter(b=>original.has(b.id)).map(({ images, ...block }) => { void images; return block; }), fields: [], tables:tables.filter(t=>!inline||retained.has(t.afterBlockId)), additions:additions.filter(a=>!inline||retained.has(a.afterBlockId)), sampleValues: {}, manualContent: true, checklistRules: !draft && documentType === 1 && checklistConfirmed ? checklistRules : null };
+      name, documentType, bodyOrder, blocks: blocks.filter(b=>original.has(b.id)).map(({ images, ...block }) => { void images; return block; }), fields: editFields, tables:tables.filter(t=>!inline||retained.has(t.afterBlockId)), additions:additions.filter(a=>!inline||retained.has(a.afterBlockId)), sampleValues: {}, manualContent: manual, checklistRules: !draft && documentType === 1 && checklistConfirmed ? checklistRules : null };
   }
   async function render(input: ReturnType<typeof payload> | Omit<ReturnType<typeof payload>,"bodyOrder"> = payload(), showPreview = true) {
     const version = revision.current; setBusy(true); invalidate(false);
@@ -161,13 +167,40 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     if (!draft && documentType === 1 && !checklistConfirmed) {setError("Xác nhận danh sách điều khoản cần rà soát trước khi kích hoạt."); return;}
     setBusy(true); setError("");
     try {
-      const template = await internalApi<TemplateDefinition>("/contract-templates/word/activate", "POST",
-        { input: payload(), previewToken: preview.token, parentTemplateId: parent?.id ?? null, replaceTemplateId: replace?.id ?? null });
+      const template = editTemplate
+        ? await internalApi<TemplateDefinition>(`/template-library/${editTemplate.id}?stamp=${stamp}`, "PUT", { input: payload(), previewToken: preview.token })
+        : await internalApi<TemplateDefinition>("/contract-templates/word/activate", "POST",
+          { input: payload(), previewToken: preview.token, parentTemplateId: parent?.id ?? null, replaceTemplateId: replace?.id ?? null });
       onImported(template);
-      setMessage((replace ? "Đã thay file Word của mẫu " : "Đã kích hoạt mẫu ") + name + ".");
-      setOpen(false); invalidate();
+      setMessage((editTemplate ? "Đã lưu thay đổi mẫu " : replace ? "Đã thay file Word của mẫu " : "Đã kích hoạt mẫu ") + name + ".");
+      closeEditor(); invalidate();
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
+  useEffect(() => {
+    if (!editTemplate) return;
+    let active = true;
+    async function load(id: string) {
+      setBusy(true);
+      try {
+        const { extraction: result, stamp, template } = await internalApi<{extraction: Extraction & {coreFields:{key:string}[]}; stamp:string; template:TemplateDefinition}>(`/template-library/${id}/editor`);
+        const type = template.documentType ?? 1;
+        const checklist = type === 1 ? await internalApi<{configured:boolean;rules:string[]}>(`/contract-templates/${id}/checklist`) : null;
+        if (!active) return;
+        const original = {fileName:"template.docx", base64:result.documentBase64};
+        const fields = template.fields.filter(f => !result.coreFields.some(core => core.key === f.key));
+        const manualContent = template.manualWordContent ?? false;
+        setStamp(stamp); setEditFields(fields); setManual(manualContent); setSource(original); setExtraction(result);
+        setBlocks(result.blocks); setName(template.name); setDocumentType(type);
+        setChecklistRules(checklist?.rules ?? []); setChecklistConfirmed(!!checklist?.configured);
+        await render({...original, documentBase64:result.documentBase64, sourceToken:result.sourceToken,
+          name:template.name, documentType:type, blocks:result.blocks.map(({images,...b})=>b), fields, tables:[], additions:[],
+          sampleValues:{}, manualContent, checklistRules:checklist?.configured ? checklist.rules : null}, false);
+      } catch(e) { if (active) setError((e as Error).message); }
+      finally { if (active) setBusy(false); }
+    }
+    void load(editTemplate.id);
+    return () => {active=false;};
+  }, [editTemplate?.id]);
   async function openEditor() {
     setOpen(true); setMessage("");
     if (!draft && !inline) return;
@@ -176,7 +209,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
       const result = inline?.readOnly ? await internalApi<Extraction>(`${endpoint}/content`) : await internalApi<Extraction>(`${endpoint}/extract`, "POST", {});
       setCards(wordCards(result.blocks));
       setSource({fileName:"hop-dong.docx",base64:result.documentBase64});
-      setExtraction(result); setName(result.name); setBlocks(result.blocks); setDocumentType(1); setActive("");
+      setExtraction(result); setName(editTemplate ? name : result.name); setBlocks(result.blocks); setDocumentType(1); setActive("");
       if (inline && !inline.readOnly) await render({fileName:"hop-dong.docx", base64:result.documentBase64, documentBase64:result.documentBase64, sourceToken:result.sourceToken, name:result.name, documentType:1, blocks:result.blocks.map(({images,...b}) => b), fields:[], tables:[], additions:[], sampleValues:{}, manualContent:true, checklistRules:null}, false);
     } catch(e) { setError((e as Error).message); } finally {setBusy(false);}
   }
@@ -300,11 +333,11 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     {inline.previewHost && createPortal(previewPane, inline.previewHost)}
   </>;
   return <>
-    {trigger ? trigger(() => void openEditor()) : <Button type="button" variant="outline" disabled={disabled} onClick={() => void openEditor()}>Tạo mẫu văn bản</Button>}
-    {message && !trigger && <p role="status">{message}</p>}
-    <Dialog open={open} onOpenChange={value => {if (!busy) setOpen(value);}}>
+    {!editTemplate && (trigger ? trigger(() => void openEditor()) : <Button type="button" variant="outline" disabled={disabled} onClick={() => void openEditor()}>Tạo mẫu văn bản</Button>)}
+    {message && !trigger && !editTemplate && <p role="status">{message}</p>}
+    <Dialog open={open} onOpenChange={value => {if (busy) return; if (value) setOpen(true); else closeEditor();}}>
       <DialogContent className={styles.dialog} style={{width:"98vw",maxWidth:"98vw",height:"96dvh",display:"flex",overflow:"hidden"}} onInteractOutside={e => e.preventDefault()}>
-        <DialogHeader><DialogTitle>{replace ? `Thay file Word · ${replace.name}` : parent ? `Tạo mẫu con cho ${parent.name}` : "Tạo mẫu văn bản"}</DialogTitle><DialogDescription>Bên trái sửa nội dung trực tiếp, thêm điều khoản, bảng và ảnh. Bên phải xem bản in giữ bố cục của file Word.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{editTemplate ? `Sửa nội dung mẫu · ${editTemplate.name}` : replace ? `Thay file Word · ${replace.name}` : parent ? `Tạo mẫu con cho ${parent.name}` : "Tạo mẫu văn bản"}</DialogTitle><DialogDescription>Bên trái sửa nội dung trực tiếp, thêm điều khoản, bảng và ảnh. Bên phải xem bản in giữ bố cục của file Word.</DialogDescription></DialogHeader>
         <fieldset disabled={busy} className={styles.metadata} hidden={!!draft}>
           <label><span>File Word (.doc, .docx, tối đa 10 MB)<span className={styles.required} aria-hidden>*</span></span><Input type="file" accept=".doc,.docx" onChange={e => void extract(e.target.files?.[0])}/></label>
           <label><span>Tên mẫu<span className={styles.required} aria-hidden>*</span></span><Input value={name} maxLength={500} placeholder="Ví dụ: Hợp đồng cung cấp phần mềm 2026" onChange={e => {setName(e.target.value); invalidate();}}/></label>
@@ -324,8 +357,8 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
         {error && <p role="alert" className="text-red-600">{error}</p>}
         <div className={styles.footer}>
           {preview && <label><input type="checkbox" checked={confirmed} disabled={busy || !previewCurrent} onChange={e => setConfirmed(e.target.checked)}/> Tôi đã kiểm tra nội dung và bố cục PDF đối chiếu.</label>}
-          <Button type="button" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Đóng</Button>
-          <Button type="button" disabled={busy || !preview || !previewCurrent || !confirmed} onClick={() => void activate()}>Kích hoạt mẫu</Button>
+          <Button type="button" variant="outline" disabled={busy} onClick={closeEditor}>Đóng</Button>
+          <Button type="button" disabled={busy || !preview || !previewCurrent || !confirmed} onClick={() => void activate()}>{editTemplate ? "Lưu thay đổi" : "Kích hoạt mẫu"}</Button>
         </div>
       </DialogContent>
     </Dialog>

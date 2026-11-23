@@ -321,7 +321,8 @@ public static class InternalHost
         });
         var newDraftWord = secured.MapGroup("/contract-drafts/from-template/{id:long}/word").AddEndpointFilter(async (invocation, next) => {
             var context = invocation.HttpContext;
-            if (!Current(context).CanWrite) throw new InternalAppException(403, "Bạn không có quyền tạo nháp.");
+            var actor = Current(context);
+            if (!actor.CanWrite && !actor.CanCheck) throw new InternalAppException(403, "Bạn không có quyền tạo nháp.");
             var templates = await context.RequestServices.GetRequiredService<IInternalRepository>().Templates(context.RequestAborted);
             context.Items["draftWordSource"] = templates.SingleOrDefault(t => t.Id == invocation.GetArgument<long>(0) && t.WordStorageKey != null)
                 ?? throw new InternalAppException(404, "Không tìm thấy mẫu Word đang hoạt động.");

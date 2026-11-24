@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../../models/scans/signed_scan_dto.dart';
 import '../../services/scans/customer_scan_api.dart';
 import '../../utils/scan_pdf_builder.dart';
+import '../../utils/vault_search.dart';
 
 const _keywordLabels = {'ContractCode': 'Số HĐ', 'TaxCode': 'MST', 'PhoneNumber': 'SĐT', 'CustomerName': 'Tên', 'Email': 'Email'};
 const _ocrLabels = {
@@ -305,7 +306,7 @@ class _CustomerVaultPageState extends State<CustomerVaultPage> {
     switch (action) {
       case 'email': await _email(item);
       case 'edit': await _edit(item);
-      case 'keyword': await _addKeyword(item);
+      case 'keyword': await _keywordsSheet(item);
       case 'reread':
         final key = _needKey(); if (key == null) return;
         await _run(item.id, () => _api.vaultReread(item.id, key), done: 'Đang đọc lại nội dung. Thông tin bạn tự thêm được giữ nguyên.');
@@ -368,7 +369,7 @@ class _CustomerVaultPageState extends State<CustomerVaultPage> {
         if (_trash) Padding(padding: const EdgeInsets.only(top: 8), child: Text('Tài liệu trong thùng rác vẫn tính vào dung lượng và tự xóa hẳn sau $_trashDays ngày.', style: TextStyle(fontSize: 12, color: muted))),
         const SizedBox(height: 12),
         TextField(controller: _search, onChanged: (_) { _debounce?.cancel(); _debounce = Timer(const Duration(milliseconds: 350), _load); },
-          decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Tên, ghi chú, số HĐ, MST, SĐT, email', border: OutlineInputBorder(), isDense: true)),
+          decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Tên, thư mục, ghi chú, số HĐ, MST, SĐT, email', border: OutlineInputBorder(), isDense: true)),
         const SizedBox(height: 8),
         SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [
           for (final folder in ['', ..._categories]) Padding(padding: const EdgeInsets.only(right: 6), child: ChoiceChip(label: Text(folder.isEmpty ? 'Tất cả' : folder), selected: _folder == folder,
@@ -386,6 +387,43 @@ class _CustomerVaultPageState extends State<CustomerVaultPage> {
     );
   }
 
+  /// While searching, the keywords that match; otherwise the contract number and the partner only.
+  (List<VaultKeyword>, int) _shownKeywords(VaultItem item) {
+    final query = _search.text;
+    if (query.trim().isNotEmpty) {
+      final hits = item.keywords.where((k) => VaultSearch.fieldMatches(k.value, query)).toList();
+      if (hits.isNotEmpty) return (hits, item.keywords.length - hits.length);
+    }
+    final main = [
+      ...item.keywords.where((k) => k.type == 'ContractCode').take(1),
+      ...item.keywords.where((k) => k.type == 'CustomerName').take(1),
+    ];
+    final shown = main.isNotEmpty ? main : item.keywords.take(1).toList();
+    return (shown, item.keywords.length - shown.length);
+  }
+
+  /// Every keyword of a document: remove a wrong one, add a missing one.
+  Future<void> _keywordsSheet(VaultItem item) => showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true,
+    builder: (context) => StatefulBuilder(builder: (context, setSheet) {
+      final current = _items?.firstWhere((i) => i.id == item.id, orElse: () => item) ?? item;
+      return Padding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 24), child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Thông tin để tìm', style: Theme.of(context).textTheme.titleMedium),
+        Text(current.title, style: const TextStyle(fontSize: 12)),
+        const SizedBox(height: 12),
+        if (current.keywords.isEmpty) const Text('Chưa có thông tin nào.'),
+        Wrap(spacing: 6, runSpacing: 6, children: [
+          for (final k in current.keywords) InputChip(
+            visualDensity: VisualDensity.compact,
+            backgroundColor: k.manual ? Theme.of(context).colorScheme.secondaryContainer : null, tooltip: k.manual ? 'Bạn tự thêm' : 'Đọc từ tài liệu',
+            label: Text('${_keywordLabels[k.type] ?? k.type}: ${k.value}', style: const TextStyle(fontSize: 12)),
+            onDeleted: _trash ? null : () async { await _run(item.id, () => _api.vaultRemoveKeyword(item.id, k.id)); setSheet(() {}); }),
+        ]),
+        if (!_trash) Padding(padding: const EdgeInsets.only(top: 12), child: OutlinedButton.icon(
+          onPressed: () async { await _addKeyword(current); setSheet(() {}); },
+          icon: const Icon(Icons.add), label: const Text('Thêm số HĐ, MST, SĐT…'))),
+      ]));
+    }));
+
   Widget _card(VaultItem item, ThemeData theme, Color muted) {
     final busy = _busy == item.id;
     final warn = item.ocrStatus == 'INTERRUPTED' || item.ocrStatus == 'FAILED';
@@ -397,7 +435,9 @@ class _CustomerVaultPageState extends State<CustomerVaultPage> {
         Padding(padding: const EdgeInsets.only(top: 4), child: Icon(item.contentType.startsWith('image/') ? Icons.image_outlined : Icons.picture_as_pdf_outlined, color: theme.colorScheme.primary)),
         const SizedBox(width: 10),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(item.title, style: theme.textTheme.titleSmall),
+          Text.rich(VaultSearch.highlight(item.title, _search.text, style: theme.textTheme.titleSmall)),
+          if (item.category != null && VaultSearch.fieldMatches(item.category, _search.text))
+            Text.rich(VaultSearch.highlight('Thư mục: ${item.category}', _search.text, style: TextStyle(fontSize: 12, color: muted))),
           Text([if (item.category != null) item.category!, _mb(item.sizeBytes), if (item.pageCount != null) '${item.pageCount} trang', _trash ? 'xóa ${_day(item.trashedAt!)}' : _day(item.uploadedAt)].join(' · '),
             style: TextStyle(fontSize: 12, color: muted)),
         ])),
@@ -407,11 +447,11 @@ class _CustomerVaultPageState extends State<CustomerVaultPage> {
                    PopupMenuItem(value: 'purge', child: ListTile(leading: Icon(Icons.delete_forever_outlined), title: Text('Xóa hẳn')))]
           : [const PopupMenuItem(value: 'email', child: ListTile(leading: Icon(Icons.mail_outline), title: Text('Gửi email'))),
              const PopupMenuItem(value: 'edit', child: ListTile(leading: Icon(Icons.edit_outlined), title: Text('Sửa tên, thư mục, hạn'))),
-             const PopupMenuItem(value: 'keyword', child: ListTile(leading: Icon(Icons.add), title: Text('Thêm số HĐ, MST, SĐT…'))),
+             const PopupMenuItem(value: 'keyword', child: ListTile(leading: Icon(Icons.manage_search), title: Text('Thông tin để tìm…'))),
              if (item.ocrStatus != 'QUEUED' && item.ocrStatus != 'PROCESSING') const PopupMenuItem(value: 'reread', child: ListTile(leading: Icon(Icons.refresh), title: Text('Đọc lại nội dung'))),
              const PopupMenuItem(value: 'trash', child: ListTile(leading: Icon(Icons.delete_outline), title: Text('Chuyển vào thùng rác')))]),
       ]),
-      if (item.note != null) Padding(padding: const EdgeInsets.only(top: 4, right: 10), child: Text(item.note!, style: TextStyle(fontSize: 12, color: muted))),
+      if (item.note != null) Padding(padding: const EdgeInsets.only(top: 4, right: 10), child: Text.rich(VaultSearch.highlight(item.note, _search.text, style: TextStyle(fontSize: 12, color: muted)))),
       if (item.expiresOn != null && days != null) Padding(padding: const EdgeInsets.only(top: 4), child: Row(children: [
         if (item.remindDays != null) Icon(Icons.notifications_active_outlined, size: 13, color: expiryColor),
         const SizedBox(width: 4),
@@ -419,13 +459,20 @@ class _CustomerVaultPageState extends State<CustomerVaultPage> {
       ])),
       if (item.sameContractCode > 0) Padding(padding: const EdgeInsets.only(top: 4), child: Text('Có thể trùng: cùng số hợp đồng với ${item.sameContractCode} tài liệu khác', style: TextStyle(fontSize: 12, color: Colors.orange.shade800))),
       if (item.ocrStatus != 'SUCCESS') Padding(padding: const EdgeInsets.only(top: 4, right: 10), child: Text(_ocrLabels[item.ocrStatus] ?? item.ocrStatus, style: TextStyle(fontSize: 12, color: warn ? Colors.orange.shade800 : muted))),
-      if (item.keywords.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6, right: 10), child: Wrap(spacing: 6, runSpacing: 6, children: [
-        for (final k in item.keywords) InputChip(
-          visualDensity: VisualDensity.compact, materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          backgroundColor: k.manual ? theme.colorScheme.secondaryContainer : null, tooltip: k.manual ? 'Bạn tự thêm' : 'Đọc từ tài liệu',
-          label: Text('${_keywordLabels[k.type] ?? k.type}: ${k.value}', style: const TextStyle(fontSize: 12)),
-          onDeleted: _trash || _busy != null ? null : () => _run(item.id, () => _api.vaultRemoveKeyword(item.id, k.id))),
-      ])),
+      if (item.keywords.isNotEmpty) Builder(builder: (context) {
+        final (shown, hidden) = _shownKeywords(item);
+        return Padding(padding: const EdgeInsets.only(top: 6, right: 10), child: Wrap(spacing: 6, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          for (final k in shown) Chip(
+            visualDensity: VisualDensity.compact, materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            backgroundColor: k.manual ? theme.colorScheme.secondaryContainer : null,
+            label: Text.rich(TextSpan(style: const TextStyle(fontSize: 12), children: [
+              TextSpan(text: '${_keywordLabels[k.type] ?? k.type}: ', style: TextStyle(color: muted)),
+              VaultSearch.highlight(k.value, _search.text)]))),
+          if (hidden > 0) TextButton(onPressed: _busy == null ? () => _keywordsSheet(item) : null,
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
+            child: Text('+$hidden thông tin', style: const TextStyle(fontSize: 12))),
+        ]));
+      }),
       if (item.ocrStatus == 'SUCCESS' && item.keywords.isEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text('Không đọc được từ khóa', style: TextStyle(fontSize: 12, color: muted))),
       if (left != null) Padding(padding: const EdgeInsets.only(top: 4), child: Text('Tự xóa hẳn sau ${left.clamp(0, _trashDays)} ngày', style: TextStyle(fontSize: 12, color: muted))),
       if (!_trash) Align(alignment: Alignment.centerRight, child: TextButton.icon(onPressed: _busy == null ? () => _view(item) : null,

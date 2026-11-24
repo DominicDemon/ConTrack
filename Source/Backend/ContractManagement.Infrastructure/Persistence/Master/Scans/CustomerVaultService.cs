@@ -74,8 +74,8 @@ public sealed class CustomerVaultService(
     }
 
     /// <summary>
-    /// Documents in use (or in the bin), newest first. <paramref name="query"/> matches the title, note, file name or any
-    /// keyword; <paramref name="from"/> and <paramref name="to"/> are days (yyyy-mm-dd) of upload.
+    /// Documents in use (or in the bin), newest first. <paramref name="query"/> matches the title, note, folder, file name
+    /// or any keyword (<see cref="VaultSearch"/>); <paramref name="from"/> and <paramref name="to"/> are days (yyyy-mm-dd) of upload.
     /// </summary>
     public async Task<IReadOnlyList<CustomerVaultItemDto>> ListAsync(
         long customerId, string? query, string? from, string? to, string? category, bool trash, CancellationToken cancellationToken)
@@ -85,22 +85,17 @@ public sealed class CustomerVaultService(
         if (Day(from) is { } start) rows = rows.Where(r => r.v.CreatedAt >= start.AddHours(-7));
         if (Day(to) is { } end) rows = rows.Where(r => r.v.CreatedAt < end.AddDays(1).AddHours(-7));
         if (!string.IsNullOrWhiteSpace(category)) rows = rows.Where(r => r.v.CustomerVaultFileCategory == category.Trim());
-        var term = query?.Trim();
-        if (!string.IsNullOrEmpty(term))
-        {
-            var digits = new string(term.Where(char.IsAsciiDigit).ToArray());
-            var lower = term.ToLowerInvariant();
-            var upper = VietnameseText.StripDiacritics(term).ToUpperInvariant();
-            rows = rows.Where(r => r.v.CustomerVaultFileTitle.Contains(term) || (r.v.CustomerVaultFileNote != null && r.v.CustomerVaultFileNote.Contains(term))
-                || r.f.FileStorageFilename.Contains(term)
-                || db.CustomerVaultKeywords.Any(k => k.CustomerVaultFileId == r.v.CustomerVaultFileId
-                    && (k.CustomerVaultKeywordValue.Contains(lower) || k.CustomerVaultKeywordValue.Contains(upper)
-                        || (digits.Length >= 4 && k.CustomerVaultKeywordValue.Contains(digits)))));
-        }
 
-        var list = await rows.OrderByDescending(r => r.v.CustomerVaultFileId).Take(500).ToListAsync(cancellationToken);
-        var ids = list.Select(r => r.v.CustomerVaultFileId).ToList();
-        var keywords = await db.CustomerVaultKeywords.AsNoTracking().Where(k => ids.Contains(k.CustomerVaultFileId)).ToListAsync(cancellationToken);
+        // The text search runs here, on this customer's documents only (a few hundred within 1 GB): it ignores accents,
+        // case, spaces and dashes, which SQL Server collation cannot do for us (see VaultSearch).
+        var candidates = await rows.OrderByDescending(r => r.v.CustomerVaultFileId).ToListAsync(cancellationToken);
+        var candidateIds = candidates.Select(r => r.v.CustomerVaultFileId).ToList();
+        var keywords = await db.CustomerVaultKeywords.AsNoTracking().Where(k => candidateIds.Contains(k.CustomerVaultFileId)).ToListAsync(cancellationToken);
+        var keywordsOf = keywords.ToLookup(k => k.CustomerVaultFileId, k => k.CustomerVaultKeywordValue);
+        var list = candidates
+            .Where(r => VaultSearch.Matches(query, new VaultSearch.Document(r.v.CustomerVaultFileTitle, r.v.CustomerVaultFileNote,
+                r.v.CustomerVaultFileCategory, r.f.FileStorageFilename, keywordsOf[r.v.CustomerVaultFileId].ToList())))
+            .Take(500).ToList();
         // Same contract number on another document in use: a document kept twice, or two contracts sharing a number.
         var codes = await db.CustomerVaultKeywords.AsNoTracking()
             .Where(k => k.CustomerVaultKeywordType == (int)ScanKeywordType.ContractCode

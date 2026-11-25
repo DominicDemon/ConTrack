@@ -114,8 +114,7 @@ public sealed class InternalSigningService(
             var pdf = rendered.Content;
             var hash = Convert.ToHexString(SHA256.HashData(pdf)).ToLowerInvariant();
             var key = $"{documentId}-{versionId}-{Guid.NewGuid():N}.pdf";
-            Directory.CreateDirectory(signingRoot);
-            await File.WriteAllBytesAsync(Path.Combine(signingRoot, key), pdf, ct);
+            await storage.WriteAsync(Path.Combine(signingRoot, key), pdf, ct);
             var now = DateTime.UtcNow;
             try
             {
@@ -347,8 +346,7 @@ public sealed class InternalSigningService(
         // Refresh the unsigned source in place. Keeping the existing primary relation avoids violating
         // databases that enforce a single primary PDF per contract version.
         var key = $"{signature.ContractDocumentId}-{signature.ContractVersionId}-{Guid.NewGuid():N}-word-template.pdf";
-        Directory.CreateDirectory(signingRoot);
-        await File.WriteAllBytesAsync(Path.Combine(signingRoot, key), rendered.Content, ct);
+        await storage.WriteAsync(Path.Combine(signingRoot, key), rendered.Content, ct);
         try
         {
             path.FileStorageFilepath = key;
@@ -412,7 +410,7 @@ public sealed class InternalSigningService(
                 company.ContractElectronicWidth ?? 190, company.ContractElectronicHeight ?? 54);
             var signed = signatures.StampSignature(source, png, placement);
             var signedKey = $"{company.ContractDocumentId}-{company.ContractVersionId}-company-{Guid.NewGuid():N}.pdf";
-            await File.WriteAllBytesAsync(Path.Combine(signingRoot, signedKey), signed, ct);
+            await storage.WriteAsync(Path.Combine(signingRoot, signedKey), signed, ct);
             try
             {
                 var now = DateTime.UtcNow;
@@ -498,7 +496,7 @@ public sealed class InternalSigningService(
     private async Task<byte[]> ReadFile(string key, CancellationToken ct)
     {
         if (Path.GetFileName(key) != key) throw new InvalidDataException("Invalid signing storage key.");
-        return await File.ReadAllBytesAsync(Path.Combine(signingRoot, key), ct);
+        return await storage.ReadAsync(Path.Combine(signingRoot, key), ct);
     }
 
     /// <param name="format">The company print format (Thiết lập tham số hợp đồng); null keeps the original layout.</param>

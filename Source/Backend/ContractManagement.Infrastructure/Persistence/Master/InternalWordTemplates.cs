@@ -189,7 +189,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
                     var key = Guid.NewGuid().ToString("N") + extension;
                     var path = Path.Combine(storage.Root, key);
                     paths.Add(path);
-                    await File.WriteAllBytesAsync(path, bytes, ct);
+                    await storage.WriteAsync(path, bytes, ct);
                     db.FileStorages.Add(new FileStorage { FileStorageObjecttype = objectType, FileStorageObjectid = template.ContractTemplateId,
                         FileStorageFiletype = objectType, FileStorageFilename = filename, FileStorageFilepath = key, FileStorageStoragekey = key,
                         FileStorageContenttype = mime, FileStorageFilesize = bytes.Length, FileStorageSha256 = Hash(bytes),
@@ -325,8 +325,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
         if (receipt.DocumentHash != Hash(bytes)) throw new ArgumentException("Nội dung không khớp bản đã xem trước.");
         var key = Guid.NewGuid().ToString("N") + ".docx";
         var path = Path.Combine(storage.Root, key);
-        Directory.CreateDirectory(storage.Root);
-        await File.WriteAllBytesAsync(path, bytes, ct);
+        await storage.WriteAsync(path, bytes, ct);
         try
         {
             await ReviewData.InTransaction(db, async () =>
@@ -402,7 +401,7 @@ public sealed class InternalWordTemplates(MasterDbContext db, InternalTemplateSt
     {
         if (template.WordStorageKey is null || Path.GetFileName(template.WordStorageKey) != template.WordStorageKey)
             throw new ArgumentException("Mẫu này không có bản Word.");
-        var bytes = await File.ReadAllBytesAsync(Path.Combine(storage.Root, template.WordStorageKey), ct);
+        var bytes = await storage.ReadAsync(Path.Combine(storage.Root, template.WordStorageKey), ct);
         if (Hash(bytes) != template.WordSha256) throw new ArgumentException("File mẫu không khớp bản đã lưu.");
         return bytes;
     }

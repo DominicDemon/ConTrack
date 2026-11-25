@@ -100,8 +100,13 @@ public static class InternalHost
         builder.Services.AddScoped<ReviewLinkOtp>();
         builder.Services.AddMemoryCache();
         ScanEndpoints.Register(builder.Services, builder.Configuration);
-        builder.Services.AddSingleton(new InternalTemplateStorage(InternalTemplateStorage.ResolveRoot(
-            builder.Configuration["InternalStorage:Root"], builder.Environment.ContentRootPath, AppContext.BaseDirectory)));
+        // Contract PDFs, draft Word copies and templates are encrypted at rest (ContractFileCipher); scans have their own keys.
+        var templateRoot = InternalTemplateStorage.ResolveRoot(builder.Configuration["InternalStorage:Root"], builder.Environment.ContentRootPath, AppContext.BaseDirectory);
+        builder.Services.AddSingleton(sp => new ContractFileCipher(
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ContractManagement.Infrastructure.Persistence.Master.Scans.FileEncryptionOptions>>(),
+            sp.GetRequiredService<IHostEnvironment>(),
+            sp.GetService<ContractManagement.Infrastructure.Persistence.Master.Scans.IRecoveryPublicKey>()));
+        builder.Services.AddSingleton(sp => new InternalTemplateStorage(templateRoot, sp.GetRequiredService<ContractFileCipher>()));
         builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new StringLongConverter()));
         builder.Services.AddDistributedMemoryCache();
         var secure = builder.Environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always;

@@ -98,7 +98,7 @@ public sealed class InternalTemplateImport(MasterDbContext db, InternalTemplateS
                 {
                     var key = Guid.NewGuid().ToString("N") + extension;
                     var path = Path.Combine(storage.Root, key); files.Add(path);
-                    await File.WriteAllBytesAsync(path, bytes, ct);
+                    await storage.WriteAsync(path, bytes, ct);
                     db.FileStorages.Add(new FileStorage { FileStorageObjecttype = objectType, FileStorageObjectid = template.ContractTemplateId,
                         FileStorageFiletype = extension == ".json" ? "TEMPLATE_JSON" : "TEMPLATE_SOURCE", FileStorageFilename = key,
                         FileStorageFilepath = key, FileStorageStoragekey = key, FileStorageContenttype = mime, FileStorageFilesize = bytes.Length,

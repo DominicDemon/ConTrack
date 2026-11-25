@@ -35,16 +35,17 @@ class _CustomerContractScanCapturePageState extends State<CustomerContractScanCa
   }
 
   Future<void> _pick() async {
-    final result = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png'], withData: true);
-    if (result == null || result.files.isEmpty || !mounted) return;
-    final picked = result.files;
+    final picked = await FilePicker.pickFiles(type: FileType.custom, allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png']);
+    if (picked.isEmpty || !mounted) return;
+    final bytes = await Future.wait(picked.map((f) => f.readAsBytes()));
+    if (!mounted) return;
     final pdfs = picked.where((f) => f.extension?.toLowerCase() == 'pdf').toList();
     if (pdfs.isNotEmpty && picked.length != 1) { setState(() => _error = 'Chọn một PDF hoặc nhiều ảnh, không trộn hai loại.'); return; }
     if (pdfs.isNotEmpty) {
       final f = pdfs.single;
-      setState(() { _images.clear(); _pdf = ScanFile(bytes: f.bytes!, fileName: f.name, contentType: 'application/pdf'); _error = null; });
+      setState(() { _images.clear(); _pdf = ScanFile(bytes: bytes[picked.indexOf(f)], fileName: f.name, contentType: 'application/pdf'); _error = null; });
     } else {
-      final images = picked.map((f) => f.bytes!).toList();
+      final images = bytes;
       setState(() { _pdf = null; _images.addAll(images); _error = null; });
     }
   }

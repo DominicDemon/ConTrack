@@ -135,6 +135,43 @@ public static class CustomerPortalEndpoints
             c.Response.Headers.CacheControl = "no-store";
             return Results.File(file.Content, file.ContentType, file.FileName);
         });
+        // The customer's own vault (022): documents they keep with us; no employee can open them.
+        api.MapGet("/vault", async (string? q, string? from, string? to, string? category, bool? trash, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+            Results.Ok(await vault.ListAsync(Current(c).Id, q, from, to, category, trash == true, ct)));
+        api.MapGet("/vault/categories", async (HttpContext c, CustomerVaultService vault, CancellationToken ct) => Results.Ok(await vault.CategoriesAsync(Current(c).Id, ct)));
+        api.MapGet("/vault/usage", async (HttpContext c, CustomerVaultService vault, CancellationToken ct) => Results.Ok(await vault.UsageAsync(Current(c).Id, ct)));
+        api.MapPost("/vault", async (HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+        {
+            var form = await c.Request.ReadFormAsync(ct);
+            var file = form.Files.GetFile("file");
+            if (file is null || file.Length == 0 || file.Length > CustomerVaultService.MaxFileBytes)
+                throw new ArgumentException("Chọn tệp có nội dung, tối đa 20 MB.");
+            await using var stream = new MemoryStream();
+            await file.CopyToAsync(stream, ct);
+            return Results.Ok(await vault.UploadAsync(Current(c).Id, file.FileName, stream.ToArray(), form["title"], form["note"], form["category"], form["expiresOn"], ct));
+        }).WithMetadata(new RequestSizeLimitAttribute(21 * 1024 * 1024));
+        api.MapPut("/vault/{id:long}", async (long id, CustomerVaultEditInput input, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+        { await vault.UpdateAsync(Current(c).Id, id, new CustomerVaultEdit(input.Title, input.Note, input.Category, input.ExpiresOn, input.RemindDays), ct); return Results.NoContent(); });
+        api.MapDelete("/vault/{id:long}", async (long id, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+        { await vault.TrashAsync(Current(c).Id, id, ct); return Results.NoContent(); });
+        api.MapPost("/vault/{id:long}/restore", async (long id, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+        { await vault.RestoreAsync(Current(c).Id, id, ct); return Results.NoContent(); });
+        api.MapDelete("/vault/trash/{id:long}", async (long id, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+        { await vault.PurgeAsync(Current(c).Id, id, ct); return Results.NoContent(); });
+        api.MapPost("/vault/{id:long}/keywords", async (long id, CustomerVaultKeywordInput input, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+        { await vault.AddKeywordAsync(Current(c).Id, id, input.Type, input.Value, ct); return Results.NoContent(); });
+        api.MapDelete("/vault/{id:long}/keywords/{keywordId:long}", async (long id, long keywordId, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+        { await vault.RemoveKeywordAsync(Current(c).Id, id, keywordId, ct); return Results.NoContent(); });
+        api.MapGet("/vault/{id:long}/file", async (long id, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+        {
+            var file = await vault.OpenAsync(Current(c).Id, id, c.Request.Headers["X-File-Key"].FirstOrDefault(), ct);
+            c.Response.Headers.CacheControl = "no-store";
+            return Results.File(file.Content, file.ContentType, file.FileName);
+        });
+        api.MapPost("/vault/{id:long}/reread", async (long id, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+        { await vault.RereadAsync(Current(c).Id, id, c.Request.Headers["X-File-Key"].FirstOrDefault(), ct); return Results.NoContent(); });
+        api.MapPost("/vault/{id:long}/email", async (long id, CustomerVaultEmailInput input, HttpContext c, CustomerVaultService vault, CancellationToken ct) =>
+            Results.Ok(new { sent = await vault.EmailAsync(Current(c).Id, id, c.Request.Headers["X-File-Key"].FirstOrDefault(), input.Recipients, input.Note, ct) }));
         api.MapGet("/file-key", async (HttpContext c, CustomerScanService scans, CancellationToken ct) => Results.Ok(await scans.KeyStatusAsync(Current(c).Id, ct)));
         api.MapPost("/file-key/code", async (CustomerKeyCodeInput input, HttpContext c, CustomerScanService scans, CancellationToken ct) =>
             Results.Ok(new { sentTo = await scans.SendKeyCodeAsync(Current(c).Id, input.Password, ct) }));
@@ -228,6 +265,9 @@ public static class CustomerPortalEndpoints
     public sealed record CustomerEmailCodeInput(string? Password, string? NewEmail);
     public sealed record CustomerForgotInput(string? Phone);
     public sealed record CustomerKeyCodeInput(string? Password);
+    public sealed record CustomerVaultEditInput(string? Title, string? Note, string? Category, string? ExpiresOn, int? RemindDays);
+    public sealed record CustomerVaultKeywordInput(string? Type, string? Value);
+    public sealed record CustomerVaultEmailInput(List<string?>? Recipients, string? Note);
     public sealed record CustomerSetKeyInput(string? Password, string? Code, string? NewKey);
     public sealed record CustomerChangeKeyInput(string? CurrentKey, string? NewKey);
     public sealed record CustomerResetInput(string? Phone, string? Code, string? NewPassword);

@@ -23,8 +23,43 @@ public partial class MasterDbContext
 
     public virtual DbSet<CustomerFileKey> CustomerFileKeys { get; set; }
 
+    public virtual DbSet<CustomerVaultFile> CustomerVaultFiles { get; set; }
+
+    public virtual DbSet<CustomerVaultKeyword> CustomerVaultKeywords { get; set; }
+
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<CustomerVaultFile>(entity =>
+        {
+            entity.ToTable("CUSTOMER_VAULT_FILE");
+            entity.HasIndex(e => new { e.CustomerId, e.DeletedAt }, "IX_CustomerVaultFile_Customer");
+            entity.Property(e => e.CustomerVaultFileId).HasColumnName("customer_vault_file_id");
+            entity.Property(e => e.CustomerId).HasColumnName("customer_id");
+            entity.Property(e => e.FileStorageFileid).HasColumnName("file_storage_fileid");
+            entity.Property(e => e.CustomerVaultFileTitle).HasMaxLength(300).HasColumnName("customer_vault_file_title");
+            entity.Property(e => e.CustomerVaultFileNote).HasMaxLength(1000).HasColumnName("customer_vault_file_note");
+            entity.Property(e => e.CustomerVaultFileOcrStatus).HasMaxLength(20).IsUnicode(false).HasDefaultValue("QUEUED").HasColumnName("customer_vault_file_ocr_status");
+            entity.Property(e => e.CustomerVaultFilePageCount).HasColumnName("customer_vault_file_page_count");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())").HasColumnName("created_at");
+            entity.Property(e => e.DeletedAt).HasColumnName("deleted_at");
+            entity.Property(e => e.CustomerVaultFileCategory).HasMaxLength(100).HasColumnName("customer_vault_file_category");
+            entity.Property(e => e.CustomerVaultFileExpiresOn).HasColumnName("customer_vault_file_expires_on");
+            entity.Property(e => e.CustomerVaultFileRemindDays).HasColumnName("customer_vault_file_remind_days");
+            entity.Property(e => e.CustomerVaultFileRemindedDays).HasColumnName("customer_vault_file_reminded_days");
+            entity.Property(e => e.TrashedAt).HasColumnName("trashed_at");
+        });
+
+        modelBuilder.Entity<CustomerVaultKeyword>(entity =>
+        {
+            entity.ToTable("CUSTOMER_VAULT_KEYWORD");
+            entity.HasIndex(e => new { e.CustomerVaultFileId, e.CustomerVaultKeywordType, e.CustomerVaultKeywordValue }, "UX_CustomerVaultKeyword_File_Value").IsUnique();
+            entity.Property(e => e.CustomerVaultKeywordId).HasColumnName("customer_vault_keyword_id");
+            entity.Property(e => e.CustomerVaultFileId).HasColumnName("customer_vault_file_id");
+            entity.Property(e => e.CustomerVaultKeywordType).HasColumnName("customer_vault_keyword_type");
+            entity.Property(e => e.CustomerVaultKeywordValue).HasMaxLength(400).HasColumnName("customer_vault_keyword_value");
+            entity.Property(e => e.CustomerVaultKeywordSource).HasDefaultValue(1).HasColumnName("customer_vault_keyword_source");
+        });
+
         modelBuilder.Entity<CustomerEncryptionKey>(entity =>
         {
             entity.ToTable("CUSTOMER_ENCRYPTION_KEY");

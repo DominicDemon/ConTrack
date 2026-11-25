@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { ThemeToggle } from "@/components/theme-toggle";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CheckCircle2, ChevronDown, Clock, FileText, ListFilter, LogOut, MessageSquare, ShieldCheck, UserPlus, UserRound } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, FileText, ListFilter, LogOut, ShieldCheck, UserPlus, UserRound } from "lucide-react";
 import { screensFor, type NavItem } from "./internal-nav";
 import { APP_NAME } from "@/lib/application-branding";
 import { internalApi, InternalApiError, type InternalUser } from "@/services/internal-api";
@@ -14,7 +14,7 @@ import s from "./workspace.module.css";
 const UserContext = createContext<InternalUser | null>(null);
 export const useInternalUser = () => useContext(UserContext)!;
 
-export type SupportTicketTabKey = "assign" | "resolve" | "chat" | "history";
+export type SupportTicketTabKey = "assign" | "resolve" | "history";
 
 export default function InternalShell({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<InternalUser | null>(null);
@@ -120,7 +120,6 @@ export default function InternalShell({ children }: { children: ReactNode }) {
       label: user?.isManager ? "Xử lý & Báo khách hàng" : "Báo cáo kết quả xử lý",
       icon: CheckCircle2,
     },
-    { key: "chat", label: "Nhắn tin với Khách hàng", icon: MessageSquare, managerOnly: true },
     { key: "history", label: "Lịch sử & Thông tin", icon: Clock },
   ];
 

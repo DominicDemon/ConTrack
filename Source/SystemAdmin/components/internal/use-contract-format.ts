@@ -1,17 +1,5 @@
-"use client";
-import { useEffect, useState, type CSSProperties } from "react";
-import { loadContractFormat, type ContractFormat } from "@/services/internal-api";
-
-/** The company print format, read once per page load; null until read (the preview then keeps its default look). */
-export function useContractFormat(): ContractFormat | null {
-  const [format, setFormat] = useState<ContractFormat | null>(null);
-  useEffect(() => {
-    let active = true;
-    loadContractFormat().then(value => { if (active) setFormat(value.format); }).catch(() => undefined);
-    return () => { active = false; };
-  }, []);
-  return format;
-}
+import type { CSSProperties } from "react";
+import type { ContractFormat } from "@/services/internal-api";
 
 // The A4 preview is 794px wide: 1pt = 4/3 px, 1mm = 794/210 px.
 const pt = (value: number) => `${(value * 4 / 3).toFixed(2)}px`;

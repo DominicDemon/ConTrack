@@ -202,13 +202,6 @@ export const customerTicketApi = {
     return response;
   },
 
-  sendMessage: async (id: number, payload: CustomerReplyTicketRequestDto) => {
-    const response = await axiosClient.post<unknown, TicketMessageDto>(
-      `/api/support/tickets/${id}/messages`,
-      payload,
-    );
-    return response;
-  },
 
   getDepartmentStaff: async (ticketId: number) => {
     return await axiosClient.get<unknown, DepartmentStaffDto[]>(

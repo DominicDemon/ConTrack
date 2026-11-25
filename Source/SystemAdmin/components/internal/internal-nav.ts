@@ -24,7 +24,6 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Tổng quan", icon: LayoutDashboard, href: "/workspace", permissions: [] },
   { label: "Quản lý văn bản", icon: Files, href: "/workspace/templates", permissions: ["template.manage"] },
   { label: "Loại văn bản", icon: Files, href: "/workspace/document-categories", permissions: ["template.manage"] },
-  { label: "Định dạng hợp đồng", icon: Files, href: "/workspace/contract-format", permissions: ["template.manage"] },
   { label: "Quy tắc số hợp đồng", icon: Files, href: "/workspace/number-rules", permissions: ["contract.check"] },
   { label: "Nhân viên & phân quyền", icon: UsersRound, href: "/workspace/admin/employees", permissions: ["employee.manage"] },
   { label: "Phòng ban", icon: Building2, href: "/workspace/admin/departments", permissions: ["department.manage"] },

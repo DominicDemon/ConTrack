@@ -13,7 +13,8 @@ public class DatabaseTemplateTests
         await using var db = new MasterDbContext(new DbContextOptionsBuilder<MasterDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options);
         db.ContractTemplates.AddRange(
             new ContractTemplate { ContractTemplateId = 1, ContractTemplateCode = "INTERNAL_DEMO_V1", ContractTemplateName = "Mẫu minh họa", ContractTemplateDocumentType = 1, IsActive = true, CreatedDate = DateTime.UtcNow },
-            new ContractTemplate { ContractTemplateId = 2, ContractTemplateCode = "UPLOADED", ContractTemplateName = "Mẫu tải lên", ContractTemplateDocumentType = 1, IsActive = true, CreatedDate = DateTime.UtcNow });
+            new ContractTemplate { ContractTemplateId = 2, ContractTemplateCode = "UPLOADED", ContractTemplateName = "Mẫu tải lên", ContractTemplateDocumentType = 1, IsActive = true, CreatedDate = DateTime.UtcNow },
+            new ContractTemplate { ContractTemplateId = 86, ContractTemplateCode = "EMPTY", ContractTemplateName = "Mẫu trống", ContractTemplateDocumentType = 1, IsActive = true, CreatedDate = DateTime.UtcNow });
         db.ContractTemplateFields.AddRange(
             new ContractTemplateField { ContractTemplateFieldId = 1, ContractTemplateId = 1, ContractTemplateFieldKey = "CUSTOMER_COMPANY", ContractTemplateFieldLabel = "Tên khách hàng", ContractTemplateFieldDataType = "TEXT", IsRequired = true },
             new ContractTemplateField { ContractTemplateFieldId = 2, ContractTemplateId = 1, ContractTemplateFieldKey = "SCOPE", ContractTemplateFieldLabel = "Phạm vi cung cấp", ContractTemplateFieldDataType = "TERM", ExtraOptions = "" },
@@ -25,7 +26,12 @@ public class DatabaseTemplateTests
             FileStorageFilename = "a.docx", FileStorageFilepath = "a.docx", FileStorageStoragekey = "a.docx", FileStorageUploadeddate = DateTime.UtcNow });
         await db.SaveChangesAsync();
 
-        var templates = await new InternalRepository(db, new InternalTemplateStorage(Path.GetTempPath())).Templates(default);
+        var repository = new InternalRepository(db, new InternalTemplateStorage(Path.GetTempPath()));
+        var templates = await repository.Templates(default);
+        var empty = Assert.Single(await repository.TemplateLibrary(true, default, 86));
+        Assert.Equal(86, empty.Id);
+        Assert.Empty(empty.Terms);
+        Assert.Empty(await repository.TemplateLibrary(true, default, 2));
 
         var template = Assert.Single(templates);
         Assert.Equal(1, template.Id);

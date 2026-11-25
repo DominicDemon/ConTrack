@@ -14,7 +14,8 @@ public sealed record TemplateDefinition(long Id, string Name, string Revision, b
     // The contract template a child template (appendix, handover record…) belongs to; read from CONTRACT_TEMPLATE, not stored.
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? ParentTemplateId = null,
     // The rule of the template's document type (DOCUMENT_CATEGORY) when it was read; a draft keeps the rule it was made with.
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DocumentRule? Rule = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] DocumentRule? Rule = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ContractFormat? PrintFormat = null);
 public sealed record DraftItem(long? ProductId, string Name, decimal Quantity, decimal UnitPrice,
     decimal DiscountPercent, decimal DiscountAmount);
 public sealed record DraftTotals(decimal Subtotal, decimal Discount, decimal Vat, decimal Total);

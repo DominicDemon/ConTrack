@@ -3,12 +3,12 @@ import { DEFAULT_PROVIDER_FIELDS } from "../../../Shared/draft-validation";
 import type { ReactNode } from "react";
 import { type DraftContent, money } from "@/services/internal-api";
 import s from "./workspace.module.css";
-import { paperStyle, useContractFormat } from "./use-contract-format";
+import { paperStyle } from "./use-contract-format";
 export default function DraftPreview({ content, code }: { content: DraftContent; code?: string }) {
   // Normalize only the display copy; stored snapshots and signing hashes stay unchanged.
   content = JSON.parse(JSON.stringify(content).normalize("NFC")) as DraftContent;
   // The company print format (Thiết lập tham số hợp đồng), so the preview matches the printed PDF.
-  const format = useContractFormat();
+  const format = content.templateSnapshot?.printFormat ?? null;
   const rendered = renderContract(content); const totals = rendered.totals;
   // Bilingual (VI_EN), as in the company's printed contracts: English first, Vietnamese in italics.
   const bi = content.languageMode === "VI_EN";

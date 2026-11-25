@@ -64,10 +64,15 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             departmentRow?.DepartmentName, isManager || isSysAdmin);
     }
     public Task<List<TemplateDefinition>> Templates(CancellationToken ct) => TemplateLibrary(false, ct);
-    public async Task<List<TemplateDefinition>> TemplateLibrary(bool allTypes, CancellationToken ct)
+    public Task<List<TemplateDefinition>> TemplateLibrary(bool allTypes, CancellationToken ct) => TemplateLibrary(allTypes, ct, null);
+
+    internal async Task<List<TemplateDefinition>> TemplateLibrary(bool allTypes, CancellationToken ct, long? editorTemplateId)
     {
         // Every document type (contract, appendix, handover record, receipt, payment request): drafts are made from any of them.
-        var templates = await db.ContractTemplates.AsNoTracking().Where(t => t.IsActive).ToListAsync(ct); _ = allTypes;
+        var templates = await db.ContractTemplates.AsNoTracking()
+            .Where(t => t.IsActive && (!editorTemplateId.HasValue || t.ContractTemplateId == editorTemplateId.Value))
+            .ToListAsync(ct);
+        _ = allTypes;
         var result = new List<TemplateDefinition>();
         foreach (var t in templates)
         {
@@ -85,12 +90,12 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 var fields = stored.Fields.Select(f => flags.TryGetValue(f.Key, out var required) ? f with { Required = required } : f).ToList();
                 fields.AddRange(DraftCompletionPolicy.PartyFields.Where(f => flags.ContainsKey(f.Key) && fields.All(x => x.Key != f.Key)).Select(f => f with { Required = flags[f.Key] }));
                 result.Add(DraftCompletionPolicy.UpgradeTemplate(stored with { Name = t.ContractTemplateName, DocumentType = t.ContractTemplateDocumentType,
-                    ParentTemplateId = t.ParentTemplateId, Fields = fields }));
+                    PrintFormat = stored.WordStorageKey is null ? ContractFormatSettings.Parse(t.PrintFormatJson) : ContractFormatSettings.ForWord(t.PrintFormatJson), ParentTemplateId = t.ParentTemplateId, Fields = fields }));
                 continue;
             }
             // An uploaded template whose definition file is missing is skipped, as before; only SQL-defined templates have no stored files.
             if (await db.FileStorages.AnyAsync(f => f.FileStorageObjecttype.StartsWith("INTERNAL_TEMPLATE") && f.FileStorageObjectid == id, ct)) continue;
-            if (await FromDatabase(t, ct) is { } defined) result.Add(DraftCompletionPolicy.UpgradeTemplate(defined with { DocumentType = t.ContractTemplateDocumentType, ParentTemplateId = t.ParentTemplateId }));
+            if (await FromDatabase(t, ct, allowEmpty: editorTemplateId.HasValue) is { } defined) result.Add(DraftCompletionPolicy.UpgradeTemplate(defined with { PrintFormat = ContractFormatSettings.Parse(t.PrintFormatJson), DocumentType = t.ContractTemplateDocumentType, ParentTemplateId = t.ParentTemplateId }));
         }
         // Each template carries its type's sending rule; a draft made from it keeps that rule in its snapshot.
         var rules = await DocumentCategories.Rules(db, ct);
@@ -98,12 +103,12 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     }
     /// <summary>Database first: a template written by SQL (Artifacts/Database/Master/010-demo-template.sql) is CONTRACT_TEMPLATE plus
     /// CONTRACT_TEMPLATE_FIELDS; rows with data type TERM are its terms in id order (label = title, extra_options = default content).</summary>
-    private async Task<TemplateDefinition?> FromDatabase(ContractTemplate t, CancellationToken ct)
+    private async Task<TemplateDefinition?> FromDatabase(ContractTemplate t, CancellationToken ct, bool allowEmpty)
     {
         var rows = await db.ContractTemplateFields.AsNoTracking().Where(f => f.ContractTemplateId == t.ContractTemplateId)
             .OrderBy(f => f.ContractTemplateFieldId).ToListAsync(ct);
         var terms = rows.Where(f => f.ContractTemplateFieldDataType == "TERM").Select(f => new DraftTerm(f.ContractTemplateFieldKey, f.ContractTemplateFieldLabel, f.ExtraOptions ?? "")).ToList();
-        if (terms.Count == 0) return null;
+        if (terms.Count == 0 && !allowEmpty) return null;
         var fields = rows.Where(f => f.ContractTemplateFieldDataType != "TERM")
             .Select(f => new DraftField(f.ContractTemplateFieldKey, f.ContractTemplateFieldLabel, f.IsRequired, f.ContractTemplateFieldDataType)).ToList();
         return new(t.ContractTemplateId, t.ContractTemplateName, $"db-{(t.UpdatedDate ?? t.CreatedDate).Ticks}", true, fields, terms);
@@ -684,6 +689,15 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         var latest = await db.ContractReviewRequests.AsNoTracking().Where(r => r.ContractDocumentId == id).OrderByDescending(r => r.ContractReviewRequestId)
             .Select(r => r.ContractReviewRequestStatus).FirstOrDefaultAsync(ct);
         var content = JsonSerializer.Deserialize<DraftContent>(snapshot.FieldValue, Json)!;
+        if (content.TemplateSnapshot is { WordStorageKey: null, PrintFormat: null } legacyTemplate)
+            content.TemplateSnapshot = legacyTemplate with { PrintFormat = await ContractFormatSettings.Read(db, content.TemplateId, ct) };
+        if (ContractReviewPolicy.CanEdit(d.ContractDocumentStatus, v.ContractVersionIslocked)
+            && content.TemplateSnapshot is { WordStorageKey: not null, PrintFormat: null } legacyWord)
+        {
+            var json = await db.ContractTemplates.Where(t => t.ContractTemplateId == content.TemplateId)
+                .Select(t => t.PrintFormatJson).FirstOrDefaultAsync(ct);
+            content.TemplateSnapshot = legacyWord with { PrintFormat = ContractFormatSettings.ForWord(json) };
+        }
         content.OfficeOrigin = await IsOfficeOrigin(content, id, db, ct);
         if (!v.ContractVersionIslocked) DraftValidation.Recheck(content);
         var phone = ReviewLink.ContactPhone(content.Fields, customer.CustomerPersonalPhone);
@@ -742,6 +756,8 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 ContractDocument document;
                 ContractVersion version;
                 string? oldData = null;
+                if (content.TemplateSnapshot is { WordStorageKey: null } template)
+                    content.TemplateSnapshot = template with { PrintFormat = await ContractFormatSettings.Read(db, content.TemplateId, ct) };
                 var serialized = JsonSerializer.Serialize(content, Json);
                 var commentTerms = new Dictionary<long, string>();
                 var pendingComments = new List<ContractNegotiationComment>();
@@ -758,6 +774,8 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     oldData = values.FirstOrDefault(x => x.FieldKey == SnapshotKey)?.FieldValue;
                     var savedContent = oldData == null ? null : JsonSerializer.Deserialize<DraftContent>(oldData, Json);
                     content.OfficeOrigin = savedContent is not null && await IsOfficeOrigin(savedContent, document.ContractDocumentId, db, ct);
+                    if (savedContent?.TemplateSnapshot?.PrintFormat is { } frozen && savedContent.TemplateId == content.TemplateId && content.TemplateSnapshot is { } currentTemplate)
+                        content.TemplateSnapshot = currentTemplate with { PrintFormat = frozen };
                     content.NumberingBusinessId = savedContent?.NumberingBusinessId;
                     content.ContractNumber = savedContent?.ContractNumber ?? (document.ContractDocumentCode?.StartsWith("HD-", StringComparison.Ordinal) == true
                         ? document.ContractDocumentCode : null);

@@ -193,11 +193,6 @@ public static class CustomerPortalEndpoints
             var customer = Current(c);
             return Results.Ok(await s.CreateCustomerTicketAsync(0, "", "", TicketId(customer.Id), customer.Name, input, ct));
         });
-        api.MapPost("/support/tickets/{id:int}/messages", async (int id, CustomerReplyTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
-        {
-            var customer = Current(c);
-            return await s.AddCustomerMessageAsync(id, 0, "", "", TicketId(customer.Id), customer.Name, input, ct) is { } m ? Results.Ok(m) : throw new InternalAppException(404, "Không tìm thấy yêu cầu hỗ trợ.");
-        });
         // Not satisfied with the result: the customer reopens their closed ticket with a reason.
         api.MapPost("/support/tickets/{id:int}/reopen", async (int id, TicketReopenInput input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
         {

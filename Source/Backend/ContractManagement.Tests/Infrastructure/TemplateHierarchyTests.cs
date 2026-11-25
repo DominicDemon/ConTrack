@@ -43,6 +43,22 @@ public class TemplateHierarchyTests
     }
 
     [Fact]
+    public async Task PrintFormatIsScopedToTemplateAndRequiresManagementPermission()
+    {
+        var (db, _) = await Seed();
+        await using var database = db;
+        var settings = new ContractFormatSettings(db);
+        var first = ContractFormat.Default with { BodyFontSize = 11, MarginLeftMm = 16 };
+        var second = ContractFormat.Default with { BodyFontSize = 15, MarginLeftMm = 34 };
+        await settings.Save(1, first, Manager, default);
+        await settings.Save(4, second, Manager, default);
+        Assert.Equal(403, (await Assert.ThrowsAsync<InternalAppException>(() => settings.Save(1, second, Sale, default))).Status);
+        Assert.Equal(first, await ContractFormatSettings.Read(db, 1, default));
+        Assert.Equal(second, await ContractFormatSettings.Read(db, 4, default));
+        Assert.Equal(ContractFormat.Default, await ContractFormatSettings.Read(db, 2, default));
+    }
+
+    [Fact]
     public async Task OnlyAChildTypeAttachesAndOnlyToAnActiveContractTemplate()
     {
         var (db, repository) = await Seed();

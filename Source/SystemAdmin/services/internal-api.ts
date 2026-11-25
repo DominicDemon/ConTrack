@@ -7,7 +7,7 @@ export type DepartmentOption = { id: string; code: string; name: string; staffPe
 export type TemporaryPasswordResult = { employee: EmployeeAdminRow; temporaryPassword: string };
 export type DraftField = { key: string; label: string; required: boolean; dataType?: "TEXT" | "NUMBER" | "DATE" | "SELECT"; options?: string[]; min?: number | null; max?: number | null };
 export type DraftTerm = { key: string; title: string; content: string; editable: boolean; titleEn?: string | null; contentEn?: string | null };
-export type TemplateDefinition = { id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; documentType?: number; rule?: DocumentRule | null; wordStorageKey?: string | null; wordSha256?: string | null; manualWordContent?: boolean; fields: DraftField[]; terms: DraftTerm[]; /** The contract template a child template (appendix, handover record…) belongs to. */ parentTemplateId?: string | null };
+export type TemplateDefinition = { printFormat?: ContractFormat | null; id: string; name: string; revision: string; isDemo: boolean; isImported?: boolean; documentType?: number; rule?: DocumentRule | null; wordStorageKey?: string | null; wordSha256?: string | null; manualWordContent?: boolean; fields: DraftField[]; terms: DraftTerm[]; /** The contract template a child template (appendix, handover record…) belongs to. */ parentTemplateId?: string | null };
 /** Document types of a template and of a document made from it (CONTRACT_TEMPLATE / CONTRACT_DOCUMENT document_type). */
 export const DOCUMENT_TYPES = ["Hợp đồng", "Phụ lục", "Biên bản bàn giao", "Biên lai", "Đề nghị thanh toán"] as const;
 /** A document type from the Loại văn bản page (DOCUMENT_CATEGORY) and its sending rule. locked: the contract type, never changed. */
@@ -138,11 +138,7 @@ export type CustomerLookupResult = { customer: CustomerOption; businessId: strin
 
 /** The company's contract print format (Thiết lập tham số hợp đồng); sizes in points, margins in millimetres. */
 export type ContractFormat = { fontFamily: string; titleFontSize: number; headingFontSize: number; bodyFontSize: number; marginTopMm: number; marginBottomMm: number;
-  marginLeftMm: number; marginRightMm: number; lineSpacing: number; titleUppercase: boolean; showNationalMotto: boolean };
-let formatRequest: Promise<{ format: ContractFormat; fonts: string[] }> | null = null;
-/** Read once per page load; force after saving it on the settings page. */
-export function loadContractFormat(force = false) {
-  if (!formatRequest || force)
-    formatRequest = internalApi<{ format: ContractFormat; fonts: string[] }>("/contract-format").catch(error => { formatRequest = null; throw error; });
-  return formatRequest;
+  marginLeftMm: number; marginRightMm: number; lineSpacing: number; titleUppercase: boolean; showNationalMotto: boolean; wordOverrides?: string[] };
+export function loadContractFormat(id: string) {
+  return internalApi<{ name: string; word: boolean; format: ContractFormat; fonts: string[] }>(`/contract-templates/${id}/format`);
 }

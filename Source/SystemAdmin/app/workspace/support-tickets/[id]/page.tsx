@@ -8,7 +8,6 @@ import {
   ArrowLeft,
   ArrowRightLeft,
   Building2,
-  CheckCheck,
   CheckCircle2,
   ClipboardCheck,
   Clock,
@@ -16,13 +15,9 @@ import {
   FileText,
   Headset,
   History,
-  ImagePlus,
-  ListChecks,
   Loader2,
   Lock,
-  MessageCircle,
   Send,
-  ShieldCheck,
   User,
   UserCheck,
   UserPlus,
@@ -116,48 +111,6 @@ function getMessageImages(msg: TicketMessageDto): string[] {
   return Array.from(new Set(raw.filter(isRenderableImageUrl)));
 }
 
-async function compressImageToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Không thể đọc file ảnh"));
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      if (file.type === "image/gif" || file.size <= 350 * 1024) {
-        resolve(result);
-        return;
-      }
-      const img = new window.Image();
-      img.onerror = () => resolve(result);
-      img.onload = () => {
-        const maxDim = 1600;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(result);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        const compressed = canvas.toDataURL("image/jpeg", 0.84);
-        resolve(compressed);
-      };
-      img.src = result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
 function formatZaloTime(dateStr?: string | null) {
   if (!dateStr) return "--:--";
   const d = new Date(dateStr);
@@ -239,7 +192,7 @@ function TicketPriorityBadge({
   );
 }
 
-type AdminTabType = "assign" | "resolve" | "chat" | "history";
+type AdminTabType = "assign" | "resolve" | "history";
 
 export default function AdminSupportTicketDetailPage() {
   const params = useParams<{ id: string }>();
@@ -251,12 +204,6 @@ export default function AdminSupportTicketDetailPage() {
   const [ticket, setTicket] = useState<TicketDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<AdminTabType>("assign");
-
-  const [replyMessage, setReplyMessage] = useState("");
-  const [pendingChatImages, setPendingChatImages] = useState<
-    { name: string; dataUrl: string }[]
-  >([]);
-  const [sendingReply, setSendingReply] = useState(false);
 
   const [lightboxImage, setLightboxImage] = useState<{
     url: string;
@@ -284,9 +231,6 @@ export default function AdminSupportTicketDetailPage() {
   const [headResolution, setHeadResolution] = useState("");
   const [resolving, setResolving] = useState(false);
 
-  const chatBottomRef = useRef<HTMLDivElement | null>(null);
-  const chatImageInputRef = useRef<HTMLInputElement | null>(null);
-  const prevMsgCountRef = useRef<number>(0);
   const initializedResolutionRef = useRef<boolean>(false);
   const initializedTabRef = useRef<boolean>(false);
 
@@ -331,7 +275,7 @@ export default function AdminSupportTicketDetailPage() {
     const tabParam = searchParams?.get("tab") as AdminTabType | null;
     if (
       tabParam &&
-      ["assign", "resolve", "chat", "history"].includes(tabParam)
+      ["assign", "resolve", "history"].includes(tabParam)
     ) {
       setActiveTab(tabParam);
       initializedTabRef.current = true;
@@ -409,7 +353,7 @@ export default function AdminSupportTicketDetailPage() {
               setActiveTab("resolve");
             } else if (
               savedTab &&
-              ["assign", "resolve", "chat", "history"].includes(savedTab)
+              ["assign", "resolve", "history"].includes(savedTab)
             ) {
               setActiveTab(savedTab);
             } else {
@@ -449,9 +393,9 @@ export default function AdminSupportTicketDetailPage() {
   const isStaff = !isDepartmentHead;
   const isTicketResolved = ticket?.ticketStatus === TicketStatus.Resolved;
 
-  // Nhân viên không bao giờ vào được tab Phân công hoặc Nhắn tin với khách hàng
+  // Nhân viên chỉ vào các tab xử lý và lịch sử
   useEffect(() => {
-    if (isStaff && (activeTab === "chat" || activeTab === "assign")) {
+    if (isStaff && activeTab === "assign") {
       setActiveTab("resolve");
     }
   }, [isStaff, activeTab]);
@@ -461,14 +405,6 @@ export default function AdminSupportTicketDetailPage() {
       void loadStaffList();
     }
   }, [ticket?.ticketSupportId, isDepartmentHead, loadStaffList]);
-
-  const chatMessages = (ticket?.messages ?? []).filter(
-    (m) =>
-      m.ticketMessageType !== "STAFF_REPORT" &&
-      m.ticketMessageType !== "STAFF_COMPLETION" &&
-      m.ticketMessageType !== "ASSIGNMENT" &&
-      m.ticketMessageType !== "INTERNAL_NOTE",
-  );
 
   const internalReports = (ticket?.messages ?? []).filter(
     (m) =>
@@ -484,16 +420,6 @@ export default function AdminSupportTicketDetailPage() {
       m.ticketMessageType === "STAFF_COMPLETION",
   );
 
-  useEffect(() => {
-    if (chatMessages.length !== prevMsgCountRef.current) {
-      prevMsgCountRef.current = chatMessages.length;
-      if (activeTab === "chat") {
-        setTimeout(() => {
-          chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-        }, 60);
-      }
-    }
-  }, [chatMessages.length, activeTab]);
 
   const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -512,6 +438,10 @@ export default function AdminSupportTicketDetailPage() {
   const handleAssignToStaff = async () => {
     if (isTicketResolved) {
       toast.error("Phiếu hỗ trợ đã hoàn thành và đóng, không thể phân công.");
+      return;
+    }
+    if (requiresTransferReason && !assignNote.trim()) {
+      toast.error("Nhập lý do chuyển người xử lý.");
       return;
     }
     if (selectedStaffIds.length === 0) {
@@ -629,132 +559,14 @@ export default function AdminSupportTicketDetailPage() {
     }
   };
 
-  const processChatImageFiles = async (fileList: FileList | File[]) => {
-    if (isTicketResolved) return;
-    const files = Array.from(fileList);
-    if (files.length === 0) return;
-
-    const currentCount = pendingChatImages.length;
-    if (currentCount >= 3) {
-      toast.error("Mỗi lần gửi tối đa 3 hình ảnh.");
-      return;
-    }
-
-    const availableSlots = 3 - currentCount;
-    const validFiles: File[] = [];
-
-    for (const file of files) {
-      if (!ALLOWED_IMAGE_MIME_TYPES.has(file.type.toLowerCase())) {
-        toast.error(
-          `Chỉ hỗ trợ gửi hình ảnh (.png, .jpg, .jpeg, .webp, .gif). Không hỗ trợ file "${file.name}".`,
-        );
-        continue;
-      }
-      if (file.size > 10 * 1024 * 1024) {
-        toast.error(`Ảnh "${file.name}" vượt quá dung lượng 10MB.`);
-        continue;
-      }
-      validFiles.push(file);
-    }
-
-    const toProcess = validFiles.slice(0, availableSlots);
-    const added: { name: string; dataUrl: string }[] = [];
-
-    for (const file of toProcess) {
-      try {
-        const dataUrl = await compressImageToDataUrl(file);
-        added.push({ name: file.name || "image.png", dataUrl });
-      } catch {
-        toast.error(`Không thể xử lý ảnh "${file.name}".`);
-      }
-    }
-
-    if (added.length > 0) {
-      setPendingChatImages((prev) => [...prev, ...added]);
-    }
-  };
-
-  const handleChatImageInputChange = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ) => {
-    if (e.target.files && e.target.files.length > 0) {
-      await processChatImageFiles(e.target.files);
-      e.target.value = "";
-    }
-  };
-
-  const handlePasteChatImage = async (
-    e: React.ClipboardEvent<HTMLInputElement>,
-  ) => {
-    if (isTicketResolved) return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const imageFiles: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file) imageFiles.push(file);
-      }
-    }
-    if (imageFiles.length > 0) {
-      e.preventDefault();
-      await processChatImageFiles(imageFiles);
-    }
-  };
-
-  const removePendingChatImage = (index: number) => {
-    setPendingChatImages((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleSendReply = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!ticket || !isDepartmentHead || isTicketResolved) return;
-    if (!replyMessage.trim() && pendingChatImages.length === 0) return;
-
-    setSendingReply(true);
-    try {
-      const imageUrls = pendingChatImages.map((img) => img.dataUrl);
-      const imageNames = pendingChatImages.map((img) => img.name);
-
-      const newMsg = await ticketApi.replyMessage(ticket.ticketSupportId, {
-        messageContent: replyMessage.trim(),
-        attachmentUrl: imageUrls[0] ?? undefined,
-        attachmentName: imageNames[0] ?? undefined,
-        attachmentUrls: imageUrls,
-        attachmentNames: imageNames,
-      });
-      setTicket((prev) => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          messages: [...(prev.messages || []), newMsg],
-        };
-      });
-      setReplyMessage("");
-      setPendingChatImages([]);
-      setTimeout(() => {
-        chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-      }, 50);
-    } catch (err) {
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : "Không thể gửi tin nhắn cho khách hàng.",
-      );
-    } finally {
-      setSendingReply(false);
-    }
-  };
-
-  const serviceLabel =
-    ticket?.serviceName || ticket?.module || "Dịch vụ chung";
+  const serviceLabel = ticket?.serviceName || ticket?.module || "Dịch vụ chung";
   const initialImages = getTicketImages(ticket);
 
   const viewerEmpId = ticket?.viewerEmployeeId || 0;
   const activeAssigneeRecords = (ticket?.assignments ?? []).filter(
     (a) => a.assignmentRole === "ASSIGNEE" && !a.unassignedAt,
   );
+  const requiresTransferReason = activeAssigneeRecords.some(a => !selectedStaffIds.includes(a.employeeId));
   const pastAssigneeRecords = (ticket?.assignments ?? []).filter(
     (a) => a.assignmentRole === "ASSIGNEE" && Boolean(a.unassignedAt),
   );
@@ -1110,7 +922,7 @@ export default function AdminSupportTicketDetailPage() {
 
                           <div className="space-y-2">
                             <Label className="text-xs font-semibold">
-                              Ghi chú chỉ đạo / Nội dung bàn giao xử lý:
+                              {requiresTransferReason ? "Lý do chuyển người xử lý *" : "Ghi chú chỉ đạo / Nội dung bàn giao xử lý"}
                             </Label>
                             <Textarea
                               disabled={isTicketResolved}
@@ -1139,7 +951,7 @@ export default function AdminSupportTicketDetailPage() {
                             onClick={() => void handleAssignToStaff()}
                             disabled={
                               assigning ||
-                              selectedStaffIds.length === 0 ||
+                              selectedStaffIds.length === 0 || (requiresTransferReason && !assignNote.trim()) ||
                               isTicketResolved
                             }
                             className="gap-2 bg-blue-600 text-white hover:bg-blue-700"
@@ -1506,265 +1318,6 @@ export default function AdminSupportTicketDetailPage() {
                         )}
                       </CardContent>
                     </Card>
-                  )}
-                </div>
-              )}
-
-              {/* ================= TAB 3: NHẮN TIN VỚI KHÁCH HÀNG (CHỈ TRƯỞNG PHÒNG) ================= */}
-              {activeTab === "chat" && isDepartmentHead && (
-                <div className="flex h-[650px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm dark:border-slate-800">
-                  <div className="flex items-center justify-between border-b bg-white px-5 py-3.5 dark:bg-slate-900">
-                    <div className="flex items-center gap-3">
-                      <div className="relative flex size-10 items-center justify-center rounded-full bg-teal-600 font-bold text-white">
-                        KH
-                        <span
-                          className={cn(
-                            "absolute right-0 bottom-0 size-2.5 rounded-full ring-2 ring-white",
-                            isTicketResolved
-                              ? "bg-slate-400"
-                              : "bg-emerald-500",
-                          )}
-                        />
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold text-foreground">
-                          {ticket.createdByName ||
-                            ticket.tenantName ||
-                            "Khách hàng"}
-                        </p>
-                        <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                          <span
-                            className={cn(
-                              "size-1.5 rounded-full",
-                              isTicketResolved
-                                ? "bg-slate-400"
-                                : "bg-emerald-500",
-                            )}
-                          />
-                          {isTicketResolved
-                            ? "Phiếu hỗ trợ đã đóng — Chỉ xem lịch sử tin nhắn"
-                            : "Kênh trao đổi độc quyền Trưởng phòng ↔ Khách hàng"}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="hidden text-right text-xs text-muted-foreground sm:block">
-                      <p className="font-semibold text-foreground">
-                        {serviceLabel}
-                      </p>
-                      <p>Mã phiếu: #{ticket.ticketCode}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex-1 space-y-4 overflow-y-auto bg-[#eef0f5] p-5 dark:bg-slate-950">
-                    {chatMessages.map((msg) => {
-                      const isMine = msg.isFromEmployee;
-                      const msgImages = getMessageImages(msg);
-                      return (
-                        <div
-                          key={msg.ticketMessageId}
-                          className={cn(
-                            "flex items-end gap-2.5",
-                            isMine ? "justify-end" : "justify-start",
-                          )}
-                        >
-                          {!isMine && (
-                            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-teal-600 text-xs font-bold text-white shadow-xs">
-                              KH
-                            </div>
-                          )}
-
-                          <div
-                            className={cn(
-                              "max-w-[75%] rounded-2xl px-4 py-2.5 shadow-xs",
-                              isMine
-                                ? "rounded-br-xs border border-blue-200/80 bg-[#e5efff] text-slate-900 dark:border-blue-500 dark:bg-blue-600 dark:text-white"
-                                : "rounded-bl-xs border border-slate-200/80 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100",
-                            )}
-                          >
-                            <p
-                              className={cn(
-                                "mb-1 text-[11px] font-bold",
-                                isMine
-                                  ? "text-blue-700 dark:text-blue-100"
-                                  : "text-teal-600 dark:text-teal-400",
-                              )}
-                            >
-                              {msg.senderName}
-                            </p>
-
-                            {msg.ticketMessageContent && (
-                              <p className="whitespace-pre-line text-sm leading-relaxed">
-                                {msg.ticketMessageContent}
-                              </p>
-                            )}
-
-                            {msgImages.length > 0 && (
-                              <div
-                                className={cn(
-                                  "mt-2 grid gap-2",
-                                  msgImages.length === 1
-                                    ? "grid-cols-1"
-                                    : "grid-cols-2",
-                                )}
-                              >
-                                {msgImages.map((imgUrl, idx) => (
-                                  <button
-                                    key={idx}
-                                    type="button"
-                                    onClick={() => {
-                                      setLightboxZoom(1);
-                                      setLightboxImage({
-                                        url: imgUrl,
-                                        title:
-                                          msg.attachmentNames?.[idx] ||
-                                          msg.ticketMessageAttachmentName ||
-                                          `Ảnh trao đổi #${idx + 1}`,
-                                      });
-                                    }}
-                                    className="group relative overflow-hidden rounded-xl border border-black/10 bg-black/5 text-left"
-                                  >
-                                    <img
-                                      src={imgUrl}
-                                      alt="Hình ảnh đính kèm"
-                                      className="max-h-64 w-auto max-w-full rounded-xl object-contain transition-transform duration-200 group-hover:scale-[1.02]"
-                                    />
-                                    <span className="absolute right-2 bottom-2 flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-[10px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
-                                      <ZoomIn className="size-3" />
-                                      Phóng to
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-
-                            <div
-                              className={cn(
-                                "mt-1.5 flex items-center gap-1 text-[11px]",
-                                isMine
-                                  ? "justify-end text-slate-500 dark:text-blue-100"
-                                  : "justify-start text-slate-400",
-                              )}
-                            >
-                              <span>{formatZaloTime(msg.createdAt)}</span>
-                              {isMine && (
-                                <CheckCheck className="size-3.5 text-blue-600 dark:text-blue-200" />
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    <div ref={chatBottomRef} />
-                  </div>
-
-                  {/* Khóa ô nhập tin nhắn khi đã hoàn thành */}
-                  {isTicketResolved ? (
-                    <div className="flex items-center justify-center gap-2 border-t bg-slate-100 px-4 py-3.5 text-xs font-medium text-slate-600 dark:bg-slate-900 dark:text-slate-400">
-                      <Lock className="size-4 text-emerald-600" />
-                      <span>
-                        Yêu cầu hỗ trợ đã hoàn thành và đóng. Không thể gửi thêm
-                        tin nhắn mới.
-                      </span>
-                    </div>
-                  ) : (
-                    <form
-                      onSubmit={handleSendReply}
-                      className="space-y-2.5 border-t bg-white p-3.5 dark:bg-slate-900"
-                    >
-                      {pendingChatImages.length > 0 && (
-                        <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-blue-200 bg-blue-50/60 p-2.5 dark:border-slate-700 dark:bg-slate-800/70">
-                          {pendingChatImages.map((img, idx) => (
-                            <div
-                              key={idx}
-                              className="group relative size-16 overflow-hidden rounded-lg border border-slate-300 bg-white shadow-xs"
-                            >
-                              <img
-                                src={img.dataUrl}
-                                alt={img.name}
-                                onClick={() => {
-                                  setLightboxZoom(1);
-                                  setLightboxImage({
-                                    url: img.dataUrl,
-                                    title: img.name,
-                                  });
-                                }}
-                                className="size-full cursor-pointer object-cover"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => removePendingChatImage(idx)}
-                                className="absolute top-1 right-1 flex size-5 items-center justify-center rounded-full bg-rose-600 text-white shadow-xs hover:bg-rose-700"
-                                title="Xóa ảnh"
-                              >
-                                <X className="size-3" />
-                              </button>
-                            </div>
-                          ))}
-                          <span className="text-xs text-muted-foreground">
-                            Đã chọn {pendingChatImages.length}/3 ảnh (Nhấn vào
-                            ảnh để xem lớn)
-                          </span>
-                        </div>
-                      )}
-
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {QUICK_RESPONSES.map((sample, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => setReplyMessage(sample)}
-                            className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                          >
-                            Mẫu {idx + 1}: {sample.slice(0, 42)}...
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <input
-                          ref={chatImageInputRef}
-                          type="file"
-                          accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                          multiple
-                          onChange={handleChatImageInputChange}
-                          className="hidden"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => chatImageInputRef.current?.click()}
-                          title="Gửi hình ảnh minh họa (chỉ nhận file ảnh)"
-                          className="flex size-10 shrink-0 items-center justify-center rounded-full border border-slate-300 bg-slate-50 text-slate-600 transition-colors hover:border-blue-500 hover:bg-blue-50 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                        >
-                          <ImagePlus className="size-5" />
-                        </button>
-
-                        <input
-                          type="text"
-                          value={replyMessage}
-                          onChange={(e) => setReplyMessage(e.target.value)}
-                          onPaste={handlePasteChatImage}
-                          placeholder="Nhập tin nhắn hoặc dán ảnh (Ctrl+V) để gửi cho khách hàng..."
-                          className="h-10 flex-1 rounded-full border border-slate-300 bg-slate-50 px-4 text-sm focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                        />
-                        <Button
-                          type="submit"
-                          disabled={
-                            sendingReply ||
-                            (!replyMessage.trim() &&
-                              pendingChatImages.length === 0)
-                          }
-                          className="h-10 rounded-full bg-blue-600 px-5 text-white hover:bg-blue-700"
-                        >
-                          {sendingReply ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <Send className="size-4" />
-                          )}
-                          <span className="ml-1.5">Gửi tin nhắn</span>
-                        </Button>
-                      </div>
-                    </form>
                   )}
                 </div>
               )}

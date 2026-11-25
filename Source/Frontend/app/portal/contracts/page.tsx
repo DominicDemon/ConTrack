@@ -1,4 +1,5 @@
 "use client";
+import { ListPager } from "@/components/internal/contract-list-pager";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -13,6 +14,7 @@ const filters = [["all", "Tất cả"], ["signed", "Đã ký"], ["unsigned", "Ch
 
 export default function CustomerContracts() {
   const router = useRouter();
+  const [contractPage, setContractPage] = useState(1);
   const [session, setSession] = useState<CustomerSession | null>(null);
   const [rows, setRows] = useState<CustomerReviewSummary[] | null>(null); const [error, setError] = useState("");
   const [filter, setFilter] = useState<(typeof filters)[number][0]>("all");
@@ -41,20 +43,22 @@ export default function CustomerContracts() {
       window.removeEventListener("pageshow", onPageShow);
     };
   }, [router]);
+  const contractTotal = visibleRows?.length ?? 0;
+  const currentPage = Math.min(contractPage, Math.max(1, Math.ceil(contractTotal / 10)));
   return <><PortalHeader name={session?.name}/><div className={s.page}>
     <span className={s.eyebrow}>Cổng khách hàng</span><h1>Hợp đồng của bạn</h1><p className={s.muted}>Hợp đồng đang chờ bạn phản hồi được xếp lên đầu.</p>
     {error && <p role="alert" className={ui.error} style={{ margin: "16px 0" }}>{error}</p>}
     <section className={ui.card} style={{ marginTop: 18 }}>
       <div className={s.toolbar} role="group" aria-label="Lọc theo tình trạng ký">
         {filters.map(([value, label]) => <button key={value} type="button" aria-pressed={filter === value}
-          className={filter === value ? ui.primaryButton : ui.secondaryButton} onClick={() => setFilter(value)}>{label}</button>)}
+          className={filter === value ? ui.primaryButton : ui.secondaryButton} onClick={() => { setFilter(value); setContractPage(1); }}>{label}</button>)}
       </div>
       {!visibleRows ? <div className={s.empty}>{error ? "" : "Đang tải…"}</div> : visibleRows.length === 0 ? <div className={s.empty}><Files size={42} strokeWidth={1.3}/><strong>{filter === "signed" ? "Chưa có hợp đồng đã ký" : filter === "unsigned" ? "Không có hợp đồng chưa ký" : "Chưa có hợp đồng nào được gửi cho bạn"}</strong></div>
         : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Hợp đồng</th><th>Phiên bản</th><th>Trạng thái</th><th>Ngày gửi</th><th><span className="sr-only">Mở</span></th></tr></thead>
-          <tbody>{visibleRows.map(r => <tr key={r.id}><td><Link href={`/portal/contracts/${r.id}`}>{r.contractName}</Link>{r.parentName && <div className={s.muted} style={{ fontSize: 12, marginTop: 4 }}>{r.documentTypeName ?? documentTypeLabel(r.documentType)} · thuộc {r.parentName}</div>}</td><td>{r.versionNo}</td>
+          <tbody>{visibleRows.slice((currentPage - 1) * 10, currentPage * 10).map(r => <tr key={r.id}><td><Link href={`/portal/contracts/${r.id}`}>{r.contractName}</Link>{r.parentName && <div className={s.muted} style={{ fontSize: 12, marginTop: 4 }}>{r.documentTypeName ?? documentTypeLabel(r.documentType)} · thuộc {r.parentName}</div>}</td><td>{r.versionNo}</td>
             <td><span className={`${s.badge} ${!r.isSigned && isOpenReview(r.status) ? s.warning : ""}`}>{r.isSigned ? "Đã ký" : customerStatusLabel[r.status] ?? r.status}</span></td>
             <td className={s.muted}>{dateTime(r.sentAt)}</td><td><Link href={`/portal/contracts/${r.id}`} aria-label={r.isSigned ? undefined : `Mở ${r.contractName}`}>
               {r.isSigned ? "Xem hợp đồng đã ký" : r.status === "APPROVED" ? "Theo dõi và ký" : <ArrowUpRight size={18}/>}</Link></td></tr>)}</tbody></table></div>}
-    </section>
+    <ListPager page={currentPage} pageSize={10} total={contractTotal} onPage={setContractPage}/></section>
   </div></>;
 }

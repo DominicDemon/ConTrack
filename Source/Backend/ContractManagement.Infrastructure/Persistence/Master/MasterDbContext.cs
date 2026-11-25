@@ -754,6 +754,7 @@ public partial class MasterDbContext : DbContext
         modelBuilder.Entity<ContractTemplate>(entity =>
         {
             entity.ToTable("CONTRACT_TEMPLATE");
+            entity.Property(t => t.PrintFormatJson).HasColumnName("print_format_json").HasMaxLength(2000);
 
             entity.HasIndex(e => e.ContractTemplateCode, "UQ__CONTRACT__FF5A4CCA9BB3789D").IsUnique();
 

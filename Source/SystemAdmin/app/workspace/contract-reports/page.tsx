@@ -13,7 +13,7 @@ const dayInput = (date: Date) => {
 };
 const initialFrom = () => { const date = new Date(); date.setDate(date.getDate() - 29); return dayInput(date); };
 const initialTo = () => dayInput(new Date());
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 10;
 const dayStart = (value: string) => value ? new Date(`${value}T00:00:00`).toISOString() : "";
 const dayEnd = (value: string) => value ? new Date(`${value}T23:59:59.999`).toISOString() : "";
 const dateText = (value: string | null) => value ? new Date(value.endsWith("Z") ? value : `${value}Z`).toLocaleDateString("vi-VN") : "—";

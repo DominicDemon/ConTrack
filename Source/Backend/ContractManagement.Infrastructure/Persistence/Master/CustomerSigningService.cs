@@ -137,7 +137,7 @@ public sealed class CustomerSigningService(
 
     public async Task<SignedContractPage> SignedContracts(InternalUser user, string? search, int page, CancellationToken ct, long? documentId = null)
     {
-        const int size = 20;
+        const int size = 10;
         if (page < 1 || page > int.MaxValue / size) throw new InternalAppException(400, "Số trang không hợp lệ.");
         var term = search?.Trim();
         var paper = AcceptedPaperFiles(db);

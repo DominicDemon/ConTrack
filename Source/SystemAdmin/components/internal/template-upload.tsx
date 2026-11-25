@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import styles from "./template-workspace.module.css";
-import { internalApi, type DraftContent, type TemplateDefinition } from "@/services/internal-api";
+import { internalApi, loadDocumentCategories, type DocumentCategory, type DraftContent, type TemplateDefinition } from "@/services/internal-api";
 import { typeOptions, useDocumentCategories } from "./use-document-categories";
 
 type Block = DocumentBlock;
@@ -25,11 +25,41 @@ export function wordBlob(base64: string, type: string) {
  * editTemplate: opens this template's own Word content in the editor (no new file), saved in place.
  * trigger: the page's own button; without it a default "Tạo mẫu văn bản" button opens the editor.
  */
-export default function TemplateUpload({ onImported, disabled, draft, locate, inline, parent, replace, trigger, editTemplate, onClose }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; saved?:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string};
+export default function TemplateUpload({ onImported, disabled, draft, locate, inline, parent, replace, trigger, editTemplate, onClose, startOpen }: { inline?: { readOnly?:boolean; templateId:string; content:DraftContent; saved?:DraftContent; previewHost:HTMLElement|null; changed:() => void; receipt: {current:string|null|undefined} }; locate?: {location:string|null;request:number}|null; onImported: (template: TemplateDefinition) => void; disabled?: boolean; draft?: {id:string};
   parent?: { id: string; name: string }; replace?: { id: string; name: string; documentType: number }; trigger?: (open: () => void) => ReactNode;
-  editTemplate?: Pick<TemplateDefinition, "id" | "name">; onClose?: () => void }) {
+  editTemplate?: Pick<TemplateDefinition, "id" | "name">; onClose?: () => void; startOpen?: boolean }) {
   const categories = useDocumentCategories();
-  const endpoint = draft ? `/contract-drafts/${draft.id}/word` : inline ? `/contract-drafts/from-template/${inline.templateId}/word` : "/contract-templates/word";
+  const [updatedCategories, setUpdatedCategories] = useState<DocumentCategory[] | null>(null);
+  const [otherCategory, setOtherCategory] = useState(false);
+  const [categoryName, setCategoryName] = useState("");
+  async function chooseCategory() {
+    const name = categoryName.trim();
+    if (!name || busy) return;
+    setBusy(true); setError("");
+    const find = (list: DocumentCategory[]) => list.find(c => c.name.trim().toLocaleLowerCase("vi") === name.toLocaleLowerCase("vi"));
+    try {
+      let list = await loadDocumentCategories(true);
+      let category = find(list);
+      if (!category) {
+        try {
+          category = await internalApi<DocumentCategory>("/document-categories", "POST", {
+            name, active: true, effectiveLabel: "Ngày văn bản", effectiveRequired: false,
+            expireShown: false, itemsLabel: "Nội dung"
+          });
+        } catch (e) {
+          list = await loadDocumentCategories(true);
+          category = find(list);
+          if (!category) throw e;
+        }
+      }
+      if (!category.active) throw new Error("Loại văn bản đã bị ẩn. Hãy bật lại trong danh mục Loại văn bản.");
+      if (parent && category.id === 1) throw new Error("Mẫu con cần loại văn bản khác Hợp đồng.");
+      setUpdatedCategories([...list.filter(c => c.id !== category.id), category]);
+      setDocumentType(category.id); setOtherCategory(false); setCategoryName(""); invalidate();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  const endpoint = draft ? `/contract-drafts/${draft.id}/word` : inline ? `/contract-drafts/from-template/${inline.templateId}/word` : editTemplate ? `/template-library/${editTemplate.id}` : "/contract-templates/word";
   const [mobile, setMobile] = useState(false);
   const [tab, setTab] = useState("edit");
   const [previewCurrent, setPreviewCurrent] = useState(false);
@@ -40,11 +70,11 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
   }, []);
-  const [open, setOpen] = useState(!!editTemplate);
+  const [open, setOpen] = useState(!!editTemplate || !!startOpen);
   const [stamp, setStamp] = useState("");
   const [editFields, setEditFields] = useState<TemplateDefinition["fields"]>([]);
   const [manual, setManual] = useState(true);
-  function closeEditor() { setOpen(false); onClose?.(); }
+  function closeEditor() { setOtherCategory(false); setCategoryName(""); setOpen(false); onClose?.(); }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -159,7 +189,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   async function activate() {
-    if (!preview || !previewCurrent || !confirmed) return;
+    if (otherCategory || !preview || !previewCurrent || !confirmed) return;
     setBusy(true); setError("");
     try {
       const template = editTemplate
@@ -334,9 +364,14 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
         <fieldset disabled={busy} className={styles.metadata} hidden={!!draft}>
           <label><span>File Word (.doc, .docx, tối đa 10 MB)<span className={styles.required} aria-hidden>*</span></span><Input type="file" accept=".doc,.docx" onChange={e => void extract(e.target.files?.[0])}/></label>
           <label><span>Tên mẫu<span className={styles.required} aria-hidden>*</span></span><Input value={name} maxLength={500} placeholder="Ví dụ: Hợp đồng cung cấp phần mềm 2026" onChange={e => {setName(e.target.value); invalidate();}}/></label>
-          <label><span>Loại mẫu<span className={styles.required} aria-hidden>*</span></span><select className={styles.select} value={documentType} onChange={e => {setDocumentType(Number(e.target.value)); invalidate();}}>
-            {typeOptions(categories, documentType).map(c => <option value={c.id} key={c.id} disabled={!!parent && c.id === 1}>{c.name}</option>)}
+          <label><span>Loại mẫu<span className={styles.required} aria-hidden>*</span></span><select className={styles.select} value={otherCategory ? "other" : documentType} onChange={e => {if (e.target.value === "other") setOtherCategory(true); else { setOtherCategory(false); setDocumentType(Number(e.target.value)); } invalidate();}}>
+            {typeOptions(updatedCategories ?? categories, documentType).map(c => <option value={c.id} key={c.id} disabled={!!parent && c.id === 1}>{c.name}</option>)}
+            <option value="other">Khác…</option>
           </select></label>
+          {otherCategory && <div>
+            <label>Tên loại văn bản<Input value={categoryName} maxLength={200} onChange={e => setCategoryName(e.target.value)}/></label>
+            <Button type="button" disabled={!categoryName.trim()} onClick={() => void chooseCategory()}>Dùng loại này</Button>
+          </div>}
         </fieldset>
         <div className={styles.tabs}><Button type="button" variant={tab==="edit"?"default":"outline"} onClick={() => setTab("edit")}>Chỉnh mẫu</Button><Button type="button" variant={tab==="preview"?"default":"outline"} onClick={() => setTab("preview")}>Xem trước</Button></div>
         <div className={styles.workspace}>{mobile ? <><div className={styles.mobilePane} hidden={tab!=="edit"}>{editor}</div><div className={styles.mobilePane} hidden={tab!=="preview"}>{previewPane}</div></> :
@@ -347,7 +382,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
         <div className={styles.footer}>
           {preview && <label><input type="checkbox" checked={confirmed} disabled={busy || !previewCurrent} onChange={e => setConfirmed(e.target.checked)}/> Tôi đã kiểm tra nội dung và bố cục PDF đối chiếu.</label>}
           <Button type="button" variant="outline" disabled={busy} onClick={closeEditor}>Đóng</Button>
-          <Button type="button" disabled={busy || !preview || !previewCurrent || !confirmed} onClick={() => void activate()}>{editTemplate ? "Lưu thay đổi" : "Kích hoạt mẫu"}</Button>
+          <Button type="button" disabled={busy || otherCategory || !preview || !previewCurrent || !confirmed} onClick={() => void activate()}>{editTemplate ? "Lưu thay đổi" : "Kích hoạt mẫu"}</Button>
         </div>
       </DialogContent>
     </Dialog>

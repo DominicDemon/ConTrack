@@ -7,7 +7,8 @@ namespace ContractManagement.Domain.Internal;
 /// </summary>
 public sealed record ContractFormat(string FontFamily = "Times New Roman", double TitleFontSize = 17, double HeadingFontSize = 13, double BodyFontSize = 13,
     double MarginTopMm = 20, double MarginBottomMm = 20, double MarginLeftMm = 30, double MarginRightMm = 20, double LineSpacing = 1.0,
-    bool TitleUppercase = true, bool ShowNationalMotto = true)
+    bool TitleUppercase = true, bool ShowNationalMotto = true,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string[]? WordOverrides = null)
 {
     /// <summary>Fonts every Windows server has and that carry Vietnamese letters.</summary>
     public static readonly string[] Fonts = ["Times New Roman", "Arial", "Tahoma", "Calibri"];

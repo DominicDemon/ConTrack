@@ -1,4 +1,5 @@
 "use client";
+import { ListPager } from "@/components/scanned-contracts/list-pager";
 import ContractTabs from "@/components/internal/contract-tabs";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -16,6 +17,7 @@ const tabs = [
 ] as const;
 export default function ContractSigningMonitorPage() {
   const user = useInternalUser();
+  const [contractPage, setContractPage] = useState(1);
   const [rows, setRows] = useState<SigningMonitorEntry[]>([]);
   const [search, setSearch] = useState("");
   const [party, setParty] = useState("");
@@ -52,6 +54,8 @@ export default function ContractSigningMonitorPage() {
 
   if (!user.canManageAll) return <div className={s.page}><p role="alert" className={ui.error}>Theo dõi ký chỉ dành cho quản trị viên công ty.</p></div>;
 
+  const contractTotal = visible.length;
+  const currentPage = Math.min(contractPage, Math.max(1, Math.ceil(contractTotal / 10)));
   return <div className={`${s.page} ${s.signingPage}`} data-ui="signing-monitor"><ContractTabs/>
     <div className={s.signingHeading}>
       <div><div className={s.signingKicker}><Activity size={15}/> VẬN HÀNH HỢP ĐỒNG</div><h1>Theo dõi ký hợp đồng</h1><p className={s.muted}>Xem tiến độ của từng hồ sơ, chữ ký đã ghi nhận và các bước đang chờ.</p></div>
@@ -69,14 +73,14 @@ export default function ContractSigningMonitorPage() {
     </div>
 
     <div className={s.signingTabs} role="tablist" aria-label="Lọc tiến độ ký">
-      {tabs.map(item => <button key={item.id} role="tab" aria-selected={tab === item.id} className={tab === item.id ? s.signingTabActive : s.signingTab} onClick={() => setTab(item.id)}>{item.label}<span>{counts[item.id]}</span></button>)}
+      {tabs.map(item => <button key={item.id} role="tab" aria-selected={tab === item.id} className={tab === item.id ? s.signingTabActive : s.signingTab} onClick={() => { setTab(item.id); setContractPage(1); }}>{item.label}<span>{counts[item.id]}</span></button>)}
     </div>
 
-    <div className={s.signingToolbar}><label className={s.signingSearch}><Search size={16}/><input aria-label="Tìm hợp đồng" placeholder="Tìm theo mã, tên hợp đồng hoặc khách hàng" value={search} onChange={e => setSearch(e.target.value)}/></label><select aria-label="Lọc loại khách hàng" className={ui.field} style={{ maxWidth: 280 }} value={party} onChange={e => setParty(e.target.value)}><option value="">Tất cả loại khách hàng</option>{Object.entries(partyTypeLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className={s.muted}>{visible.length} hồ sơ · cập nhật tối đa 200</span></div>
+    <div className={s.signingToolbar}><label className={s.signingSearch}><Search size={16}/><input aria-label="Tìm hợp đồng" placeholder="Tìm theo mã, tên hợp đồng hoặc khách hàng" value={search} onChange={e => { setSearch(e.target.value); setContractPage(1); }}/></label><select aria-label="Lọc loại khách hàng" className={ui.field} style={{ maxWidth: 280 }} value={party} onChange={e => { setParty(e.target.value); setContractPage(1); }}><option value="">Tất cả loại khách hàng</option>{Object.entries(partyTypeLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select><span className={s.muted}>{visible.length} hồ sơ · cập nhật tối đa 200</span></div>
     {error && <p role="alert" className={ui.error}>{error}</p>}
     {busy ? <div className={s.signingEmpty}>Đang tải tiến độ ký…</div> : visible.length === 0 ? <div className={s.signingEmpty}><Activity size={28}/><strong>{rows.length ? "Không có hồ sơ ở trạng thái này" : "Chưa có hồ sơ để theo dõi"}</strong><span>{rows.length ? "Thử chọn một trạng thái khác." : "Tạo một bản nháp hợp đồng để bắt đầu thử luồng ký điện tử."}</span>{rows.length === 0 && <Link href="/workspace/contracts/drafts/new" className={ui.primaryButton}><FilePlus2 size={16}/>Tạo bản nháp để thử luồng ký</Link>}</div> :
       <div className={s.signingRows}>
-        {visible.map(row => {
+        {visible.slice((currentPage - 1) * 10, currentPage * 10).map(row => {
           const untracked = !row.paper && [3, 4, 5].includes(row.status) && row.signatureCount === 0;
           return <Link className={s.signingRow} key={row.id} href={`/workspace/contracts/signing/${row.id}`}>
             <div className={s.signingIdentity}><span className={s.signingCode}>{row.code || `#${row.id}`}</span><strong>{row.name}</strong><span>{row.customerName} <i>·</i> Phụ trách {row.employeeName}</span></div>
@@ -92,6 +96,6 @@ export default function ContractSigningMonitorPage() {
           </Link>;
         })}
       </div>}
-    <p className={s.signingFootnote}>Trang này tổng hợp dữ liệu hợp đồng và chữ ký được lưu trong database công ty. Hồ sơ ở trạng thái chờ ký nhưng chưa có bản ghi chữ ký được đánh dấu riêng để dễ phát hiện.</p>
+    <ListPager page={currentPage} pageSize={10} total={contractTotal} onPage={setContractPage} label="hợp đồng"/><p className={s.signingFootnote}>Trang này tổng hợp dữ liệu hợp đồng và chữ ký được lưu trong database công ty. Hồ sơ ở trạng thái chờ ký nhưng chưa có bản ghi chữ ký được đánh dấu riêng để dễ phát hiện.</p>
   </div>;
 }

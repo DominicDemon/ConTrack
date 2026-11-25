@@ -225,42 +225,4 @@ public sealed class CustomerSupportTicketsController : ControllerBase
         return Ok(updated);
     }
 
-    [HttpPost("{id:int}/messages")]
-    public async Task<IActionResult> AddMessage(
-        int id,
-        [FromBody] CustomerReplyTicketRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var content = request.MessageContent ?? request.Content;
-        var hasImage = !string.IsNullOrWhiteSpace(request.AttachmentUrl)
-            || (request.AttachmentUrls is { Count: > 0 } && request.AttachmentUrls.Any(u => !string.IsNullOrWhiteSpace(u)));
-        if (string.IsNullOrWhiteSpace(content) && !hasImage)
-        {
-            return BadRequest(new { message = "Vui lòng nhập nội dung tin nhắn hoặc chọn hình ảnh để gửi." });
-        }
-
-        var tenant = _currentTenant.GetRequiredTenant();
-        var employee = EmployeeAuthorizationContext.GetEmployee(HttpContext);
-        var employeeId = employee?.EmployeeId ?? 0;
-        var senderName = !string.IsNullOrWhiteSpace(employee?.FullName)
-            ? employee.FullName
-            : employee?.Account ?? tenant.TenantName;
-
-        var msg = await _ticketService.AddCustomerMessageAsync(
-            id,
-            tenant.TenantId,
-            tenant.TenantCode,
-            tenant.TenantName,
-            employeeId,
-            senderName,
-            request,
-            cancellationToken);
-
-        if (msg is null)
-        {
-            return NotFound(new { message = "Không tìm thấy yêu cầu hỗ trợ." });
-        }
-
-        return Ok(msg);
-    }
 }

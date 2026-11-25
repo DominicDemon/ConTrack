@@ -6,15 +6,16 @@ using Microsoft.EntityFrameworkCore;
 namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 
 /// <summary>
-/// Finds contracts by the keywords read from their scans (or added by hand): contract code, tax code, phone number or
-/// customer name. Paper-signing evidence is listed for those who see signed contracts, scanned old paper contracts for
-/// those who see scanned contracts.
+/// One search over every contract: by the keywords read from scans (or added by hand) and, for contracts made online,
+/// by their own data (OnlineContractSearch). Paper-signing evidence is listed for those who see signed contracts,
+/// scanned old paper contracts for those who see scanned contracts, online contracts by the contract screens' rules.
 /// </summary>
 public sealed class ScanSearchService(
     MasterDbContext db,
     SignedEvidenceService evidence,
     ScannedContractService scanned,
-    ICurrentEmployee currentEmployee)
+    ICurrentEmployee currentEmployee,
+    OnlineContractSearch online)
 {
     public const string AllTypes = "All";
     private const int MaxResults = 50;
@@ -104,7 +105,8 @@ public sealed class ScanSearchService(
             scans = scans.Where(scan => Within(DateOnly.FromDateTime(scan.UploadedAt.ToUniversalTime().AddHours(7)))).Take(MaxResults).ToList();
         }
 
-        return new ScanSearchResponseDto(typed, items, scans);
+        var contracts = await online.SearchAsync(typed, only, first, last, cancellationToken);
+        return new ScanSearchResponseDto(typed, items, scans, contracts);
     }
 
     private static DateOnly? Day(string? typed, string label) =>

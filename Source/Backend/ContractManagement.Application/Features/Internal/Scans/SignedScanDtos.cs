@@ -111,10 +111,29 @@ public sealed record ScannedSearchResultDto(
     IReadOnlyList<ScanSearchMatchDto> Matches,
     IReadOnlyList<string> Emails);
 
-/// <summary><see cref="Items"/>: paper-signing evidence of contracts in the system; <see cref="Scans"/>: scanned old contracts.</summary>
+/// <summary>
+/// A contract made and signed online (CONTRACT_DOCUMENTS) found by its own data: code, name, the customer record and
+/// the party details written in its current version (tax code, phone, email, company). No scan is involved.
+/// </summary>
+public sealed record OnlineContractSearchResultDto(
+    long DocumentId,
+    string? DocumentCode,
+    string DocumentName,
+    string CustomerName,
+    string ContractStatus,
+    long? VersionNo,
+    DateTime UpdatedAt,
+    IReadOnlyList<ScanSearchMatchDto> Matches,
+    bool HasDraft = true);
+
+/// <summary>
+/// <see cref="Items"/>: paper-signing evidence of contracts in the system; <see cref="Scans"/>: scanned old contracts;
+/// <see cref="Contracts"/>: contracts made online, so one search covers paper and online contracts.
+/// </summary>
 public sealed record ScanSearchResponseDto(
     string Query,
     IReadOnlyList<ScanSearchResultDto> Items,
-    IReadOnlyList<ScannedSearchResultDto> Scans);
+    IReadOnlyList<ScannedSearchResultDto> Scans,
+    IReadOnlyList<OnlineContractSearchResultDto> Contracts);
 
 public sealed record SignedScanFileDto(string FileName, string ContentType, byte[] Content);

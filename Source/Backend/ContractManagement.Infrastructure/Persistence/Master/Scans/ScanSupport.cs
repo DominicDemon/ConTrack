@@ -259,6 +259,7 @@ public static class ScanRegistration
         services.AddScoped<SignedEvidenceService>();
         services.AddScoped<ScannedContractService>();
         services.AddScoped<ScanSearchService>();
+        services.AddScoped<OnlineContractSearch>();
         services.Configure<ScanEmailOptions>(configuration.GetSection(ScanEmailOptions.SectionName));
         services.AddSingleton<ScanEmailQueue>();
         services.AddHostedService(provider => provider.GetRequiredService<ScanEmailQueue>());

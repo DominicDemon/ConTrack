@@ -76,9 +76,25 @@ public sealed class SignedEvidenceService(
     // Reading
     // ---------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// The paper-signing queue: contracts waiting for their signed paper copy (status PendingSignature) and contracts that
+    /// already have one, whatever its state. Drafts, contracts still negotiated and contracts signed online are left out:
+    /// there is nothing to upload for them. Any contract can still be opened from its own page.
+    /// </summary>
     public async Task<IReadOnlyList<ContractListItemDto>> ListContractsAsync(CancellationToken cancellationToken)
     {
-        var contracts = await Contracts().OrderByDescending(row => row.DocumentId).Take(200).ToListAsync(cancellationToken);
+        // Only a business signs on paper (a person signs online, even before the director has started the signing):
+        // the party type is read from the content snapshot, as the other contract screens filter it.
+        var business = ContractManagement.Domain.Internal.InternalDraftPolicy.PartyTypeMarker(ContractManagement.Domain.Internal.InternalDraftPolicy.Business)!;
+        var contracts = await Contracts()
+            .Where(row => (row.Status == (int)ContractDocumentStatus.PendingSignature
+                    && db.ContractDynamicValues.Any(value => value.ContractDocumentId == row.DocumentId && value.ContractVersionId == row.CurrentVersionId
+                        && value.FieldKey == InternalRepository.SnapshotKey && value.FieldValue != null && value.FieldValue.Contains(business)))
+                || (from evidence in db.ContractSignedEvidences
+                    join documentFile in db.ContractDocumentFiles on evidence.ContractDocumentFileId equals documentFile.ContractDocumentFileId
+                    where documentFile.ContractDocumentId == row.DocumentId
+                    select evidence.ContractSignedEvidenceId).Any())
+            .OrderByDescending(row => row.DocumentId).Take(200).ToListAsync(cancellationToken);
         var ids = contracts.Select(row => row.DocumentId).ToList();
         var versionIds = contracts.Select(row => row.CurrentVersionId).OfType<long>().ToList();
         var versions = await db.ContractVersions.AsNoTracking()
@@ -93,7 +109,8 @@ public sealed class SignedEvidenceService(
                 group => ((SignedEvidenceStatus)group.MaxBy(row => row.Evidence.ContractSignedEvidenceId)!
                     .Evidence.ContractSignedEvidenceStatus).ToString());
 
-        return contracts.Select(row =>
+        // A contract signed (or being signed) online takes no paper copy.
+        return contracts.Where(row => row.CurrentVersionId is not { } versionId || !online.Contains(versionId)).Select(row =>
         {
             var version = row.CurrentVersionId is { } id ? versions.GetValueOrDefault(id) : null;
             return new ContractListItemDto(
@@ -134,8 +151,7 @@ public sealed class SignedEvidenceService(
     }
 
     private IQueryable<ContractRow> CustomerContracts(long customerId) =>
-        from document in db.ContractDocuments.AsNoTracking()
-        where document.CustomerId == customerId
+        from document in CustomerScans.SentToCustomer(db, customerId)
         join customer in db.Customers on document.CustomerId equals customer.CustomerId into customers
         from customer in customers.DefaultIfEmpty()
         select new ContractRow

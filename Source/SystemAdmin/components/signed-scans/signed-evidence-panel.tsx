@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { CheckCircle2, FileCheck2, FileUp, History, Info, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { CheckCircle2, FileCheck2, FileUp, History, Info, Loader2, Printer, RefreshCw, ShieldCheck } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -84,6 +84,7 @@ export function SignedEvidencePanel({
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [reloadKey, setReloadKey] = useState(0);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
   const reload = useCallback(() => setReloadKey((key) => key + 1), []);
 
   const show = useCallback(
@@ -163,6 +164,31 @@ export function SignedEvidencePanel({
       if (!(error instanceof FileKeyCancelled)) toast.error(await blobErrorMessage(error, "Không tải được tệp bản ký."));
     } finally {
       setOpeningId(null);
+    }
+  };
+
+  /** The agreed version as a PDF to print and sign (GET /contract-drafts/{id}/print-pdf; business contracts only). */
+  const printContract = async () => {
+    setPrinting(true);
+    const tab = window.open("", "_blank"); // opened before the await so the popup is not blocked
+    try {
+      const response = await fetch(`/api/internal/contract-drafts/${encodeURIComponent(documentId)}/print-pdf`, {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? "Không tải được PDF hợp đồng.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      if (tab) tab.location.href = url;
+      else window.location.href = url;
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      tab?.close();
+      toast.error((error as Error).message);
+    } finally {
+      setPrinting(false);
     }
   };
 
@@ -302,7 +328,25 @@ export function SignedEvidencePanel({
               Tải bản ký giấy
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-5">
+            {/* The paper comes from here too: the agreed version, printed for both parties to sign and stamp. */}
+            {data.contractStatus === "PendingSignature" && !accepted && !pending && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/40 p-3">
+                <div className="text-sm">
+                  <p className="font-medium">1. In hợp đồng để ký</p>
+                  <p className="text-muted-foreground">
+                    In đúng phiên bản {data.currentVersion.versionNo} đã thống nhất; hai bên ký, doanh nghiệp đóng dấu đỏ rồi scan bản đã ký.
+                  </p>
+                </div>
+                <Button type="button" variant="outline" onClick={() => void printContract()} disabled={printing}>
+                  {printing ? <Loader2 className="size-4 animate-spin" /> : <Printer className="size-4" />}
+                  In hợp đồng (PDF)
+                </Button>
+              </div>
+            )}
+            {data.contractStatus === "PendingSignature" && !accepted && !pending && (
+              <p className="text-sm font-medium">2. Tải bản đã ký lên</p>
+            )}
             <UploadEvidenceForm
               version={data.currentVersion}
               onSubmit={({ file, signDate }) =>

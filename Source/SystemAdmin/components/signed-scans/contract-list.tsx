@@ -1,5 +1,6 @@
 "use client";
 
+import { ListPager } from "@/components/scanned-contracts/list-pager";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -25,6 +26,7 @@ function PaperStatus({ item }: { item: ContractListItem }) {
 /** Contracts as the old contract list shows them, with the state of their paper signing. */
 export function ContractList() {
   const router = useRouter();
+  const [contractPage, setContractPage] = useState(1);
   const [state, setState] = useState<{ items: ContractListItem[] | null; error: string | null }>({ items: null, error: null });
 
   useEffect(() => {
@@ -49,6 +51,8 @@ export function ContractList() {
   }
 
   const { items } = state;
+  const contractTotal = items?.length ?? 0;
+  const currentPage = Math.min(contractPage, Math.max(1, Math.ceil(contractTotal / 10)));
   return (
     <Card className="gap-0 border-border bg-card p-0 shadow-sm">
       <CardContent className="p-4">
@@ -76,7 +80,7 @@ export function ContractList() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {items.map((item) => (
+                  {items.slice((currentPage - 1) * 10, currentPage * 10).map((item) => (
                     <TableRow key={item.documentId} className="cursor-pointer" onClick={() => router.push(contractHref(item.documentId))}>
                       <TableCell className="font-semibold">{item.documentCode ?? "Chưa cấp mã"}</TableCell>
                       <TableCell className="max-w-64 whitespace-normal">{item.documentName}</TableCell>
@@ -101,7 +105,7 @@ export function ContractList() {
               </Table>
             </div>
             <ul className="space-y-3 md:hidden">
-              {items.map((item) => (
+              {items.slice((currentPage - 1) * 10, currentPage * 10).map((item) => (
                 <li key={item.documentId}>
                   <Link
                     href={contractHref(item.documentId)}
@@ -135,6 +139,6 @@ export function ContractList() {
           </>
         )}
       </CardContent>
-    </Card>
+    <ListPager page={currentPage} pageSize={10} total={contractTotal} onPage={setContractPage} label="hợp đồng"/></Card>
   );
 }

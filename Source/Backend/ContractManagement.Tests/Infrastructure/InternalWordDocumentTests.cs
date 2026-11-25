@@ -75,6 +75,26 @@ public class InternalWordDocumentTests
         Assert.Equal(TinyPng, Convert.ToBase64String(bytes.ToArray()));
     }
 
+    [Fact]
+    public void WordOverridesApplyOnlySelectedSettings()
+    {
+        var source = MixedFonts();
+        var format = ContractManagement.Domain.Internal.ContractFormat.Default with { WordOverrides = [] };
+        Assert.Same(source, InternalWordDocument.ApplyPrintFormat(source, format));
+
+        var edited = InternalWordDocument.ApplyPrintFormat(source, format with { WordOverrides = ["margins", "spacing"], LineSpacing = 1.5 });
+        using var doc = WordprocessingDocument.Open(new MemoryStream(edited), false);
+        var main = doc.MainDocumentPart!;
+        var body = main.Document!.Body!;
+        Assert.Equal(1701u, body.Descendants<PageMargin>().Single().Left!.Value);
+        var paragraph = body.Elements<Paragraph>().First();
+        Assert.Equal("360", paragraph.ParagraphProperties!.SpacingBetweenLines!.Line!.Value);
+        Assert.Equal("Arial", paragraph.Descendants<RunFonts>().Single().Ascii!.Value);
+        Assert.Equal("30", paragraph.Descendants<FontSize>().Single().Val!.Value);
+        Assert.Single(body.Descendants<Table>());
+        Assert.Single(main.ImageParts);
+    }
+
     [LibreOfficeContractFontFact]
     public async Task LibreOfficeRendersMixedTemplateTextInTimesNewRoman()
     {

@@ -435,7 +435,7 @@ public sealed class InternalWordDocument(IConfiguration configuration)
         }
     }
 
-    internal static byte[] StandardizeContractFont(byte[] bytes)
+    internal static byte[] StandardizeContractFont(byte[] bytes, string font = DraftContent.ContractFont)
     {
         using var stream = new MemoryStream();
         stream.Write(bytes);
@@ -448,7 +448,7 @@ public sealed class InternalWordDocument(IConfiguration configuration)
             var defaults = styles.GetFirstChild<DocDefaults>() ?? styles.PrependChild(new DocDefaults());
             var defaultRun = defaults.GetFirstChild<RunPropertiesDefault>() ?? defaults.PrependChild(new RunPropertiesDefault());
             var defaultsBase = defaultRun.GetFirstChild<RunPropertiesBaseStyle>() ?? defaultRun.AppendChild(new RunPropertiesBaseStyle());
-            defaultsBase.RunFonts = ContractFonts();
+            defaultsBase.RunFonts = ContractFonts(font);
 
             var parts = new List<OpenXmlPart> { main, stylePart };
             parts.AddRange(main.HeaderParts);
@@ -465,24 +465,95 @@ public sealed class InternalWordDocument(IConfiguration configuration)
                         && (level.LevelText?.Val?.Value?.Any(c => char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.PrivateUse) == true
                             || fonts.GetAttributes().Any(a => Regex.IsMatch(a.Value ?? "", @"\A(?:Symbol|Webdings|Wingdings(?: [23])?)\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))))
                         continue;
-                    fonts.InsertAfterSelf(ContractFonts());
+                    fonts.InsertAfterSelf(ContractFonts(font));
                     fonts.Remove();
                 }
                 foreach (var run in root.Descendants<Run>().Where(r => r.Elements<Text>().Any()))
                 {
                     run.RunProperties ??= new RunProperties();
-                    run.RunProperties.RunFonts ??= ContractFonts();
+                    run.RunProperties.RunFonts ??= ContractFonts(font);
                 }
             }
         }
         return stream.ToArray();
     }
 
-    private static RunFonts ContractFonts() => new()
+    private static RunFonts ContractFonts(string font) => new()
     {
-        Ascii = DraftContent.ContractFont, HighAnsi = DraftContent.ContractFont,
-        EastAsia = DraftContent.ContractFont, ComplexScript = DraftContent.ContractFont
+        Ascii = font, HighAnsi = font, EastAsia = font, ComplexScript = font
     };
+
+    internal static byte[] ApplyPrintFormat(byte[] bytes, ContractFormat format)
+    {
+        var overrides = format.WordOverrides ?? [];
+        if (overrides.Contains("font")) bytes = StandardizeContractFont(bytes, format.FontFamily);
+        if (!overrides.Any(key => key != "font")) return bytes;
+
+        using var stream = new MemoryStream();
+        stream.Write(bytes);
+        stream.Position = 0;
+        using (var doc = WordprocessingDocument.Open(stream, true))
+        {
+            var main = doc.MainDocumentPart!;
+            var document = main.Document!;
+            if (overrides.Contains("margins"))
+            {
+                int Twips(double mm) => (int)Math.Round(ContractFormat.MmToPoints(mm) * 20);
+                if (document.Body is { } body && body.GetFirstChild<SectionProperties>() is null)
+                    body.AppendChild(new SectionProperties());
+                foreach (var section in document.Descendants<SectionProperties>())
+                {
+                    var margin = section.GetFirstChild<PageMargin>();
+                    if (margin is null) section.AddChild(margin = new PageMargin());
+                    margin.Top = Twips(format.MarginTopMm);
+                    margin.Bottom = Twips(format.MarginBottomMm);
+                    margin.Left = (uint)Twips(format.MarginLeftMm);
+                    margin.Right = (uint)Twips(format.MarginRightMm);
+                }
+            }
+            var roots = new List<OpenXmlPartRootElement> { document };
+            roots.AddRange(main.HeaderParts.Select(p => p.Header).OfType<Header>());
+            roots.AddRange(main.FooterParts.Select(p => p.Footer).OfType<Footer>());
+            var styles = main.StyleDefinitionsPart?.Styles?.Elements<Style>()
+                .Where(s => s.StyleId?.Value is not null).ToDictionary(s => s.StyleId!.Value!) ?? [];
+            foreach (var paragraph in roots.SelectMany(root => root.Descendants<Paragraph>()))
+            {
+                var styleId = paragraph.ParagraphProperties?.ParagraphStyleId?.Val?.Value ?? "";
+                var styleName = styles.GetValueOrDefault(styleId)?.StyleName?.Val?.Value ?? styleId;
+                var title = styleName.Equals("Title", StringComparison.OrdinalIgnoreCase)
+                    || Regex.IsMatch(paragraph.InnerText, @"^\s*HỢP ĐỒNG\s*$", RegexOptions.IgnoreCase);
+                var heading = Regex.IsMatch(styleName, @"^Heading\s*\d", RegexOptions.IgnoreCase)
+                    || Regex.IsMatch(paragraph.InnerText, @"^\s*Điều\s+\d", RegexOptions.IgnoreCase);
+                if (overrides.Contains("spacing"))
+                {
+                    paragraph.ParagraphProperties ??= new ParagraphProperties();
+                    var spacing = paragraph.ParagraphProperties.SpacingBetweenLines ??= new SpacingBetweenLines();
+                    spacing.LineRule = LineSpacingRuleValues.Auto;
+                    spacing.Line = ((int)Math.Round(format.LineSpacing * 240)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                }
+                if (title && overrides.Contains("title"))
+                {
+                    foreach (var run in paragraph.Descendants<Run>())
+                    {
+                        run.RunProperties ??= new RunProperties();
+                        run.RunProperties.Caps = new Caps { Val = format.TitleUppercase };
+                    }
+                }
+                if (overrides.Contains("size"))
+                {
+                    var size = title ? format.TitleFontSize : heading ? format.HeadingFontSize : format.BodyFontSize;
+                    foreach (var run in paragraph.Descendants<Run>().Where(r => r.Elements<Text>().Any()))
+                    {
+                        run.RunProperties ??= new RunProperties();
+                        var halfPoints = ((int)Math.Round(size * 2)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        run.RunProperties.FontSize = new FontSize { Val = halfPoints };
+                        run.RunProperties.FontSizeComplexScript = new FontSizeComplexScript { Val = halfPoints };
+                    }
+                }
+            }
+        }
+        return stream.ToArray();
+    }
 
     public static byte[] Fill(byte[] bytes, IReadOnlyDictionary<string, string> values, bool preserveUnknown = false)
     {

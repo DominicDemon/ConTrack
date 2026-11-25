@@ -13,7 +13,7 @@ public sealed record ProgressFilter(string? Search = null, long? OwnerId = null,
 /// <param name="CanDelete">A rejected or cancelled contract this employee may remove for good (ContractHardDelete).</param>
 public sealed record ProgressRow(long Id, string Code, string Name, string Customer, long OwnerId, string Owner, string Stage, string Department, DateTime? EnteredAt, string? LastActor, bool NeedsMe,
     int Status = 0, bool CanDelete = false, DateTime? CreatedAt = null);
-public sealed record ProgressPage(List<ProgressRow> Items, int Total, int Page, int PageSize, Dictionary<string, int> Counts, DateTime ServerTime);
+public sealed record ProgressPage(List<ProgressRow> Items, int Total, int Page, int PageSize, Dictionary<string, int> Counts, DateTime ServerTime, int SentCount = 0);
 
 public sealed class ContractProgressService(MasterDbContext db)
 {
@@ -47,6 +47,8 @@ public sealed class ContractProgressService(MasterDbContext db)
         var snapshots = await db.ContractDynamicValues.AsNoTracking().Where(x => versions.Contains(x.ContractVersionId) && x.FieldKey == InternalRepository.SnapshotKey)
             .ToDictionaryAsync(x => x.ContractVersionId, x => x.FieldValue, ct);
         var approvals = await db.ContractApprovalRequests.AsNoTracking().Where(x => ids.Contains(x.ContractDocumentId) && x.InternalStage != null).ToListAsync(ct);
+        var sent = (await db.ContractReviewRequests.AsNoTracking()
+            .Where(r => ids.Contains(r.ContractDocumentId)).Select(r => r.ContractDocumentId).Distinct().ToListAsync(ct)).ToHashSet();
         var reviews = await db.ContractReviewRequests.AsNoTracking().Where(x => versions.Contains(x.ContractVersionId)).ToListAsync(ct);
         var pendingPaper = await (from file in db.ContractDocumentFiles
             join evidence in db.ContractSignedEvidences on file.ContractDocumentFileId equals evidence.ContractDocumentFileId
@@ -121,7 +123,9 @@ public sealed class ContractProgressService(MasterDbContext db)
                 doc.ContractDocumentStatus, ContractHardDelete.CanDelete(doc.ContractDocumentStatus) && (actor.CanManageContractWorkflow || (actor.CanWrite && owner)), doc.CreatedDate));
         }
         var counts = rows.GroupBy(x => x.Stage).ToDictionary(x => x.Key, x => x.Count());
-        if (!string.IsNullOrEmpty(filter.Stage)) rows = rows.Where(x => x.Stage == filter.Stage).ToList();
-        return new(rows.OrderBy(x => x.EnteredAt == null).ThenBy(x => x.EnteredAt).ThenBy(x => x.Id).Skip((filter.Page - 1) * 25).Take(25).ToList(), rows.Count, filter.Page, 25, counts, now);
+        var sentCount = rows.Count(r => sent.Contains(r.Id));
+        if (filter.Stage == "SENT") rows = rows.Where(r => sent.Contains(r.Id)).ToList();
+        else if (!string.IsNullOrEmpty(filter.Stage)) rows = rows.Where(x => x.Stage == filter.Stage).ToList();
+        return new(rows.OrderBy(x => x.EnteredAt == null).ThenBy(x => x.EnteredAt).ThenBy(x => x.Id).Skip((filter.Page - 1) * 10).Take(10).ToList(), rows.Count, filter.Page, 10, counts, now, sentCount);
     }
 }

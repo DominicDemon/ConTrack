@@ -692,7 +692,7 @@ public sealed class SupportTicketService : ISupportTicketService
         }
 
         return filteredStaff
-            .OrderByDescending(x => x.IsManager)
+            .OrderBy(x => x.ActiveTicketCount)
             .ThenBy(x => x.EmployeeName)
             .ToList();
     }
@@ -795,6 +795,8 @@ public sealed class SupportTicketService : ISupportTicketService
                                     && a.TicketSupportEmployeeUnassignedAt == null)
                         .ToListAsync(cancellationToken);
 
+                    if (activeDbAssignees.Any(a => a.EmployeeId is { } employeeId && !targetStaffIds.Contains((int)employeeId)) && string.IsNullOrWhiteSpace(request.Note))
+                        throw new ArgumentException("Nhập lý do chuyển người xử lý.");
                     if (activeDbAssignees.Count > 0)
                     {
                         hadPreviousAssignee = true;
@@ -880,6 +882,8 @@ public sealed class SupportTicketService : ISupportTicketService
                     .Where(a => string.Equals(a.AssignmentRole, "ASSIGNEE", StringComparison.OrdinalIgnoreCase) && a.UnassignedAt == null)
                     .ToList();
 
+                if (db == null && activeStateAssignees.Any(a => !targetStaffIds.Contains(a.EmployeeId)) && string.IsNullOrWhiteSpace(request.Note))
+                    throw new ArgumentException("Nhập lý do chuyển người xử lý.");
                 if (activeStateAssignees.Count > 0)
                 {
                     hadPreviousAssignee = true;

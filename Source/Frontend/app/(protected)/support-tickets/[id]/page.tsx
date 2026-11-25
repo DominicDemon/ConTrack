@@ -1,21 +1,15 @@
 "use client";
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Building2,
   Calendar,
-  CheckCheck,
   CheckCircle2,
   Clock,
-  FileText,
-  ImagePlus,
   Layers,
   Loader2,
-  MessageCircle,
-  Send,
-  Trash2,
   UserCheck,
   X,
   ZoomIn,
@@ -31,7 +25,6 @@ import { cn } from "@/lib/utils";
 import {
   customerTicketApi,
   TicketDto,
-  TicketMessageDto,
   TicketStatus,
 } from "@/services/ticket-api";
 
@@ -51,73 +44,6 @@ function formatZaloTime(dateStr: string) {
   return `${hm} • ${dm}`;
 }
 
-function readImageAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      if (!result) {
-        reject(new Error("Empty image"));
-        return;
-      }
-      const img = new window.Image();
-      img.onload = () => {
-        const maxDim = 1600;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-          const canvas = document.createElement("canvas");
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL("image/jpeg", 0.88));
-            return;
-          }
-        }
-        resolve(result);
-      };
-      img.onerror = () => resolve(result);
-      img.src = result;
-    };
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.readAsDataURL(file);
-  });
-}
-
-function getMessageImages(msg: TicketMessageDto): string[] {
-  const urls: string[] = [];
-  if (Array.isArray(msg.attachmentUrls)) {
-    for (const u of msg.attachmentUrls) {
-      if (
-        u &&
-        (u.startsWith("data:image") ||
-          u.startsWith("http") ||
-          u.startsWith("/"))
-      ) {
-        urls.push(u);
-      }
-    }
-  }
-  if (
-    msg.ticketMessageAttachmentUrl &&
-    (msg.ticketMessageAttachmentUrl.startsWith("data:image") ||
-      msg.ticketMessageAttachmentUrl.startsWith("http") ||
-      msg.ticketMessageAttachmentUrl.startsWith("/")) &&
-    !urls.includes(msg.ticketMessageAttachmentUrl)
-  ) {
-    urls.push(msg.ticketMessageAttachmentUrl);
-  }
-  return urls;
-}
-
 export default function CustomerSupportTicketDetailPage({
   params,
 }: {
@@ -129,21 +55,8 @@ export default function CustomerSupportTicketDetailPage({
 
   const [ticket, setTicket] = useState<TicketDto | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"chat" | "info">("chat");
-
-  const [replyText, setReplyText] = useState("");
-  const [attachedImage, setAttachedImage] = useState<{
-    name: string;
-    dataUrl: string;
-  } | null>(null);
-  const [sending, setSending] = useState(false);
-
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [zoomScale, setZoomScale] = useState(1);
-
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const chatBottomRef = useRef<HTMLDivElement | null>(null);
-  const prevMsgCountRef = useRef<number>(0);
 
   const loadDetail = useCallback(
     async (silent = false) => {
@@ -177,97 +90,6 @@ export default function CustomerSupportTicketDetailPage({
   }, [loadDetail]);
 
   // Tự động cuộn xuống cuối khung chat khi có tin nhắn mới
-  const chatMessages = (ticket?.messages ?? []).filter(
-    (m) =>
-      m.ticketMessageType !== "STAFF_REPORT" &&
-      m.ticketMessageType !== "STAFF_COMPLETION" &&
-      m.ticketMessageType !== "ASSIGNMENT",
-  );
-
-  useEffect(() => {
-    if (chatMessages.length !== prevMsgCountRef.current) {
-      prevMsgCountRef.current = chatMessages.length;
-      setTimeout(() => {
-        chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-      }, 60);
-    }
-  }, [chatMessages.length]);
-
-  const handleSelectImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      toast.warning("Chỉ hỗ trợ gửi hình ảnh (PNG, JPG, JPEG, WEBP, GIF).");
-      return;
-    }
-    try {
-      const dataUrl = await readImageAsDataUrl(file);
-      setAttachedImage({ name: file.name, dataUrl });
-    } catch {
-      toast.error("Không thể đọc hình ảnh này");
-    }
-  };
-
-  const handlePasteImage = async (e: React.ClipboardEvent<HTMLInputElement>) => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith("image/")) {
-        const file = items[i].getAsFile();
-        if (file) {
-          try {
-            const dataUrl = await readImageAsDataUrl(file);
-            setAttachedImage({ name: file.name || "pasted-image.png", dataUrl });
-            toast.success("Đã đính kèm ảnh từ bộ nhớ tạm!");
-          } catch {
-            toast.error("Không thể đọc ảnh từ bộ nhớ tạm");
-          }
-          break;
-        }
-      }
-    }
-  };
-
-  const handleSendReply = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    const content = replyText.trim();
-    if ((!content && !attachedImage) || !ticket) return;
-
-    setSending(true);
-    try {
-      const createdMsg = await customerTicketApi.sendMessage(
-        ticket.ticketSupportId,
-        {
-          messageContent: content,
-          attachmentName: attachedImage?.name,
-          attachmentUrl: attachedImage?.dataUrl,
-          attachmentNames: attachedImage ? [attachedImage.name] : undefined,
-          attachmentUrls: attachedImage ? [attachedImage.dataUrl] : undefined,
-        },
-      );
-
-      // Hiển thị tin nhắn + hình ảnh ngay lập tức như Zalo
-      setTicket((prev) =>
-        prev
-          ? {
-              ...prev,
-              messages: [...(prev.messages ?? []), createdMsg],
-            }
-          : prev,
-      );
-      setReplyText("");
-      setAttachedImage(null);
-      setTimeout(() => {
-        chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
-      }, 50);
-    } catch {
-      toast.error("Gửi tin nhắn thất bại");
-    } finally {
-      setSending(false);
-    }
-  };
-
   if (loading) {
     return (
       <>
@@ -318,9 +140,7 @@ export default function CustomerSupportTicketDetailPage({
               u.startsWith("http") ||
               u.startsWith("/")),
         )
-      : chatMessages.length > 0
-        ? getMessageImages(chatMessages[0])
-        : [];
+ : [];
 
   return (
     <>
@@ -372,40 +192,8 @@ export default function CustomerSupportTicketDetailPage({
             </div>
 
             {/* Chuyển trang con (Tabs tách biệt) */}
-            <div className="inline-flex rounded-lg border bg-muted p-1">
-              <button
-                type="button"
-                onClick={() => setActiveTab("chat")}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all",
-                  activeTab === "chat"
-                    ? "bg-background text-primary shadow-xs"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <MessageCircle className="size-4" />
-                <span>Trao đổi trực tuyến</span>
-                <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary">
-                  {chatMessages.length}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveTab("info")}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-md px-4 py-2 text-xs font-semibold transition-all",
-                  activeTab === "info"
-                    ? "bg-background text-primary shadow-xs"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <FileText className="size-4" />
-                <span>Thông tin & Kết quả xử lý</span>
-              </button>
-            </div>
           </div>
 
-          {/* KẾT QUẢ XỬ LÝ NỔI BẬT NẾU ĐÃ CÓ */}
           {ticket.ticketResolution && (
             <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/90 p-4 text-emerald-950 shadow-xs dark:border-emerald-500/30 dark:bg-emerald-950/30 dark:text-emerald-200">
               <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-600" />
@@ -422,234 +210,6 @@ export default function CustomerSupportTicketDetailPage({
           )}
 
           {/* TAB 1: KHUNG CHAT ZALO REALTIME (HỖ TRỢ GỬI ẢNH & PHÓNG TO ẢNH NHƯ ZALO) */}
-          {activeTab === "chat" && (
-            <div className="flex h-[640px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm dark:border-slate-800">
-              {/* Header Zalo Chat */}
-              <div className="flex items-center justify-between border-b bg-white px-5 py-3.5 dark:bg-slate-900">
-                <div className="flex items-center gap-3">
-                  <div className="relative flex size-10 items-center justify-center rounded-full bg-blue-600 font-bold text-white">
-                    TP
-                    <span className="absolute right-0 bottom-0 size-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-foreground">
-                      {ticket.departmentHeadName
-                        ? `Trưởng phòng: ${ticket.departmentHeadName}`
-                        : `Trưởng bộ phận ${ticket.department}`}
-                    </p>
-                    <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                      <span className="size-1.5 rounded-full bg-emerald-500" />
-                      Trực tuyến • Tự động cập nhật tin nhắn & hình ảnh tức thì
-                    </p>
-                  </div>
-                </div>
-
-                <div className="hidden text-right text-xs text-muted-foreground sm:block">
-                  <p className="font-semibold text-foreground">{serviceLabel}</p>
-                  <p>{ticket.department}</p>
-                </div>
-              </div>
-
-              {/* Message Stream kiểu Zalo */}
-              <div className="flex-1 space-y-4 overflow-y-auto bg-[#eef0f5] p-5 dark:bg-slate-950">
-                {chatMessages.map((msg) => {
-                  const isMine = !msg.isFromEmployee;
-                  const msgImages = getMessageImages(msg);
-                  const showText =
-                    msg.ticketMessageContent &&
-                    msg.ticketMessageContent !== "[Hình ảnh đính kèm]";
-
-                  return (
-                    <div
-                      key={msg.ticketMessageId}
-                      className={cn(
-                        "flex items-end gap-2.5",
-                        isMine ? "justify-end" : "justify-start",
-                      )}
-                    >
-                      {!isMine && (
-                        <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-xs font-bold text-white shadow-xs">
-                          TP
-                        </div>
-                      )}
-
-                      <div
-                        className={cn(
-                          "max-w-[75%] rounded-2xl px-4 py-2.5 shadow-xs",
-                          isMine
-                            ? "rounded-br-xs bg-[#e5efff] text-slate-900 border border-blue-200/80 dark:bg-blue-600 dark:text-white dark:border-blue-500"
-                            : "rounded-bl-xs bg-white text-slate-900 border border-slate-200/80 dark:bg-slate-800 dark:text-slate-100 dark:border-slate-700",
-                        )}
-                      >
-                        {!isMine && (
-                          <p className="mb-1 text-[11px] font-bold text-blue-600 dark:text-blue-400">
-                            {msg.senderName} ({ticket.department})
-                          </p>
-                        )}
-
-                        {showText && (
-                          <p className="whitespace-pre-line text-sm leading-relaxed">
-                            {msg.ticketMessageContent}
-                          </p>
-                        )}
-
-                        {/* HIỂN THỊ HÌNH ẢNH TRỰC TIẾP TRONG TIN NHẮN (BẤM VÀO XEM ẢNH TO NHƯ ZALO) */}
-                        {msgImages.length > 0 && (
-                          <div
-                            className={cn(
-                              "grid gap-2",
-                              showText ? "mt-2.5" : "mt-0.5",
-                              msgImages.length > 1
-                                ? "grid-cols-2"
-                                : "grid-cols-1",
-                            )}
-                          >
-                            {msgImages.map((imgUrl, idx) => (
-                              <button
-                                key={idx}
-                                type="button"
-                                onClick={() => {
-                                  setPreviewImage(imgUrl);
-                                  setZoomScale(1);
-                                }}
-                                className="group relative block overflow-hidden rounded-xl border border-black/10 bg-black/5 cursor-zoom-in"
-                                title="Bấm vào để xem ảnh lớn"
-                              >
-                                <img
-                                  src={imgUrl}
-                                  alt="Hình ảnh trao đổi"
-                                  className="max-h-64 w-auto max-w-full rounded-xl object-contain transition-transform duration-200 group-hover:scale-[1.02]"
-                                />
-                                <span className="absolute right-2 bottom-2 flex items-center gap-1 rounded-full bg-black/65 px-2 py-0.5 text-[10px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
-                                  <ZoomIn className="size-3" />
-                                  Phóng to
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        <div
-                          className={cn(
-                            "mt-1.5 flex items-center gap-1 text-[11px]",
-                            isMine
-                              ? "justify-end text-slate-500 dark:text-blue-100"
-                              : "justify-start text-slate-400",
-                          )}
-                        >
-                          <span>{formatZaloTime(msg.createdAt)}</span>
-                          {isMine && (
-                            <CheckCheck className="size-3.5 text-blue-600 dark:text-blue-200" />
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                <div ref={chatBottomRef} />
-              </div>
-
-              {/* Input gửi tin nhắn & gửi ảnh kiểu Zalo (Khóa khi đã hoàn thành) */}
-              {isResolved ? (
-                <div className="flex items-center justify-center gap-2 border-t bg-slate-100 px-4 py-3.5 text-xs font-medium text-slate-600 dark:bg-slate-900 dark:text-slate-400">
-                  <CheckCircle2 className="size-4 text-emerald-600" />
-                  <span>
-                    Yêu cầu hỗ trợ đã hoàn thành và đóng. Bạn chỉ có thể xem lại
-                    lịch sử tin nhắn và kết quả xử lý, không thể nhắn thêm.
-                  </span>
-                </div>
-              ) : (
-                <form
-                  onSubmit={handleSendReply}
-                  className="border-t bg-white p-3.5 dark:bg-slate-900"
-                >
-                  {/* Preview ảnh trực tiếp trước khi gửi */}
-                  {attachedImage && (
-                    <div className="mb-3 flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50/60 p-2.5 dark:border-blue-900 dark:bg-blue-950/30">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setPreviewImage(attachedImage.dataUrl);
-                          setZoomScale(1);
-                        }}
-                        className="group relative h-16 w-20 shrink-0 overflow-hidden rounded-lg border bg-white cursor-zoom-in"
-                        title="Bấm vào để xem ảnh lớn"
-                      >
-                        <img
-                          src={attachedImage.dataUrl}
-                          alt={attachedImage.name}
-                          className="h-full w-full object-cover"
-                        />
-                      </button>
-                      <div className="min-w-0 flex-1 text-xs">
-                        <p className="font-semibold text-blue-900 dark:text-blue-200">
-                          Ảnh đính kèm sẵn sàng gửi
-                        </p>
-                        <p className="text-[11px] text-muted-foreground">
-                          Bấm vào ảnh để xem phóng to hoặc nhấn Gửi ngay
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setAttachedImage(null)}
-                        className="size-8 text-muted-foreground hover:text-rose-600"
-                        title="Xóa ảnh"
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                  )}
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-                      className="hidden"
-                      onChange={handleSelectImage}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      onClick={() => fileInputRef.current?.click()}
-                      title="Gửi hình ảnh minh họa"
-                      className="size-10 shrink-0 rounded-full border-slate-300 text-blue-600 hover:bg-blue-50 hover:text-blue-700"
-                    >
-                      <ImagePlus className="size-5" />
-                    </Button>
-
-                    <input
-                      type="text"
-                      value={replyText}
-                      onChange={(e) => setReplyText(e.target.value)}
-                      onPaste={handlePasteImage}
-                      placeholder="Nhập tin nhắn hoặc nhấn Ctrl+V để dán ảnh gửi Trưởng phòng..."
-                      className="h-10 flex-1 rounded-full border border-slate-300 bg-slate-50 px-4 text-sm focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800"
-                    />
-
-                    <Button
-                      type="submit"
-                      disabled={sending || (!replyText.trim() && !attachedImage)}
-                      className="h-10 rounded-full bg-blue-600 px-5 text-white hover:bg-blue-700"
-                    >
-                      {sending ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Send className="size-4" />
-                      )}
-                      <span className="ml-1.5 hidden sm:inline">Gửi ngay</span>
-                    </Button>
-                  </div>
-                </form>
-              )}
-            </div>
-          )}
-
-          {/* TAB 2: THÔNG TIN CHI TIẾT YÊU CẦU & HÌNH ẢNH ĐÍNH KÈM */}
-          {activeTab === "info" && (
             <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
               <Card className="md:col-span-2 shadow-xs">
                 <CardHeader className="border-b pb-3">
@@ -766,7 +326,6 @@ export default function CustomerSupportTicketDetailPage({
                 </CardContent>
               </Card>
             </div>
-          )}
         </div>
       </div>
 

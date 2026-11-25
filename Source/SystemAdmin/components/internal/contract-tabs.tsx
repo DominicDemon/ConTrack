@@ -17,7 +17,7 @@ export default function ContractTabs() {
   const user = useInternalUser(); const path = usePathname();
   const tabs = TABS.filter(t => t.permissions.some(p => user.permissions.includes(p)));
   if (tabs.length < 2) return null;
-  return <nav aria-label="Quản lý hợp đồng" className={s.toolbar} style={{ marginBottom: 16 }}>
+  return <nav aria-label="Quản lý hợp đồng" className={s.contractTabs}>
     {tabs.map(t => { const current = path === t.href || (t.href.endsWith("/drafts") ? false : path.startsWith(t.href + "/"));
       return <Link key={t.href} href={t.href} aria-current={current ? "page" : undefined} className={current ? ui.primaryButton : ui.secondaryButton}>{t.label}</Link>; })}
   </nav>;

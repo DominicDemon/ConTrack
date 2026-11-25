@@ -141,36 +141,6 @@ public sealed class AdminSupportTicketsController : ControllerBase
         return Ok(updated);
     }
 
-    [HttpPost("{id:int}/messages")]
-    public async Task<IActionResult> ReplyMessage(
-        int id,
-        [FromBody] AdminReplyTicketRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var hasImage = !string.IsNullOrWhiteSpace(request.AttachmentUrl)
-            || (request.AttachmentUrls is { Count: > 0 } && request.AttachmentUrls.Any(u => !string.IsNullOrWhiteSpace(u)));
-        if (string.IsNullOrWhiteSpace(request.MessageContent) && !hasImage)
-        {
-            return BadRequest(new { message = "Vui lòng nhập nội dung tin nhắn hoặc chọn hình ảnh để gửi." });
-        }
-
-        var systemAdminId = HttpContext.Session.GetInt32(AccountSessionKeys.SystemAdminId) ?? 1;
-        var adminName = HttpContext.Session.GetString(AccountSessionKeys.SystemAdminName) ?? "System Administrator";
-
-        var message = await _ticketService.AddAdminMessageAsync(
-            id,
-            systemAdminId,
-            adminName,
-            request,
-            cancellationToken);
-
-        if (message is null)
-        {
-            return NotFound(new { message = "Không tìm thấy ticket hỗ trợ." });
-        }
-
-        return Ok(message);
-    }
 
     [HttpPatch("{id:int}/status")]
     public async Task<IActionResult> UpdateStatus(

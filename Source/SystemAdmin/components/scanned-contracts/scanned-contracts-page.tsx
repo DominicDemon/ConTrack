@@ -31,7 +31,7 @@ import {
 const MAX_FILES = 20;
 const POLL_MS = 3000;
 const BATCHES_PER_PAGE = 10;
-const CONTRACTS_PER_PAGE = 20;
+const CONTRACTS_PER_PAGE = 10;
 
 export const scannedJobHref = (jobId: string) => `/workspace/scanned-contracts/jobs/${jobId}`;
 

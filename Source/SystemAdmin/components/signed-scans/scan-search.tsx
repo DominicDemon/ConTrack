@@ -1,5 +1,6 @@
 "use client";
 
+import { ListPager } from "@/components/scanned-contracts/list-pager";
 import { DateInput } from "@/components/signed-scans/date-input";
 import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
@@ -122,6 +123,8 @@ function ResultActions({
  * and scanned old paper contracts are listed.
  */
 export function ScanSearch() {
+  const [scanPage, setScanPage] = useState(1);
+  const [contractPage, setContractPage] = useState(1);
   const [query, setQuery] = useState("");
   const [type, setType] = useState<ScanSearchType>("All");
   const [from, setFrom] = useState("");
@@ -150,7 +153,11 @@ export function ScanSearch() {
     setSearching(true);
     try {
       const found = await signedEvidenceApi.search({ q: trimmed, type: filter, from: first, to: last });
-      if (request === latest.current) setResponse(found);
+      if (request === latest.current) {
+        setScanPage(1);
+        setContractPage(1);
+        setResponse(found);
+      }
     } catch (searchError) {
       if (request === latest.current) setError(getScanErrorMessage(searchError, "Không tìm được. Vui lòng thử lại."));
     } finally {
@@ -273,7 +280,7 @@ export function ScanSearch() {
           </p>
 
           <ul className="space-y-3">
-            {response.scans.map((scan) => (
+            {response.scans.slice((scanPage - 1) * 10, scanPage * 10).map((scan) => (
               <li key={`scan-${scan.jobId}`} className="rounded-xl border p-4 transition-colors hover:bg-accent/30">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
@@ -312,9 +319,10 @@ export function ScanSearch() {
               </li>
             ))}
           </ul>
+          <ListPager page={scanPage} pageSize={10} total={response.scans.length} onPage={setScanPage} label="bản scan"/>
 
           <ul className="space-y-3">
-            {response.items.map((item) => (
+            {response.items.slice((contractPage - 1) * 10, contractPage * 10).map((item) => (
               <li key={item.evidenceId} className="rounded-xl border p-4 transition-colors hover:bg-accent/30">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0">
@@ -341,6 +349,7 @@ export function ScanSearch() {
               </li>
             ))}
           </ul>
+          <ListPager page={contractPage} pageSize={10} total={response.items.length} onPage={setContractPage} label="hợp đồng"/>
         </div>
       )}
 

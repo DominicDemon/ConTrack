@@ -67,6 +67,6 @@ public class ContractProgressLiveTests
         var secondPage = await progress.List(new(Search: draft.Code, Page: 2), sale, default);
         Assert.Empty(secondPage.Items);
         Assert.Equal(1, secondPage.Total);
-        Assert.Equal(25, secondPage.PageSize);
+        Assert.Equal(10, secondPage.PageSize);
     }
 }

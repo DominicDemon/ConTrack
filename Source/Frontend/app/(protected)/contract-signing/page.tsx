@@ -1,5 +1,6 @@
 "use client";
 
+import { ListPager } from "@/components/internal/contract-list-pager";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Clipboard, FileSignature, RefreshCw, X } from "lucide-react";
 import { Header } from "@/components/ui/custom/header";
@@ -15,6 +16,7 @@ import { PermissionGuard } from "@/components/auth/permission-guard";
 import { electronicSigningApi, type DirectorSigningQueueItem } from "@/services/electronic-signing-api";
 
 export default function ContractSigningQueuePage() {
+  const [contractPage, setContractPage] = useState(1);
   const [items, setItems] = useState<DirectorSigningQueueItem[]>([]);
   const [selected, setSelected] = useState<DirectorSigningQueueItem | null>(null);
   const [pdfUrl, setPdfUrl] = useState("");
@@ -128,6 +130,8 @@ export default function ContractSigningQueuePage() {
     toast.success("Đã sao chép link khách hàng.");
   };
 
+  const contractTotal = items.length;
+  const currentPage = Math.min(contractPage, Math.max(1, Math.ceil(contractTotal / 10)));
   return (
     <PermissionGuard permission={RBAC_PERMISSIONS.contractElectronicSigningDirector}>
       <div className="space-y-6">
@@ -140,7 +144,7 @@ export default function ContractSigningQueuePage() {
             </CardHeader>
             <CardContent className="space-y-2">
               {items.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">Không có hợp đồng chờ ký.</p>}
-              {items.map((item) => (
+              {items.slice((currentPage - 1) * 10, currentPage * 10).map((item) => (
                 <button key={item.sessionId} onClick={() => void openItem(item)} className={`w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted ${selected?.sessionId === item.sessionId ? "border-primary bg-primary/5" : ""}`}>
                   <span className="block font-medium">{item.contractName}</span>
                   <span className="mt-1 block text-xs text-muted-foreground">{item.contractCode || `#${item.contractId}`} · {item.customerName}</span>
@@ -148,7 +152,7 @@ export default function ContractSigningQueuePage() {
                 </button>
               ))}
             </CardContent>
-          </Card>
+          <ListPager page={currentPage} pageSize={10} total={contractTotal} onPage={setContractPage}/></Card>
 
           <div className="space-y-5">
             {selected ? <>

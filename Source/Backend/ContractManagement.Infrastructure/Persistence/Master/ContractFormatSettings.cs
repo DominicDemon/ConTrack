@@ -5,33 +5,49 @@ using Microsoft.EntityFrameworkCore;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
-/// <summary>The company's contract print format (Thiết lập tham số hợp đồng): read by everyone, changed by Hành chính.</summary>
 public sealed class ContractFormatSettings(MasterDbContext db)
 {
-    public const int SettingId = 1;
+    internal static ContractFormat Parse(string? json) =>
+        json is null ? ContractFormat.Default : JsonSerializer.Deserialize<ContractFormat>(json, InternalRepository.Json)!.Validated();
 
-    /// <summary>The saved format, or the default layout when none was saved (or the row cannot be read).</summary>
-    public static async Task<ContractFormat> Read(MasterDbContext db, CancellationToken ct)
+    internal static async Task<ContractFormat> Read(MasterDbContext db, long id, CancellationToken ct) =>
+        Parse(await db.ContractTemplates.Where(t => t.ContractTemplateId == id).Select(t => t.PrintFormatJson).FirstOrDefaultAsync(ct));
+
+    internal static ContractFormat ForWord(string? json) =>
+        Parse(json) is { WordOverrides: not null } configured ? configured : ContractFormat.Default with { WordOverrides = [] };
+
+    private async Task<ContractManagement.Domain.Entities.Master.ContractTemplate> Find(long id, CancellationToken ct) =>
+        await db.ContractTemplates.SingleOrDefaultAsync(t => t.ContractTemplateId == id, ct)
+            ?? throw new InternalAppException(404, "Không tìm thấy mẫu.");
+
+    private Task<bool> IsWord(long id, CancellationToken ct) =>
+        db.FileStorages.AnyAsync(f => f.FileStorageObjectid == id && f.FileStorageObjecttype == "INTERNAL_TEMPLATE_WORD", ct);
+
+    internal static ContractFormat ValidateWord(ContractFormat input)
     {
-        var json = await db.ContractFormatSettings.AsNoTracking().Where(s => s.SettingId == SettingId).Select(s => s.SettingValue).FirstOrDefaultAsync(ct);
-        if (json is null) return ContractFormat.Default;
-        try { return JsonSerializer.Deserialize<ContractFormat>(json, InternalRepository.Json)?.Validated() ?? ContractFormat.Default; }
-        catch (Exception e) when (e is JsonException or ArgumentException) { return ContractFormat.Default; }
+        var overrides = input.WordOverrides ?? [];
+        if (overrides.Any(key => key is not ("font" or "size" or "title" or "margins" or "spacing")))
+            throw new ArgumentException("Tham số Word không hợp lệ.");
+        return input.Validated() with { WordOverrides = overrides.Distinct().ToArray() };
     }
 
-    public Task<ContractFormat> Get(CancellationToken ct) => Read(db, ct);
+    public async Task<object> Get(long id, CancellationToken ct)
+    {
+        var template = await Find(id, ct);
+        var word = await IsWord(id, ct);
+        return new { name = template.ContractTemplateName, word, format = word ? ForWord(template.PrintFormatJson) : Parse(template.PrintFormatJson), fonts = ContractFormat.Fonts };
+    }
 
-    public async Task<ContractFormat> Save(ContractFormat input, InternalUser actor, CancellationToken ct)
+    public async Task<ContractFormat> Save(long id, ContractFormat input, InternalUser actor, CancellationToken ct)
     {
         if (!actor.CanManageTemplates) throw new InternalAppException(403, "Chỉ Hành chính được thiết lập định dạng hợp đồng.");
-        var format = (input ?? throw new ArgumentException("Thiếu thiết lập.")).Validated();
+        var template = await Find(id, ct);
+        var format = await IsWord(id, ct) ? ValidateWord(input) : input.Validated() with { WordOverrides = null };
         var json = JsonSerializer.Serialize(format, InternalRepository.Json);
-        var row = await db.ContractFormatSettings.SingleOrDefaultAsync(s => s.SettingId == SettingId, ct);
-        var old = row?.SettingValue;
-        if (row is null) db.ContractFormatSettings.Add(row = new() { SettingId = SettingId, SettingValue = json });
-        row.SettingValue = json; row.UpdatedDate = DateTime.UtcNow; row.UpdatedEmployeeId = actor.Id;
-        db.AuditLogs.Add(new() { ActionType = "UPDATE", EntityName = "CONTRACT_FORMAT_SETTING", EntityId = SettingId.ToString(), ActorType = "EMPLOYEE",
-            ActorId = actor.Id, CreatedAt = DateTime.UtcNow, OldData = old, NewData = json });
+        db.AuditLogs.Add(new() { ActionType = "UPDATE", EntityName = "CONTRACT_TEMPLATE", EntityId = id.ToString(),
+            ActorType = "EMPLOYEE", ActorId = actor.Id, CreatedAt = DateTime.UtcNow, OldData = template.PrintFormatJson, NewData = json });
+        template.PrintFormatJson = json;
+        template.UpdatedDate = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
         return format;
     }

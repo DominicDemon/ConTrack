@@ -5,6 +5,7 @@ namespace ContractManagement.Domain.Entities.Master;
 
 public partial class ContractTemplate
 {
+    public string? PrintFormatJson { get; set; }
     public long ContractTemplateId { get; set; }
 
     public string ContractTemplateCode { get; set; } = null!;

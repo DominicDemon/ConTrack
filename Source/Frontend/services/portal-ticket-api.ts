@@ -1,5 +1,5 @@
 import { customerApi, handleAuthError } from "./customer-api";
-import type { CreateSupportTicketRequestDto, CustomerReplyTicketRequestDto, SupportServiceItemDto, TicketDto, TicketMessageDto } from "./ticket-api";
+import type { CreateSupportTicketRequestDto, SupportServiceItemDto, TicketDto } from "./ticket-api";
 
 // Same names and types as main's ticket-api.ts, served by /api/customer/support with the portal session (the customer is CUSTOMER.customer_id).
 // Unlike main's version there is no mock fallback; a signed-out customer is sent to the portal login.
@@ -22,7 +22,6 @@ export const customerTicketApi = {
   create: (payload: CreateSupportTicketRequestDto) => call<TicketDto>("/support/tickets", "POST", {
     ...payload, ticketSubject: payload.subject, ticketDescription: payload.description, ticketPriority: payload.priority,
   }),
-  sendMessage: (id: number, payload: CustomerReplyTicketRequestDto) => call<TicketMessageDto>(`/support/tickets/${id}/messages`, "POST", payload),
   /** Not satisfied with the result: reopen a closed ticket with the reason. */
   reopen: (id: number, reason: string) => call<TicketDto>(`/support/tickets/${id}/reopen`, "POST", { reason }),
 };

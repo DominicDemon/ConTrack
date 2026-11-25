@@ -181,13 +181,6 @@ export const ticketApi = {
     }
   },
 
-  replyMessage: async (id: number, payload: ReplyTicketRequestDto) => {
-    const res = await axiosClient.post<unknown, TicketMessageDto>(
-      `/api/admin/tickets/${id}/messages`,
-      payload,
-    );
-    return res;
-  },
 
   updateStatus: async (id: number, payload: UpdateTicketStatusRequestDto) => {
     try {

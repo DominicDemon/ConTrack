@@ -319,12 +319,6 @@ public static class InternalHost
         });
         tickets.MapPost("/{id:int}/resolve", async (int id, HeadResolveTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
             Found(await s.HeadResolveAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct)));
-        tickets.MapPost("/{id:int}/messages", async (int id, AdminReplyTicketRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
-        {
-            var hasImage = !string.IsNullOrWhiteSpace(input.AttachmentUrl) || (input.AttachmentUrls?.Any(u => !string.IsNullOrWhiteSpace(u)) ?? false);
-            if (string.IsNullOrWhiteSpace(input.MessageContent) && !hasImage) throw new ArgumentException("Vui lòng nhập nội dung phản hồi hoặc đính kèm hình ảnh.");
-            return Found(await s.AddAdminMessageAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct));
-        });
         tickets.MapPatch("/{id:int}/status", async (int id, UpdateTicketStatusRequestDto input, HttpContext c, ISupportTicketService s, CancellationToken ct) =>
             Found(await s.UpdateTicketStatusAsync(id, TicketManager(c).Id, TicketActor(c).Name, input, ct)));
         // Ticket notifications of main's AdminNotificationsController: the service already scopes them to the head / assigned staff.
@@ -349,9 +343,9 @@ public static class InternalHost
             var legalContractRead = user.CanManageLegal && HttpMethods.IsGet(c.Request.Method)
                 && (path is "/api/internal/contract-drafts" or "/api/internal/contract-progress" or "/api/internal/contract-archive"
                     or "/api/internal/contract-signing-monitor" or "/api/internal/company-signing/queue" or "/api/internal/contract-templates"
-                    or "/api/internal/contract-template-library" or "/api/internal/document-categories" or "/api/internal/contract-format"
+                    or "/api/internal/contract-template-library" or "/api/internal/document-categories"
                     || System.Text.RegularExpressions.Regex.IsMatch(path,
-                        @"^/api/internal/(contract-drafts/\d+(/(approval|internal-approval|internal-comments|checklist|reviews|versions|word/content|print-pdf|related))?|contract-signing-monitor/\d+|company-signing/\d+/document|contract-templates/\d+(/checklist)?)$"));
+                        @"^/api/internal/(contract-drafts/\d+(/(approval|internal-approval|internal-comments|checklist|reviews|versions|word/content|print-pdf|related))?|contract-signing-monitor/\d+|company-signing/\d+/document|contract-templates/\d+(/(checklist|format))?)$"));
             var legalWorkflowAction = user.CanManageLegal && HttpMethods.IsPost(c.Request.Method)
                 && System.Text.RegularExpressions.Regex.IsMatch(path,
                     @"^/api/internal/(contract-drafts/\d+/(approval/(approve|return)|internal-approval|internal-comments|checklist|start-signing)|contract-comments/\d+/resolve)$");
@@ -387,8 +381,16 @@ public static class InternalHost
         secured.MapPost("/contract-templates/{id:long}/restore", async (long id, HttpContext c, InternalRepository repository, CancellationToken ct) =>
             Results.Ok(await repository.RestoreTemplate(id, Current(c), ct)));
         // Contract print format (Thiết lập tham số hợp đồng): read by everyone, changed by Hành chính.
-        secured.MapGet("/contract-format", async (ContractFormatSettings s, CancellationToken ct) => Results.Ok(new { format = await s.Get(ct), fonts = ContractManagement.Domain.Internal.ContractFormat.Fonts }));
-        secured.MapPut("/contract-format", async (ContractManagement.Domain.Internal.ContractFormat input, HttpContext c, ContractFormatSettings s, CancellationToken ct) => Results.Ok(await s.Save(input, Current(c), ct)));
+        secured.MapGet("/contract-templates/{id:long}/format", async (long id, ContractFormatSettings s, CancellationToken ct) => Results.Ok(await s.Get(id, ct)));
+        secured.MapPost("/contract-templates/{id:long}/format-preview", async (long id, ContractManagement.Domain.Internal.ContractFormat input, HttpContext c, IInternalRepository repository, InternalWordTemplates word, CancellationToken ct) =>
+        {
+            if (!Current(c).CanManageTemplates) throw new InternalAppException(403, "Bạn không có quyền quản lý mẫu.");
+            var template = (await repository.Templates(ct)).SingleOrDefault(t => t.Id == id && t.WordStorageKey is not null)
+                ?? throw new InternalAppException(404, "Không tìm thấy mẫu Word đang hoạt động.");
+            var pdf = await word.PreviewStoredWord(template with { PrintFormat = ContractFormatSettings.ValidateWord(input) }, true, ct);
+            return Results.Ok(new { base64 = Convert.ToBase64String(pdf) });
+        });
+        secured.MapPut("/contract-templates/{id:long}/format", async (long id, ContractManagement.Domain.Internal.ContractFormat input, HttpContext c, ContractFormatSettings s, CancellationToken ct) => Results.Ok(await s.Save(id, input, Current(c), ct)));
         // Document types (Loại văn bản): everyone reads them for labels; Hành chính adds, changes, hides or deletes them.
         secured.MapGet("/document-categories", async (DocumentCategories s, CancellationToken ct) => Results.Ok(await s.List(ct)));
         secured.MapPost("/document-categories", async (DocumentCategoryInput input, HttpContext c, DocumentCategories s, CancellationToken ct) =>
@@ -463,11 +465,18 @@ public static class InternalHost
         management.MapGet("/{id:long}/editor", async (long id, InternalRepository r, MasterDbContext db, InternalWordTemplates service, HttpContext c, CancellationToken ct) =>
         {
             var row = await db.ContractTemplates.AsNoTracking().SingleOrDefaultAsync(t => t.ContractTemplateId == id && t.IsActive, ct);
-            var template = (await r.TemplateLibrary(true, ct)).FirstOrDefault(t => t.Id == id);
+            var template = (await r.TemplateLibrary(true, ct, id)).SingleOrDefault();
             if (row == null || template == null) return Results.NotFound();
             return Results.Ok(new { extraction = await service.OpenTemplate(template, Current(c).Id, ct),
                 stamp = (row.UpdatedDate ?? row.CreatedDate).Ticks.ToString(), template });
         });
+        management.MapPost("/{id:long}/preview", async (long id, WordTemplateInput input, HttpContext c, InternalRepository repository, InternalWordTemplates service, CancellationToken ct) =>
+        {
+            var template = (await repository.TemplateLibrary(true, ct, id)).SingleOrDefault()
+                ?? throw new InternalAppException(404, "Không tìm thấy mẫu đang hoạt động.");
+            var format = template.WordStorageKey is null ? null : template.PrintFormat;
+            return Results.Ok(await service.Preview(input, Current(c).Id, ct, format));
+        }).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
         management.MapPut("/{id:long}", async (long id, string stamp, WordActivation input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>
             Results.Ok(await service.Activate(input, Current(c).Id, ct, id, stamp))).WithMetadata(new Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute(48 * 1024 * 1024));
         secured.MapPost("/contract-templates/word/extract", async (TemplateFileInput input, HttpContext c, InternalWordTemplates service, CancellationToken ct) =>

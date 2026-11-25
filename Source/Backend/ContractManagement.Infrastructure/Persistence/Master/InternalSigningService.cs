@@ -178,7 +178,7 @@ public sealed class InternalSigningService(
             throw new InternalAppException(409, "Hợp đồng cá nhân ký điện tử bằng OTP, không in để ký giấy.");
         var pdf = content.TemplateSnapshot?.WordStorageKey is not null
             ? await word.Render(content, content.TemplateSnapshot, pdf: true, ct)
-            : RenderContractPdf(document, version, customer, content, await ContractFormatSettings.Read(db, ct)).Content;
+            : RenderContractPdf(document, version, customer, content, content.TemplateSnapshot?.PrintFormat ?? await ContractFormatSettings.Read(db, content.TemplateId, ct)).Content;
         return (pdf, (document.ContractDocumentCode ?? $"contract-{documentId}") + ".pdf");
     }
 
@@ -195,7 +195,7 @@ public sealed class InternalSigningService(
             return new(pdf, company, customerSlot);
         }
 
-        var rendered = RenderContractPdf(document, version, customer, content, await ContractFormatSettings.Read(db, ct));
+        var rendered = RenderContractPdf(document, version, customer, content, content.TemplateSnapshot?.PrintFormat ?? await ContractFormatSettings.Read(db, content.TemplateId, ct));
         return new(rendered.Content,
             new(rendered.SignaturePage, rendered.CompanySignatureX, rendered.SignatureY, rendered.SignatureWidth, rendered.SignatureHeight),
             new(rendered.SignaturePage, rendered.CustomerSignatureX, rendered.SignatureY, rendered.SignatureWidth, rendered.SignatureHeight));

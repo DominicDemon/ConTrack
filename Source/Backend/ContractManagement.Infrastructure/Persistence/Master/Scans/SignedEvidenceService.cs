@@ -855,9 +855,50 @@ public sealed class SignedEvidenceService(
         }
     }
 
-    private async Task<ContractRow> GetContractAsync(long documentId, CancellationToken cancellationToken) =>
-        await Contracts().SingleOrDefaultAsync(row => row.DocumentId == documentId, cancellationToken)
-        ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng.");
+    private async Task<ContractRow> GetContractAsync(long documentId, CancellationToken cancellationToken)
+    {
+        var row = await Contracts().SingleOrDefaultAsync(row => row.DocumentId == documentId, cancellationToken)
+            ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng.");
+        return await WithChosenBusinessAsync(row, cancellationToken);
+    }
+
+    /// <summary>
+    /// The legal entity the contract was drafted for (DraftContent.CustomerBusinessId of the current version), so the
+    /// paper is compared with that entity's name and tax code; the customer's first entity when the draft names none.
+    /// </summary>
+    private async Task<ContractRow> WithChosenBusinessAsync(ContractRow row, CancellationToken cancellationToken)
+    {
+        if (row.CurrentVersionId is not { } versionId) return row;
+        var snapshot = await db.ContractDynamicValues.AsNoTracking()
+            .Where(value => value.ContractDocumentId == row.DocumentId && value.ContractVersionId == versionId
+                && value.FieldKey == InternalRepository.SnapshotKey)
+            .Select(value => value.FieldValue)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (snapshot is null) return row;
+        long? businessId;
+        try
+        {
+            businessId = JsonSerializer.Deserialize<ContractManagement.Domain.Internal.DraftContent>(snapshot, InternalRepository.Json)?.CustomerBusinessId;
+        }
+        catch (JsonException)
+        {
+            return row;
+        }
+
+        if (businessId is null) return row;
+        var chosen = await (
+                from business in db.CustomerBusinesses.AsNoTracking()
+                join document in db.ContractDocuments on business.CustomerId equals document.CustomerId
+                where document.ContractDocumentId == row.DocumentId && business.CustomerBusinessId == businessId
+                select new { business.CustomerBusinessLegalName, business.CustomerBusinessCompanyTaxIdentifier })
+            .FirstOrDefaultAsync(cancellationToken);
+        return chosen is null ? row : new ContractRow
+        {
+            DocumentId = row.DocumentId, Code = row.Code, Name = row.Name, Status = row.Status, CurrentVersionId = row.CurrentVersionId,
+            OwnerId = row.OwnerId, Phone = row.Phone,
+            CustomerName = chosen.CustomerBusinessLegalName, TaxCode = chosen.CustomerBusinessCompanyTaxIdentifier,
+        };
+    }
 
     /// <summary>An evidence of a contract outside the data scope is "not found" too.</summary>
     private async Task<EvidenceRow> GetEvidenceRowAsync(long evidenceId, CancellationToken cancellationToken)
@@ -925,8 +966,10 @@ public sealed class SignedEvidenceService(
                 select evidence.ContractSignedEvidenceId).Any()
         join customer in db.Customers on document.CustomerId equals customer.CustomerId into customers
         from customer in customers.DefaultIfEmpty()
-        join business in db.CustomerBusinesses on document.CustomerId equals business.CustomerId into businesses
-        from business in businesses.DefaultIfEmpty()
+        // One row per contract: a customer may have several legal entities, and joining them all repeated the contract
+        // (twice in the list, and a 500 where one row is expected). The contract's own choice is applied in GetContractAsync.
+        let business = db.CustomerBusinesses.Where(candidate => candidate.CustomerId == document.CustomerId)
+            .OrderBy(candidate => candidate.CustomerBusinessId).FirstOrDefault()
         select new ContractRow
         {
             DocumentId = document.ContractDocumentId,

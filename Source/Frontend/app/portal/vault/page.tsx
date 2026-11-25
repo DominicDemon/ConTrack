@@ -10,6 +10,7 @@ import DocumentTabs from "@/components/portal/document-tabs";
 import { customerApi, customerApiForm, handleAuthError, type CustomerSession } from "@/services/customer-api";
 import { imagesToPdf } from "@/lib/images-to-pdf";
 import { REMEMBER_MINUTES, touchFileKey, useRememberedFileKey } from "@/lib/remembered-file-key";
+import { fieldMatches, Highlight } from "@/lib/vault-search";
 
 type Keyword = { id: string; type: string; value: string; manual: boolean };
 /** GET /api/customer/vault. */
@@ -25,6 +26,21 @@ type Edit = { id: string; title: string; note: string; category: string; expires
 const MAX_BYTES = 20 * 1024 * 1024;
 const TRASH_DAYS = 30;
 const KEYWORD: Record<string, string> = { ContractCode: "Số HĐ", TaxCode: "MST", PhoneNumber: "SĐT", CustomerName: "Tên", Email: "Email" };
+/**
+ * The keywords shown in the list: while searching, the ones that match (highlighted); otherwise the contract number and
+ * the partner only. Every keyword is listed, and can be added or removed, in "Sửa thông tin tài liệu".
+ */
+function shownKeywords(item: Item, query: string): { shown: Keyword[]; hidden: number } {
+  if (query.trim()) {
+    const hits = item.keywords.filter(k => fieldMatches(k.value, query));
+    if (hits.length) return { shown: hits, hidden: item.keywords.length - hits.length };
+  }
+  const main = [item.keywords.find(k => k.type === "ContractCode"), item.keywords.find(k => k.type === "CustomerName")].filter((k): k is Keyword => !!k);
+  const shown = main.length ? main : item.keywords.slice(0, 1);
+  return { shown, hidden: item.keywords.length - shown.length };
+}
+const chip = (manual: boolean) => ({ border: "1px solid var(--border)", borderRadius: 10, padding: "1px 6px", background: manual ? "var(--muted)" : undefined,
+  display: "inline-flex", gap: 3, alignItems: "center", maxWidth: "100%", overflowWrap: "anywhere" as const });
 const OCR: Record<string, string> = { QUEUED: "Đang chờ đọc…", PROCESSING: "Đang đọc nội dung…", FAILED: "Không đọc được nội dung tệp.",
   INTERRUPTED: "Máy chủ khởi động lại khi đang đọc. Nhập key rồi bấm “Đọc lại”." };
 const mb = (bytes: number) => `${(bytes / 1048576).toLocaleString("vi-VN", { maximumFractionDigits: 1 })} MB`;
@@ -76,7 +92,7 @@ export default function CustomerVaultPage() {
   const [mailTo, setMailTo] = useState(""); const [mailNote, setMailNote] = useState("");
   const [adding, setAdding] = useState<{ id: string; type: string; value: string } | null>(null);
   const [preview, setPreview] = useState<{ title: string; url: string; type: string } | null>(null);
-  const camera = useRef<HTMLInputElement>(null); const picker = useRef<HTMLInputElement>(null);
+  const editPanel = useRef<HTMLElement>(null); const camera = useRef<HTMLInputElement>(null); const picker = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();
@@ -155,6 +171,12 @@ export default function CustomerVaultPage() {
   const restore = (item: Item) => void run(item.id, async () => { await customerApi(`/vault/${item.id}/restore`, "POST"); setNotice(`Đã khôi phục “${item.title}”.`); await load(); });
   const purge = (item: Item) => { if (!window.confirm(`Xóa hẳn “${item.title}”? Không khôi phục được nữa.`)) return;
     void run(item.id, async () => { await customerApi(`/vault/trash/${item.id}`, "DELETE"); setNotice("Đã xóa hẳn tài liệu."); await load(); }); };
+  const openEdit = (item: Item) => {
+    setAdding(null);
+    setEditing({ id: item.id, title: item.title, note: item.note ?? "", category: item.category ?? "", expiresOn: viDay(item.expiresOn), remindDays: String(item.remindDays ?? 30) });
+    setTimeout(() => editPanel.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
+  const editingItem = editing ? items?.find(i => i.id === editing.id) ?? null : null;
   const saveEdit = () => editing && void run(editing.id, async () => {
     const expiresOn = isoDay(editing.expiresOn);
     if (editing.expiresOn && !expiresOn) throw new Error("Ngày hết hạn theo dạng dd/mm/yyyy.");
@@ -215,7 +237,7 @@ export default function CustomerVaultPage() {
       </div>
       {trash && <p className={s.muted} style={{ fontSize: 12, marginBottom: 10 }}>Tài liệu trong thùng rác vẫn tính vào dung lượng và tự xóa hẳn sau {TRASH_DAYS} ngày.</p>}
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end", marginBottom: 12 }}>
-        <label className={s.label} style={{ flex: "2 1 240px" }}><span style={{ display: "flex", gap: 6, alignItems: "center" }}><Search size={14}/>Tìm theo tên, ghi chú, số HĐ, MST, SĐT, email</span>
+        <label className={s.label} style={{ flex: "2 1 240px" }}><span style={{ display: "flex", gap: 6, alignItems: "center" }}><Search size={14}/>Tìm theo tên, thư mục, ghi chú, số HĐ, MST, SĐT, email</span>
           <input className={ui.field} value={query} onChange={e => setQuery(e.target.value)}/></label>
         <label className={s.label} style={{ flex: "1 1 170px" }}>Thư mục<select className={ui.field} value={folder} onChange={e => setFolder(e.target.value)}><option value="">Tất cả</option>{folderOptions}</select></label>
         <label className={s.label} style={{ flex: "0 1 130px" }}>Từ ngày<input className={ui.field} inputMode="numeric" placeholder="dd/mm/yyyy" value={from} onChange={e => setFrom(maskDay(e.target.value))}/></label>
@@ -226,27 +248,24 @@ export default function CustomerVaultPage() {
       </div>
       {!items ? <p className={s.muted}>Đang tải…</p> : items.length === 0 ? <div className={s.empty}>{trash ? <Trash2 size={40} strokeWidth={1.3}/> : <Archive size={40} strokeWidth={1.3}/>}
           <strong>{query || from || to || folder ? "Không tìm thấy tài liệu phù hợp" : trash ? "Thùng rác trống" : "Kho của bạn chưa có tài liệu"}</strong></div>
-        : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Tài liệu</th><th>Thông tin để tìm</th><th>{trash ? "Ngày xóa" : "Ngày lưu"}</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
+        : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Tài liệu</th><th>Thông tin chính</th><th>{trash ? "Ngày xóa" : "Ngày lưu"}</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
           <tbody>{items.map(item => <tr key={item.id}>
-            <td style={{ maxWidth: 320 }}><strong style={{ overflowWrap: "anywhere" }}>{item.title}</strong>
-              <div className={s.muted} style={{ fontSize: 11 }}>{item.category ? `${item.category} · ` : ""}{item.fileName} · {mb(item.sizeBytes)}{item.pageCount ? ` · ${item.pageCount} trang` : ""}</div>
-              {item.note && <div className={s.muted} style={{ fontSize: 12, overflowWrap: "anywhere" }}>{item.note}</div>}
+            <td style={{ maxWidth: 320 }}><strong style={{ overflowWrap: "anywhere" }}><Highlight text={item.title} query={query}/></strong>
+              <div className={s.muted} style={{ fontSize: 11 }}>{item.category ? <><Highlight text={item.category} query={query}/> · </> : ""}<Highlight text={item.fileName} query={query}/> · {mb(item.sizeBytes)}{item.pageCount ? ` · ${item.pageCount} trang` : ""}</div>
+              {item.note && <div className={s.muted} style={{ fontSize: 12, overflowWrap: "anywhere" }}><Highlight text={item.note} query={query}/></div>}
               <Expiry item={item}/>
               {item.sameContractCode.length > 0 && <div style={{ fontSize: 11, color: "#805400" }}>Có thể trùng: cùng số hợp đồng với {item.sameContractCode.length} tài liệu khác</div>}</td>
             <td style={{ fontSize: 12, maxWidth: 300 }}>
               {item.ocrStatus !== "SUCCESS" && <div style={{ color: item.ocrStatus === "INTERRUPTED" || item.ocrStatus === "FAILED" ? "#805400" : undefined }} className={item.ocrStatus === "INTERRUPTED" || item.ocrStatus === "FAILED" ? undefined : s.muted}>{OCR[item.ocrStatus] ?? item.ocrStatus}</div>}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 }}>{item.keywords.map(k =>
-                <span key={k.id} title={k.manual ? "Bạn tự thêm" : "Đọc từ tài liệu"} style={{ border: "1px solid var(--border)", borderRadius: 10, padding: "1px 6px", background: k.manual ? "var(--muted)" : undefined, display: "inline-flex", gap: 3, alignItems: "center" }}>
-                  <span className={s.muted}>{KEYWORD[k.type] ?? k.type}:</span>{k.value}
-                  {!trash && <button type="button" aria-label={`Bỏ ${k.value}`} disabled={busy !== null} onClick={() => dropKeyword(item, k)} style={{ border: 0, background: "none", cursor: "pointer", padding: 0, lineHeight: 0 }}><X size={11}/></button>}</span>)}
+              {(() => { const { shown, hidden } = shownKeywords(item, query); return <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
+                {shown.map(k => <span key={k.id} title={k.manual ? "Bạn tự thêm" : "Đọc từ tài liệu"} style={chip(k.manual)}>
+                  <span className={s.muted}>{KEYWORD[k.type] ?? k.type}:</span><Highlight text={k.value} query={query}/></span>)}
                 {item.ocrStatus === "SUCCESS" && !item.keywords.length && <span className={s.muted}>Không đọc được từ khóa</span>}
-                {!trash && adding?.id !== item.id && <button type="button" className={s.iconButton} title="Thêm số HĐ, MST, SĐT…" aria-label="Thêm thông tin" disabled={busy !== null} onClick={() => setAdding({ id: item.id, type: "ContractCode", value: "" })}><Plus size={13}/></button>}
-              </div>
-              {adding?.id === item.id && <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
-                <select className={ui.field} style={{ width: 90 }} value={adding.type} onChange={e => setAdding({ ...adding, type: e.target.value })}>{Object.entries(KEYWORD).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-                <input className={ui.field} style={{ flex: "1 1 120px" }} autoFocus maxLength={120} value={adding.value} onChange={e => setAdding({ ...adding, value: e.target.value })} onKeyDown={e => { if (e.key === "Enter") addKeyword(); }} placeholder="VD: HDTVP-2026-0099"/>
-                <button type="button" className={ui.primaryButton} disabled={busy !== null || !adding.value.trim()} onClick={addKeyword}>Thêm</button>
-                <button type="button" className={s.iconButton} aria-label="Hủy" onClick={() => setAdding(null)}><X size={14}/></button></div>}</td>
+                {!trash && (hidden > 0 || !item.keywords.length) && <button type="button" className={s.muted} disabled={busy !== null} onClick={() => openEdit(item)}
+                  style={{ border: 0, background: "none", cursor: "pointer", padding: "1px 2px", fontSize: 12, textDecoration: "underline" }}>
+                  {hidden > 0 ? `+${hidden} thông tin` : "Thêm thông tin"}</button>}
+                {trash && hidden > 0 && <span className={s.muted}>+{hidden}</span>}
+              </div>; })()}</td>
             <td className={s.muted}>{day(item.trashedAt ?? item.uploadedAt)}{item.trashedAt && <div style={{ fontSize: 11 }}>xóa hẳn sau {Math.max(0, TRASH_DAYS - Math.floor((loadedAt - new Date(item.trashedAt).getTime()) / 86_400_000))} ngày</div>}</td>
             <td><div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
               {trash ? <>
@@ -256,14 +275,14 @@ export default function CustomerVaultPage() {
                 <button type="button" className={ui.secondaryButton} disabled={busy !== null} onClick={() => view(item)}>{busy === item.id ? "…" : "Xem"}</button>
                 <button type="button" className={s.iconButton} title="Gửi email" aria-label="Gửi email" disabled={busy !== null} onClick={() => setMailing(item)}><Mail size={16}/></button>
                 <button type="button" className={s.iconButton} title="Sửa thông tin, hạn, thư mục" aria-label="Sửa" disabled={busy !== null}
-                  onClick={() => setEditing({ id: item.id, title: item.title, note: item.note ?? "", category: item.category ?? "", expiresOn: viDay(item.expiresOn), remindDays: String(item.remindDays ?? 30) })}><Pencil size={16}/></button>
+                  onClick={() => openEdit(item)}><Pencil size={16}/></button>
                 {item.ocrStatus !== "QUEUED" && item.ocrStatus !== "PROCESSING" && <button type="button" className={s.iconButton} title="Đọc lại nội dung" aria-label="Đọc lại" disabled={busy !== null} onClick={() => reread(item)}><RefreshCw size={16}/></button>}
                 <button type="button" className={s.iconButton} title="Chuyển vào thùng rác" aria-label="Xóa" disabled={busy !== null} onClick={() => remove(item)}><Trash2 size={16}/></button>
               </>}
             </div></td></tr>)}</tbody></table></div>}
     </section>
 
-    {editing && <section className={ui.card} style={{ marginTop: 16, display: "grid", gap: 10 }} aria-label="Sửa tài liệu">
+    {editing && <section ref={editPanel} className={ui.card} style={{ marginTop: 16, display: "grid", gap: 10, scrollMarginTop: 16 }} aria-label="Sửa tài liệu">
       <h2 style={{ fontSize: 16 }}>Sửa thông tin tài liệu</h2>
       <label className={s.label}>Tên tài liệu<input className={ui.field} maxLength={300} value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })}/></label>
       <label className={s.label}>Thư mục<input className={ui.field} list="vault-folders" maxLength={100} value={editing.category} onChange={e => setEditing({ ...editing, category: e.target.value })}/></label>
@@ -273,6 +292,22 @@ export default function CustomerVaultPage() {
         <label className={s.label} style={{ flex: "0 1 220px" }}>Email nhắc trước (ngày)<input className={ui.field} type="number" min={1} max={365} disabled={!isoDay(editing.expiresOn)} value={editing.remindDays} onChange={e => setEditing({ ...editing, remindDays: e.target.value })}/></label>
       </div>
       <p className={s.muted} style={{ fontSize: 12 }}>Có ngày hết hạn: hệ thống gửi email nhắc tới bạn theo số ngày trên, rồi 7 ngày trước và đúng ngày hết hạn.</p>
+      {editingItem && <div className={s.label}>Thông tin để tìm (số HĐ, MST, SĐT, tên, email)
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4, fontSize: 12, fontWeight: 400 }}>
+          {editingItem.keywords.map(k => <span key={k.id} title={k.manual ? "Bạn tự thêm" : "Đọc từ tài liệu"} style={chip(k.manual)}>
+            <span className={s.muted}>{KEYWORD[k.type] ?? k.type}:</span>{k.value}
+            <button type="button" aria-label={`Bỏ ${k.value}`} disabled={busy !== null} onClick={() => dropKeyword(editingItem, k)} style={{ border: 0, background: "none", cursor: "pointer", padding: 0, lineHeight: 0 }}><X size={11}/></button></span>)}
+          {!editingItem.keywords.length && <span className={s.muted}>Chưa có thông tin nào.</span>}
+        </div>
+        <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap", fontWeight: 400 }}>
+          <select className={ui.field} style={{ width: 90 }} aria-label="Loại thông tin" value={adding?.id === editingItem.id ? adding.type : "ContractCode"}
+            onChange={e => setAdding({ id: editingItem.id, type: e.target.value, value: adding?.id === editingItem.id ? adding.value : "" })}>{Object.entries(KEYWORD).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+          <input className={ui.field} style={{ flex: "1 1 160px" }} maxLength={120} aria-label="Giá trị" placeholder="VD: HDTVP-2026-0099"
+            value={adding?.id === editingItem.id ? adding.value : ""}
+            onChange={e => setAdding({ id: editingItem.id, type: adding?.id === editingItem.id ? adding.type : "ContractCode", value: e.target.value })}
+            onKeyDown={e => { if (e.key === "Enter") addKeyword(); }}/>
+          <button type="button" className={ui.secondaryButton} disabled={busy !== null || adding?.id !== editingItem.id || !adding.value.trim()} onClick={addKeyword}><Plus size={14}/>Thêm</button>
+        </div></div>}
       <div style={{ display: "flex", gap: 8 }}><button type="button" className={ui.primaryButton} disabled={busy !== null} onClick={saveEdit}>Lưu</button><button type="button" className={ui.secondaryButton} onClick={() => setEditing(null)}>Hủy</button></div>
     </section>}
 

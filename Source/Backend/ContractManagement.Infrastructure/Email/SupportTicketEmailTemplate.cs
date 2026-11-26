@@ -68,62 +68,6 @@ public static class SupportTicketEmailTemplate
         return new EmailMessage(recipient, subject, textBody, htmlBody, LogoContentId);
     }
 
-    public static EmailMessage BuildCustomerReplyEmail(
-        string recipient,
-        SupportTicketDto ticket,
-        SupportTicketMessageDto message,
-        string systemAdminTicketUrl)
-    {
-        var priorityLabel = GetPriorityLabel(ticket.TicketPriority);
-        var subject = $"[{ApplicationBranding.Name} Support] Phản hồi mới từ khách hàng #{ticket.TicketCode} - {ticket.TenantName}";
-        var (vnTime, utcTime) = FormatTimestamps(message.CreatedAt);
-
-        var textBody = $"""
-            THÔNG BÁO PHẢN HỒI MỚI TỪ KHÁCH HÀNG
-            Hệ thống Quản lý & Số hóa Hợp đồng Điện tử {ApplicationBranding.Name}
-
-            Xin chào Người xử lý hỗ trợ,
-
-            Khách hàng vừa gửi thêm phản hồi mới trong Ticket hỗ trợ #{ticket.TicketCode}:
-
-            - Mã Ticket: {ticket.TicketCode}
-            - Tiêu đề Ticket: {ticket.TicketSubject}
-            - Tổ chức / Khách hàng: {ticket.TenantName} ({ticket.TenantCode})
-            - Người phản hồi: {message.SenderName}
-            - Phòng ban tiếp nhận: {ticket.Department}
-            - Mức độ ưu tiên: {priorityLabel}
-            - Thời gian gửi: {vnTime} GMT+7 ({utcTime} UTC)
-
-            Nội dung phản hồi mới:
-            {message.TicketMessageContent}
-
-            Vui lòng truy cập trang Quản trị Hỗ trợ & Ticket để xem và phản hồi:
-            {systemAdminTicketUrl}
-
-            Trân trọng,
-            Hệ thống Thông báo Tự động {ApplicationBranding.Name}
-            """;
-
-        var htmlBody = BuildHtmlLayout(
-            subject: subject,
-            bannerTitle: "PHẢN HỒI MỚI TỪ KHÁCH HÀNG",
-            bannerSubtitle: $"Mã Ticket: #{ticket.TicketCode} • {ticket.TenantName}",
-            greetingHtml: $"Xin chào <strong>Người xử lý hỗ trợ ({ApplicationBranding.HtmlName} Admin)</strong>,",
-            introHtml: "Khách hàng vừa gửi phản hồi mới cho yêu cầu hỗ trợ bạn đang phụ trách:",
-            ticket: ticket,
-            senderDisplayName: message.SenderName,
-            messageTitle: "Nội dung phản hồi mới từ khách hàng",
-            messageContent: message.TicketMessageContent,
-            attachmentSummary: message.TicketMessageAttachmentName,
-            vnTime: vnTime,
-            utcTime: utcTime,
-            ctaText: "Mở Bàn Làm Việc Xử Lý Ticket",
-            ctaUrl: systemAdminTicketUrl,
-            footerNote: $"Email này được gửi tự động từ hệ thống <strong>{ApplicationBranding.HtmlName}</strong> khi khách hàng gửi phản hồi hỗ trợ.");
-
-        return new EmailMessage(recipient, subject, textBody, htmlBody, LogoContentId);
-    }
-
     public static EmailMessage BuildStaffAssignmentEmail(
         string recipient,
         SupportTicketDto ticket,
@@ -191,7 +135,6 @@ public static class SupportTicketEmailTemplate
         string customerPortalTicketUrl,
         bool isClosed)
     {
-        var priorityLabel = GetPriorityLabel(ticket.TicketPriority);
         var subject = isClosed
             ? $"[{ApplicationBranding.Name} Support] Yêu cầu hỗ trợ {ticket.TicketCode} đã có kết quả xử lý"
             : $"[{ApplicationBranding.Name} Support] Cập nhật mới cho yêu cầu hỗ trợ {ticket.TicketCode}";

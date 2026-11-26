@@ -716,8 +716,6 @@ export function ContractTermComments({
                       const isResolved =
                         comment.state ===
                         ContractNegotiationCommentState.Resolved;
-                      const isProcessing =
-                        processingCommentId === comment.commentId;
 
                       return (
                         <div

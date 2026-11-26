@@ -12,7 +12,6 @@ import {
   Package,
   Save,
   ShieldCheck,
-  Sparkles,
   WalletCards,
   Loader2,
   ChevronLeft,
@@ -44,7 +43,6 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { DateFilter } from "@/components/ui/custom/date-filter";
 import { DateRangeFilter } from "@/components/ui/custom/date-range-filter";
 import { DecimalInput } from "@/components/ui/custom/decimal-input";
 import { IntegerInput } from "@/components/ui/custom/integer-input";
@@ -104,7 +102,6 @@ import {
   PaymentDueAnchor,
   TemplateDocumentType,
   type AvailableContractTemplateVersionResponse,
-  type ContractTemplatePaymentMilestoneResponse,
   type ContractTemplateAppendixResponse,
 } from "@/services/contract-template-api";
 import { useAuthStore } from "@/hooks/use-auth-store";
@@ -246,13 +243,6 @@ const getPaymentAnchorLabel = (anchor: PaymentDueAnchor) => {
     default:
       return "mốc chưa xác định";
   }
-};
-
-const parseDateString = (str?: string) => {
-  if (!str) return undefined;
-  const [y, m, d] = str.slice(0, 10).split("-").map(Number);
-  if (!y || !m || !d) return undefined;
-  return new Date(y, m - 1, d);
 };
 
 function PaymentPlanReview({ milestones, currencyCode }: {

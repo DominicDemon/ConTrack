@@ -7,7 +7,6 @@ import {
   CheckCircle2,
   ChevronRight,
   CreditCard,
-  FileCheck,
   FileEdit,
   FilePlus,
   History,

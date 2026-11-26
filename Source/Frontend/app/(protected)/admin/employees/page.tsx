@@ -42,7 +42,6 @@ import {
   SummaryCardItem,
   SummaryCards,
 } from "@/components/ui/custom/summary-cards";
-import { PageHeaderSkeleton } from "@/components/ui/custom/table-skeleton";
 import { EmployeeFormModal } from "./employee-form-modal";
 import { getApiErrorMessage, isStaleRowVersion } from "@/lib/api-error";
 import { PermissionGuard } from "@/components/auth/permission-guard";
@@ -97,7 +96,7 @@ function EmployeeListPageContent() {
     from: undefined,
     to: undefined,
   });
-  const [loadingId, setLoadingId] = useState<number | null>(null);
+  const [loadingId] = useState<number | null>(null);
   const [toggleStatusId, setToggleStatusId] = useState<number | null>(null);
   const [isToggling, setIsToggling] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -130,7 +129,7 @@ function EmployeeListPageContent() {
 
       setEmployees(res.items || []);
       setTotalCount(res.totalCount || 0);
-    } catch (error) {
+    } catch {
       toast.error("Lỗi khi tải danh sách nhân viên");
     } finally {
       setIsLoading(false);

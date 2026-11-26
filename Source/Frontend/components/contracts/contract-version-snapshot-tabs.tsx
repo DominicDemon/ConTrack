@@ -11,7 +11,6 @@ import {
   ScrollText,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TermsListEditor } from "@/components/contract-documents/terms-list-editor";
 import { AppendixCard } from "@/components/contract-documents/appendix-card";

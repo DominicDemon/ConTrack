@@ -1,12 +1,10 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  CheckCircle2,
   KeyRound,
   Lock,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

@@ -29,7 +29,6 @@ const withTemplateDefaults = (template: TemplateDefinition | null | undefined) =
   ? Object.fromEntries(Object.entries(DEFAULT_PROVIDER_FIELDS).filter(([key]) => completePartyFields(template).fields.some(f => f.key === key)))
   : DEFAULT_PROVIDER_FIELDS;
 const blank = (): DraftContent => ({ formatVersion: 2, partyType: "", customerBusinessId: null, paymentMode: "PERCENT", milestones: [], templateId: "", customerId: "", name: "", fields: { ...DEFAULT_PROVIDER_FIELDS }, items: [], terms: [], vatPercent: 0, effectiveDate: null, expireDate: null, templateSnapshot: null, totals: { subtotal: 0, discount: 0, vat: 0, total: 0 }, missingFields: [] });
-const newCustomer = (): CustomerInput => ({ name: "", phone: "", email: "", company: "", taxCode: "", address: "" });
 const taxKey = (value: string) => value.replace(/[\s-]/g, "").toUpperCase();
 /** Same list as InternalDraftPolicy.EnglishFieldKeys: what reads differently in English; numbers and codes are shared. */
 const ENGLISH_FIELDS = ["CUSTOMER_COMPANY", "CUSTOMER_ADDRESS", "CUSTOMER_CONTACT_TITLE", "CUSTOMER_BANK_NAME", "PROVIDER_LEGAL_NAME", "PROVIDER_ADDRESS", "PROVIDER_REPRESENTATIVE_TITLE", "PROVIDER_BANK_NAME"];
@@ -150,7 +149,6 @@ export default function DraftEditor({ id }: { id?: string }) {
   }, []);
   const setField = (key: string, value: string) => change(c => ({ ...c, fields: { ...c.fields, [key]: value } }));
   const bilingual = content.languageMode === "VI_EN";
-  const setTerm = (key: string, patch: Partial<DraftContent["terms"][number]>) => change(c => ({ ...c, terms: c.terms.map(t => t.key === key ? { ...t, ...patch } : t) }));
   // A party field, plus its English wording for a bilingual contract (names, addresses, positions, banks).
   const partyField = (f: TemplateDefinition["fields"][number]) => <Fragment key={f.key}>
     <Field label={f.label + (f.required && !content.fields[f.key]?.trim() ? " · cần hoàn thiện" : "")}><input maxLength={4000} className={ui.field} value={content.fields[f.key] ?? ""} onChange={e => setField(f.key, e.target.value)}/></Field>

@@ -136,7 +136,7 @@ function InteractionFormModal({
       }
       onSuccess();
       onClose();
-    } catch (error) {
+    } catch {
       toast.error("Có lỗi xảy ra khi lưu tương tác");
     } finally {
       setIsSaving(false);
@@ -335,7 +335,7 @@ function CustomerDetailPageContent() {
         dateModified: res.dateModified,
         totalContracts: res.totalContracts,
       });
-    } catch (error) {
+    } catch {
       toast.error("Không tìm thấy dữ liệu khách hàng");
       router.push("/customers");
     } finally {
@@ -348,7 +348,7 @@ function CustomerDetailPageContent() {
     try {
       const res = await customerInteractionApi.getByCustomer(customerId);
       setInteractions(res);
-    } catch (error) {
+    } catch {
       toast.error("Không thể tải lịch sử tương tác");
     } finally {
       setIsLoadingInteractions(false);
@@ -368,7 +368,7 @@ function CustomerDetailPageContent() {
           ? "Đã mở trạng thái hoạt động cho khách hàng"
           : "Đã tạm khóa khách hàng này",
       );
-    } catch (error) {
+    } catch {
       toast.error("Không thể cập nhật trạng thái khách hàng");
     } finally {
       setIsTogglingStatus(false);
@@ -423,7 +423,7 @@ function CustomerDetailPageContent() {
       toast.success("Đã cập nhật thông tin khách hàng");
       setIsEditingProfile(false);
       fetchCustomer();
-    } catch (error) {
+    } catch {
       toast.error("Không thể cập nhật thông tin");
     } finally {
       setIsSavingCustomer(false);

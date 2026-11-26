@@ -15,7 +15,6 @@ import {
   RefreshCw,
   ShieldAlert,
   Trash2,
-  X,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 

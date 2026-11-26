@@ -28,8 +28,6 @@ import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error";
 import {
   productApi,
   ProductResponse,
-  CreateProductRequest,
-  UpdateProductRequest,
 } from "@/services/catalog/products-api";
 import { categoryApi, CategoryResponse } from "@/services/catalog/category-api";
 import { CatalogUnitFields } from "./catalog-unit-fields";

@@ -183,7 +183,6 @@ public sealed class SupportTicketService : ISupportTicketService
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IEmailTransport _emailTransport;
-    private readonly IOptions<SmtpEmailOptions> _smtpOptions;
     private readonly IConfiguration _configuration;
     private readonly ILogger<SupportTicketService> _logger;
     private readonly string _storeFilePath;
@@ -198,7 +197,6 @@ public sealed class SupportTicketService : ISupportTicketService
     {
         _scopeFactory = scopeFactory;
         _emailTransport = emailTransport;
-        _smtpOptions = smtpOptions;
         _configuration = configuration;
         _logger = logger;
 
@@ -3219,32 +3217,6 @@ public sealed class SupportTicketService : ISupportTicketService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Không thể gửi email thông báo kết quả ticket {Code} cho khách hàng.", ticket.TicketCode);
-        }
-    }
-
-    private async Task SendCustomerReplyEmailsSafeAsync(SupportTicketDto ticket, SupportTicketMessageDto message)
-    {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetService<MasterDbContext>();
-            if (db == null) return;
-
-            // Chỉ gửi email cho nhân viên đang phụ trách ticket hoặc Trưởng phòng của phòng ban đó (không gửi cho sysadmin)
-            var targetEmpId = ticket.AssignedEmployeeId ?? ticket.DepartmentHeadEmployeeId;
-            if (!targetEmpId.HasValue) return;
-
-            var emp = await db.Employees.AsNoTracking().FirstOrDefaultAsync(e => e.EmployeeId == targetEmpId.Value);
-            if (emp?.EmployeeEmail == null || !SmtpEmailOptions.IsEmailAddress(emp.EmployeeEmail)) return;
-
-            var systemAdminUrl = BuildSystemAdminTicketUrl(ticket.TicketSupportId);
-            var emailMsg = SupportTicketEmailTemplate.BuildCustomerReplyEmail(emp.EmployeeEmail, ticket, message, systemAdminUrl);
-            await _emailTransport.SendAsync(emailMsg, CancellationToken.None);
-            _logger.LogInformation("Đã gửi email phản hồi từ khách hàng cho ticket {Code} tới {Recipient}.", ticket.TicketCode, emp.EmployeeEmail);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Lỗi khi gửi email phản hồi ticket {Code}.", ticket.TicketCode);
         }
     }
 

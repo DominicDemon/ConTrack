@@ -3,10 +3,8 @@
 import { FormEvent, useMemo, useState } from "react";
 import { getAccountPasswordRules, isValidAccountPassword, PASSWORD_POLICY_MESSAGE } from "@/lib/password-policy";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
   AlertCircle,
-  ArrowLeft,
   Check,
   CheckCircle2,
   Eye,
@@ -29,7 +27,6 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import { getApiErrorMessage } from "@/lib/api-error";
 import { useAuthStore } from "@/hooks/use-auth-store";
 import { profileApi } from "@/services/profile-api";
@@ -39,7 +36,6 @@ interface ChangePasswordFormProps {
 }
 
 export function ChangePasswordForm({
-  mustChangePassword = false,
 }: ChangePasswordFormProps) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");

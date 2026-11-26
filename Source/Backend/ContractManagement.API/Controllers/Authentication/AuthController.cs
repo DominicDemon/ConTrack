@@ -498,15 +498,6 @@ namespace ContractManagement.Domains.Controllers.Authentication
             });
         }
 
-        private static readonly string DummyPasswordHash =
-            new PasswordHasher<TblEmployee>().HashPassword(new TblEmployee(), Guid.NewGuid().ToString("N"));
-
-        private PasswordVerificationResult VerifyAgainstDummyHash(string password)
-        {
-            _passwordHasher.VerifyHashedPassword(new TblEmployee(), DummyPasswordHash, password);
-            return PasswordVerificationResult.Failed;
-        }
-
         private async Task WriteFailedLoginAuditAsync(int tenantId, string? accountName, string failureCode)
         {
             var account = (accountName ?? string.Empty).Trim();

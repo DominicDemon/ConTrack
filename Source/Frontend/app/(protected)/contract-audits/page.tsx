@@ -1,6 +1,5 @@
 "use client";
 
-import { ScrollText } from "lucide-react";
 
 import { ContractAuditLog } from "@/components/contracts/contract-audit-log";
 import { Header } from "@/components/ui/custom/header";

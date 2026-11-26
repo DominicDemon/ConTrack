@@ -9,7 +9,6 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
-  Building,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -115,7 +114,7 @@ export default function LoginPage() {
             ? "/change-password?required=1"
             : pricingReturnPath.current || profile.defaultPage || "/contracts",
         );
-      } catch (error) {
+      } catch {
         setIsLoading(false);
       }
     };

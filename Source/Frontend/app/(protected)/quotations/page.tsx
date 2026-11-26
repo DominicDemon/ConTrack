@@ -34,7 +34,6 @@ import {
   SummaryCardItem,
   SummaryCards,
 } from "@/components/ui/custom/summary-cards";
-import { PageHeaderSkeleton } from "@/components/ui/custom/table-skeleton";
 
 export default function QuotationListPage() {
   const router = useRouter();
@@ -58,7 +57,7 @@ export default function QuotationListPage() {
       try {
         const data = await quotationApi.getAll();
         setQuotations(Array.isArray(data) ? data : (data as any)?.data || []);
-      } catch (error) {
+      } catch {
         toast.error("Lỗi khi tải danh sách báo giá");
       } finally {
         setIsLoading(false);
@@ -90,7 +89,7 @@ export default function QuotationListPage() {
       toast.success("Xóa báo giá thành công");
       setQuotations(quotations.filter((q) => q.quotationId !== deleteId));
       setDeleteId(null);
-    } catch (error) {
+    } catch {
       toast.error("Không thể xóa báo giá này");
     } finally {
       setIsDeleting(false);
@@ -208,7 +207,6 @@ export default function QuotationListPage() {
         accessorKey: "quatationStatus",
         header: () => <div className="text-center">Trạng thái</div>,
         cell: ({ row }) => {
-          const status = row.original.quatationStatus;
           return (
             <div className="text-center">
               <StatusBadge status={row.original.quatationStatus} />

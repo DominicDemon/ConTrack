@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Loader2, Plus, Save, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Loader2, Plus, Trash2, X } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -87,8 +87,6 @@ export function ContractTemplatePaymentMilestonesEditor({
   onRefresh,
   drafts,
   onDraftChange,
-  onSaveAll,
-  savingAll,
   hasUnsavedChanges,
   onAddingChange,
 }: Props) {

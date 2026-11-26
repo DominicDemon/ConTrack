@@ -13,7 +13,6 @@ import {
   Loader2,
   MessageSquareText,
   Package,
-  RefreshCw,
   ScrollText,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";

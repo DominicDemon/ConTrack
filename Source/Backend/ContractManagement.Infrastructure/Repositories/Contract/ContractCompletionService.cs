@@ -871,24 +871,6 @@ public sealed class ContractCompletionService : IContractCompletionService
         next.UpdatedDate = now;
     }
 
-    private async Task ActivateMilestonesAsync(int versionId, PaymentDueAnchor anchor,
-        DateTime anchorDate, int employeeId, CancellationToken ct)
-    {
-        var rows = await _db.TblContractPaymentMilestones.Where(x =>
-            x.VersionId == versionId && x.DueAnchor == (byte)anchor
-            && x.AnchorDate == null).ToListAsync(ct);
-        var now = DateTime.UtcNow;
-        foreach (var row in rows)
-        {
-            row.AnchorDate = anchorDate;
-            row.DueDate = _paymentDueDates.Calculate(anchorDate, row.DueOffsetDays,
-                (PaymentDayCountMode)row.DayCountMode);
-            row.UpdatedEmployeeId = employeeId;
-            row.UpdatedDate = now;
-        }
-        if (rows.Count > 0) await _db.SaveChangesAsync(ct);
-    }
-
     private static IReadOnlyCollection<ContractAuditValueInput> PaymentAudit(TblContractPaymentLedger p, decimal paid, decimal remaining) => ContractAuditValues.Create(
         ("ContractPaymentId", p.ContractPaymentId), ("CurrentVersionId", p.VersionId),
         ("PaymentMilestoneId", p.PaymentMilestoneId), ("PaymentDate", p.PaymentDate), ("Amount", p.Amount),

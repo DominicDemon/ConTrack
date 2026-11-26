@@ -26,9 +26,7 @@ import {
 } from "@/components/ui/custom/date-range-filter";
 import { Header } from "@/components/ui/custom/header";
 import { useAuthStore } from "@/hooks/use-auth-store";
-import { usePermission } from "@/hooks/use-permission";
 import { getApiErrorMessage } from "@/lib/api-error";
-import { RBAC_PERMISSIONS } from "@/lib/rbac";
 import { dashboardApi, type DashboardResponse } from "@/services/dashboard-api";
 import { cn } from "@/lib/utils";
 
@@ -64,8 +62,6 @@ type PresetKey = "7d" | "30d" | "90d" | "year";
 
 export default function DashboardPage() {
   const user = useAuthStore((state) => state.user);
-  const { can } = usePermission();
-  const canDecideApprovals = can(RBAC_PERMISSIONS.contractApprovalDecide);
   const [dateRange, setDateRange] = useState<DateRange>(initialRange);
   const [activePreset, setActivePreset] = useState<PresetKey | null>("30d");
   const [data, setData] = useState<DashboardResponse | null>(null);

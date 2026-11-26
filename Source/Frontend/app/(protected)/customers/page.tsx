@@ -13,11 +13,9 @@ import {
   Plus,
   Users,
   Building2,
-  Mail,
   Phone,
   MapPin,
   FileText,
-  Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -70,7 +68,7 @@ function CustomerBulkActions({
         `Đã cập nhật trạng thái cho ${selectedRows.length} khách hàng`,
       );
       resetSelection();
-    } catch (error) {
+    } catch {
       toast.error("Lỗi khi cập nhật trạng thái hàng loạt");
     } finally {
       setIsLoading(false);
@@ -114,12 +112,11 @@ function CustomerListPageContent() {
     from: undefined,
     to: undefined,
   });
-  const [loadingId, setLoadingId] = useState<number | null>(null);
+  const [loadingId] = useState<number | null>(null);
   const [toggleStatusId, setToggleStatusId] = useState<number | null>(null);
   const [isToggling, setIsToggling] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<CustomerResponse | null>(null);
-  const [viewingItem, setViewingItem] = useState<CustomerResponse | null>(null);
 
   const router = useRouter();
 
@@ -148,7 +145,7 @@ function CustomerListPageContent() {
 
       setCustomers(res.items || []);
       setTotalCount(res.totalCount || 0);
-    } catch (error) {
+    } catch {
       toast.error("Lỗi khi tải danh sách khách hàng");
     } finally {
       setIsLoading(false);
@@ -184,7 +181,7 @@ function CustomerListPageContent() {
       );
       setToggleStatusId(null);
       fetchCustomers();
-    } catch (error) {
+    } catch {
       toast.error("Không thể cập nhật trạng thái");
     } finally {
       setIsToggling(false);
@@ -326,8 +323,6 @@ function CustomerListPageContent() {
         accessorKey: "status",
         header: () => <div className="text-center">Trạng thái</div>,
         cell: ({ row }) => {
-          const statusVal = row.original.status;
-          const isActive = row.original.status === CustomerStatus.Active;
           const statusStr = getCustomerStatusLabel(row.original.status);
           return (
             <div className="flex justify-center min-w-[130px]">

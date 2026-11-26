@@ -51,7 +51,6 @@ import {
   SummaryCardItem,
   SummaryCards,
 } from "@/components/ui/custom/summary-cards";
-import { PageHeaderSkeleton } from "@/components/ui/custom/table-skeleton";
 import { Badge } from "@/components/ui/badge";
 
 function DepartmentListPageContent() {
@@ -80,7 +79,7 @@ function DepartmentListPageContent() {
     try {
       const data = await departmentApi.getAll();
       setDepartments(Array.isArray(data) ? data : (data as any)?.data || []);
-    } catch (error) {
+    } catch {
       toast.error("Lỗi khi tải danh sách phòng ban");
     } finally {
       setIsLoading(false);
@@ -154,7 +153,7 @@ function DepartmentListPageContent() {
         ),
       );
       setToggleStatusId(null);
-    } catch (error) {
+    } catch {
       toast.error("Không thể cập nhật trạng thái");
     } finally {
       setIsToggling(false);

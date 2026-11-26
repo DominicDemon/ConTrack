@@ -12,7 +12,6 @@ import { DocumentRecordPagination } from "@/components/contract-documents/docume
 import { useDocumentRecordPagination } from "@/hooks/use-document-record-pagination";
 import {
   BookmarkCheck,
-  Building2,
   CheckCircle2,
   ChevronDown,
   Download,

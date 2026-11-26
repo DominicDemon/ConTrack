@@ -249,7 +249,7 @@ export default function PublicContractPage() {
       setPublicChallengeId(null);
       toast.success("Xác thực thành công!");
       await initializeAccess();
-    } catch (error: any) {
+    } catch {
       toast.error("Không thể xác thực mã. Hãy yêu cầu mã mới.");
     } finally {
       setIsVerifyingOtp(false);

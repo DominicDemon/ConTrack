@@ -2,13 +2,9 @@
 
 import Link from "next/link";
 import {
-  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
-  Clock,
   HelpCircle,
-  KeyRound,
-  Lock,
   Shield,
   ShieldAlert,
   User,

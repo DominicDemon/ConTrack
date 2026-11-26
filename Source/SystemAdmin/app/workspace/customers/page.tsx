@@ -36,10 +36,6 @@ export default function CustomersPage() {
     setActing(true); setError(""); setNotice("");
     void internalApi<CustomerRow>(`/crm/customers/${row.id}/status`, "PUT", { active: !row.active })
       .then(r => { replace(r); setNotice(r.active ? `Đã mở khóa ${r.name}.` : `Đã khóa ${r.name}.`); }).catch(e => setError(e.message)).finally(() => setActing(false)); };
-  const invite = (row: CustomerRow) => {
-    setActing(true); setError(""); setNotice("");
-    void internalApi<{ sentTo: string }>(`/crm/customers/${row.id}/invite`, "POST")
-      .then(r => setNotice(`Đã gửi email mời tới ${r.sentTo}. Khách bấm "Đặt mật khẩu" trong thư để tạo mật khẩu.`)).catch(e => setError(e.message)).finally(() => setActing(false)); };
   const transfer = (row: CustomerRow, ownerId: string) => {
     const target = owners.find(o => o.id === ownerId)?.name ?? "chưa giao ai";
     if (!confirm(`Chuyển khách hàng ${row.name} sang ${target}? Người phụ trách cũ sẽ không còn thấy khách này.`)) return;

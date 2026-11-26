@@ -5,15 +5,11 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  FileSignature,
   Loader2,
   Package,
   Plus,
-  Search,
   Trash2,
-  Truck,
   Users,
-  WalletCards,
 } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 
@@ -21,7 +17,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -51,14 +46,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Clock } from "lucide-react";
 
 import {
   ContractDetailResponse,
   ContractLanguageMode,
   ContractItemType,
   ContractItemDiscountMode,
-  getContractTypeLabel,
   getContractDirectionLabel,
   getContractCounterpartyLabel,
 } from "@/services/contract-api";
@@ -84,7 +77,6 @@ export function ContractOverview({
   contract,
   setContract,
   canEdit,
-  onOpenTransferModal,
 }: {
   contract: ContractDetailResponse;
   setContract: React.Dispatch<

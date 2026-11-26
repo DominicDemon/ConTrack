@@ -59,20 +59,6 @@ import {
   TICKET_PRIORITY_LABELS,
 } from "@/services/internal-ticket-api";
 
-const ALLOWED_IMAGE_MIME_TYPES = new Set([
-  "image/png",
-  "image/jpeg",
-  "image/jpg",
-  "image/webp",
-  "image/gif",
-]);
-
-const QUICK_RESPONSES = [
-  "Chào anh/chị, phòng ban chuyên môn đã tiếp nhận yêu cầu và đang tiến hành kiểm tra xử lý.",
-  "Yêu cầu của anh/chị đã được xử lý hoàn tất trên hệ thống. Anh/chị vui lòng kiểm tra lại giúp em nhé.",
-  "Anh/chị vui lòng cung cấp thêm ảnh chụp màn hình hoặc mã hợp đồng liên quan để bộ phận chuyên môn kiểm tra chi tiết hơn.",
-];
-
 const QUICK_RESOLUTION_TEMPLATES = [
   "Phòng ban chuyên môn đã trực tiếp kiểm tra và xử lý hoàn tất yêu cầu của Quý khách trên hệ thống. Quý khách vui lòng đăng nhập và kiểm tra lại dịch vụ.",
   "Sự cố kỹ thuật liên quan đến dịch vụ của Quý khách đã được khắc phục triệt để. Hệ thống hiện hoạt động ổn định bình thường.",

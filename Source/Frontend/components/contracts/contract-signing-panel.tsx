@@ -44,12 +44,6 @@ import {
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = ["pdf", "jpg", "jpeg", "png"];
-const todayLocalIso = () => {
-  const now = new Date();
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000)
-    .toISOString()
-    .slice(0, 10);
-};
 
 const getExtension = (fileName: string) =>
   fileName.split(".").pop()?.toLowerCase() ?? "";

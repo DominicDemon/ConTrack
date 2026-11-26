@@ -1,4 +1,4 @@
-import { paymentMethodLabel, renderContract } from "../../../Shared/contract-renderer";
+import { renderContract } from "../../../Shared/contract-renderer";
 import { DEFAULT_PROVIDER_FIELDS } from "../../../Shared/draft-validation";
 import type { ReactNode } from "react";
 import { type DraftContent, money } from "@/services/internal-api";

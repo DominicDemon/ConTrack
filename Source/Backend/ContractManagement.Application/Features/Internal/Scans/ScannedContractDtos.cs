@@ -31,7 +31,14 @@ public sealed record ScannedJobSummaryDto(
     string? FoundTaxCode = null,
     string? FoundCustomerName = null,
     string? SameFileAs = null,
-    int SameContractCodeCount = 0);
+    int SameContractCodeCount = 0,
+    IReadOnlyList<ScanLabelTagDto>? Labels = null);
+
+/// <summary>A label as shown on a scan.</summary>
+public sealed record ScanLabelTagDto(long LabelId, string Name, string Color);
+
+/// <summary>A label with how many scans the employee may see carry it.</summary>
+public sealed record ScanLabelDto(long LabelId, string Name, string Color, int FileCount);
 
 /// <summary>Which scans the list keeps: all, those to check again, those without a contract yet, or the employee's own.</summary>
 public enum ScannedBatchFilter { All, Review, NoContract, Mine }

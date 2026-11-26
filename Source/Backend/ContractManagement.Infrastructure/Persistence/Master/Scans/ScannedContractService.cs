@@ -17,7 +17,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master.Scans;
 /// 4. optionally, the checker creates a CONTRACTS row from it, to manage it with the other contracts.
 /// Not in Master_Database_HuongDan (written for the older script): inferred from the tables, see ScannedContractCodes.
 /// </summary>
-public sealed class ScannedContractService(
+public sealed partial class ScannedContractService(
     MasterDbContext db,
     IFileStore files,
     ICurrentEmployee currentEmployee,
@@ -179,7 +179,7 @@ public sealed class ScannedContractService(
     /// The summary always counts every scan the employee may see, so it does not change with the filter.
     /// </remarks>
     public async Task<ScannedBatchListDto> ListBatchesAsync(
-        int? page, int? pageSize, ScannedBatchFilter filter, string? fileName, CancellationToken cancellationToken)
+        int? page, int? pageSize, ScannedBatchFilter filter, string? fileName, CancellationToken cancellationToken, long? labelId = null)
     {
         var (number, size) = Paging(page, pageSize, 10);
         var me = currentEmployee.EmployeeId;
@@ -208,6 +208,12 @@ public sealed class ScannedContractService(
         {
             matching = matching.Where(row => db.FileStorages.Any(file =>
                 file.FileStorageFileid == row.job.FileStorageFileid && file.FileStorageFilename.Contains(name)));
+        }
+
+        if (labelId is { } label)
+        {
+            matching = matching.Where(row => db.ScanLabelFiles.Any(link =>
+                link.ScanLabelId == label && link.FileStorageFileid == row.job.FileStorageFileid));
         }
 
         var matchingJobs = matching.Select(row => row.job);
@@ -637,6 +643,7 @@ public sealed class ScannedContractService(
         {
             // Rows that name the scan without a foreign key first, then the job and the file.
             await db.ContractScanKeywords.Where(row => row.FileStorageFileid == fileId).ExecuteDeleteAsync(cancellationToken);
+            await db.ScanLabelFiles.Where(row => row.FileStorageFileid == fileId).ExecuteDeleteAsync(cancellationToken);
             await db.FileEncryptionKeys.Where(row => row.FileStorageFileid == fileId).ExecuteDeleteAsync(cancellationToken);
             await db.CustomerFileKeys.Where(row => row.FileStorageFileid == fileId).ExecuteDeleteAsync(cancellationToken);
             // Duplicate warnings (table of an optional script): removed when the table exists.
@@ -769,6 +776,7 @@ public sealed class ScannedContractService(
                 .Distinct()
                 .ToListAsync(cancellationToken))
             .ToLookup(keyword => keyword.ContractScanKeywordValue, StringComparer.OrdinalIgnoreCase);
+        var labels = await LabelsOfAsync(ids, cancellationToken);
 
         return batches.Select(batch => new ScannedBatchDto(
                 batch.OcrPatchId,
@@ -798,7 +806,8 @@ public sealed class ScannedContractService(
                             First(fileId, ScanKeywordType.CustomerName),
                             sameFiles[row.file.FileStorageSha256]
                                 .FirstOrDefault(other => other.FileStorageFileid != fileId)?.FileStorageFilename,
-                            code is null ? 0 : sameCodes[code].Count(other => other.FileStorageFileid != fileId));
+                            code is null ? 0 : sameCodes[code].Count(other => other.FileStorageFileid != fileId),
+                            labels[fileId].ToList());
                     })
                     .ToList()))
             .ToList();

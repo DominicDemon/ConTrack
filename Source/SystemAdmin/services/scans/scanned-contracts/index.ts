@@ -29,6 +29,23 @@ export interface ScannedJobSummary {
   sameFileAs: string | null;
   /** How many other scans carry the same contract code. */
   sameContractCodeCount: number;
+  labels: ScanLabelTag[];
+}
+
+/** The colours SCAN_LABEL accepts. */
+export const SCAN_LABEL_COLORS = ["slate", "blue", "green", "amber", "red", "violet", "teal", "pink"] as const;
+export type ScanLabelColor = (typeof SCAN_LABEL_COLORS)[number];
+
+/** A label as shown on a scan. */
+export interface ScanLabelTag {
+  labelId: string;
+  name: string;
+  color: ScanLabelColor;
+}
+
+/** A label shared by the company; fileCount counts the scans the employee may see. */
+export interface ScanLabel extends ScanLabelTag {
+  fileCount: number;
 }
 
 /** Which scans the list keeps. */
@@ -151,9 +168,15 @@ export const scannedContractsApi = {
   },
 
   /** With a filter or a file name, only batches holding a matching scan are listed, each with just those scans. */
-  async listBatches(page = 1, pageSize = 10, filter: ScannedBatchFilter = "all", q = ""): Promise<ScannedBatchList> {
+  async listBatches(
+    page = 1,
+    pageSize = 10,
+    filter: ScannedBatchFilter = "all",
+    q = "",
+    labelId: string | null = null,
+  ): Promise<ScannedBatchList> {
     const { data } = await scanApi.get<ScannedBatchList>("/scanned-contracts/batches", {
-      params: { page, pageSize, filter, q: q.trim() || undefined },
+      params: { page, pageSize, filter, q: q.trim() || undefined, labelId: labelId ?? undefined },
     });
     return data;
   },
@@ -194,6 +217,33 @@ export const scannedContractsApi = {
 
   async removeKeyword(jobId: string, keywordId: string): Promise<void> {
     await scanApi.delete(`/scanned-contracts/jobs/${jobId}/keywords/${keywordId}`);
+  },
+
+  async listLabels(): Promise<ScanLabel[]> {
+    const { data } = await scanApi.get<ScanLabel[]>("/scanned-contracts/labels");
+    return data;
+  },
+
+  async createLabel(name: string, color: ScanLabelColor): Promise<ScanLabel> {
+    const { data } = await scanApi.post<ScanLabel>("/scanned-contracts/labels", { name, color });
+    return data;
+  },
+
+  /** Checkers only (contract.scanned.confirm): the change shows on every scan carrying the label. */
+  async updateLabel(labelId: string, name: string, color: ScanLabelColor): Promise<ScanLabel> {
+    const { data } = await scanApi.put<ScanLabel>(`/scanned-contracts/labels/${labelId}`, { name, color });
+    return data;
+  },
+
+  /** Checkers only: takes the label off every scan; the scans stay. */
+  async deleteLabel(labelId: string): Promise<void> {
+    await scanApi.delete(`/scanned-contracts/labels/${labelId}`);
+  },
+
+  /** Puts exactly these labels on the scan. */
+  async setJobLabels(jobId: string, labelIds: string[]): Promise<ScanLabelTag[]> {
+    const { data } = await scanApi.put<ScanLabelTag[]>(`/scanned-contracts/jobs/${jobId}/labels`, { labelIds });
+    return data;
   },
 
   /** A scan uploaded by mistake; refused while OCR reads it or once a contract was made from it. */

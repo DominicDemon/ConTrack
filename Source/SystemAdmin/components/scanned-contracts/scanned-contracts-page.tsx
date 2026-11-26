@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { format } from "date-fns";
-import { Camera, Copy, Download, Eye, FileSearch, FileUp, Loader2, MoreHorizontal, ScanLine, Search, Trash2, Upload, X } from "lucide-react";
+import { Camera, Copy, Download, Eye, FileSearch, FileUp, Loader2, MoreHorizontal, ScanLine, Search, Tag, Trash2, Upload, X } from "lucide-react";
 import { useScanAccess } from "@/components/internal/scan-access";
 import { formatDateTime, formatFileSize, formatMoney } from "@/components/signed-scans/format";
 import { imagesToPdf } from "@/components/signed-scans/images-to-pdf";
@@ -12,6 +12,7 @@ import type { StatusTone } from "@/components/signed-scans/format";
 import { StatusBadge } from "@/components/signed-scans/status-badge";
 import { ScanFileButtons, useScanFile } from "./scan-file-buttons";
 import { ListPager } from "./list-pager";
+import { JobLabelsDialog, LabelChip, LabelFilter, ManageLabelsDialog } from "./scan-labels";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,6 +39,7 @@ import {
   type ScannedBatchSummary,
   type ScannedContract,
   type ScannedJobSummary,
+  type ScanLabel,
   type ScanPage,
 } from "@/services/scans/scanned-contracts";
 
@@ -256,10 +258,27 @@ function DeleteJobDialog({ jobId, fileName, open, onOpenChange, onDeleted }: {
   );
 }
 
-/** One scan: what OCR read, its size, possible duplicates; "Xem" first, the rest in the "⋯" menu. */
-function JobRow({ job, canDelete, onDeleted }: { job: ScannedJobSummary; canDelete: boolean; onDeleted: () => void }) {
+/** What the rows need to show and change labels. */
+interface RowLabels {
+  all: ScanLabel[];
+  /** May put labels on scans (contract.scanned.upload). */
+  canLabel: boolean;
+  /** A click on a label chip filters the list by it. */
+  onPick: (labelId: string) => void;
+  /** A label was created: reload the label list. */
+  onLabelsChanged: () => void;
+}
+
+/** One scan: what OCR read, its size, labels, possible duplicates; "Xem" first, the rest in the "⋯" menu. */
+function JobRow({ job, canDelete, onDeleted, labels }: {
+  job: ScannedJobSummary;
+  canDelete: boolean;
+  onDeleted: () => void;
+  labels: RowLabels;
+}) {
   const file = useScanFile({ load: (key) => scannedContractsApi.jobFile(job.jobId, key), fileName: job.fileName });
   const [deleting, setDeleting] = useState(false);
+  const [labelling, setLabelling] = useState(false);
   const status = OCR_JOB_STATUS_LABELS[job.jobStatus];
   const reading = job.jobStatus === "QUEUED" || job.jobStatus === "PROCESSING";
   // Not while OCR reads it, and not once a contract was made from it (the server refuses both too).
@@ -286,6 +305,13 @@ function JobRow({ job, canDelete, onDeleted }: { job: ScannedJobSummary; canDele
           ))}
           {!reading && found.length === 0 && " · Chưa đọc được từ khóa nào"}
         </p>
+        {job.labels.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {job.labels.map((label) => (
+              <LabelChip key={label.labelId} label={label} onClick={() => labels.onPick(label.labelId)} />
+            ))}
+          </div>
+        )}
         {(job.sameFileAs || job.sameContractCodeCount > 0) && (
           <div className="flex flex-wrap gap-1.5">
             {job.sameFileAs && (
@@ -329,6 +355,12 @@ function JobRow({ job, canDelete, onDeleted }: { job: ScannedJobSummary; canDele
                 Tải về
               </DropdownMenuItem>
             )}
+            {labels.canLabel && (
+              <DropdownMenuItem onSelect={() => setLabelling(true)}>
+                <Tag className="size-4" />
+                Gắn nhãn
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem asChild>
               <Link href={scannedJobHref(job.jobId)}>
                 <FileSearch className="size-4" />
@@ -347,6 +379,18 @@ function JobRow({ job, canDelete, onDeleted }: { job: ScannedJobSummary; canDele
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {labels.canLabel && (
+        <JobLabelsDialog
+          jobId={job.jobId}
+          fileName={job.fileName}
+          current={job.labels}
+          labels={labels.all}
+          open={labelling}
+          onOpenChange={setLabelling}
+          onSaved={onDeleted}
+          onLabelsChanged={labels.onLabelsChanged}
+        />
+      )}
       {deletable && (
         <DeleteJobDialog jobId={job.jobId} fileName={job.fileName} open={deleting} onOpenChange={setDeleting} onDeleted={onDeleted} />
       )}
@@ -354,11 +398,13 @@ function JobRow({ job, canDelete, onDeleted }: { job: ScannedJobSummary; canDele
   );
 }
 
-function BatchList({ batches, filtered, canDelete, onDeleted }: {
+function BatchList({ batches, filtered, canDelete, onDeleted, labels }: {
   batches: ScannedBatch[];
   filtered: boolean;
   canDelete: boolean;
+  /** Something on a row changed (deleted, labelled): reload the list. */
   onDeleted: () => void;
+  labels: RowLabels;
 }) {
   if (batches.length === 0) {
     return (
@@ -386,7 +432,7 @@ function BatchList({ batches, filtered, canDelete, onDeleted }: {
             </div>
             <ul className="divide-y">
               {batch.jobs.map((job) => (
-                <JobRow key={job.jobId} job={job} canDelete={canDelete} onDeleted={onDeleted} />
+                <JobRow key={job.jobId} job={job} canDelete={canDelete} onDeleted={onDeleted} labels={labels} />
               ))}
             </ul>
           </div>
@@ -404,12 +450,13 @@ const FILTERS: { value: ScannedBatchFilter; label: string; count: (summary: Scan
 ];
 
 /** The counts double as filters: a click shows only those scans. */
-function BatchFilters({ summary, filter, onFilter, query, onQuery }: {
+function BatchFilters({ summary, filter, onFilter, query, onQuery, labelFilter }: {
   summary: ScannedBatchSummary | null;
   filter: ScannedBatchFilter;
   onFilter: (filter: ScannedBatchFilter) => void;
   query: string;
   onQuery: (query: string) => void;
+  labelFilter: ReactNode;
 }) {
   return (
     <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -427,6 +474,7 @@ function BatchFilters({ summary, filter, onFilter, query, onQuery }: {
             {summary && <span className="ml-1 rounded-full bg-muted/30 px-1.5 text-xs tabular-nums">{item.count(summary)}</span>}
           </Button>
         ))}
+        {labelFilter}
         {summary && summary.reading > 0 && (
           <StatusBadge tone="info">
             <Loader2 className="mr-1 size-3 animate-spin" />
@@ -532,6 +580,9 @@ export function ScannedContractsPage() {
   const [filter, setFilter] = useState<ScannedBatchFilter>("all");
   const [query, setQuery] = useState("");
   const [search, setSearch] = useState("");
+  const [labels, setLabels] = useState<ScanLabel[]>([]);
+  const [labelId, setLabelId] = useState<string | null>(null);
+  const [managing, setManaging] = useState(false);
   const [contracts, setContracts] = useState<ScanPage<ScannedContract> | null>(null);
   const [batchPage, setBatchPage] = useState(1);
   const [contractPage, setContractPage] = useState(1);
@@ -540,7 +591,7 @@ export function ScannedContractsPage() {
   const load = useCallback(async () => {
     try {
       const [nextBatches, nextContracts] = await Promise.all([
-        scannedContractsApi.listBatches(batchPage, BATCHES_PER_PAGE, filter, search),
+        scannedContractsApi.listBatches(batchPage, BATCHES_PER_PAGE, filter, search, labelId),
         scannedContractsApi.listContracts(contractPage, CONTRACTS_PER_PAGE),
       ]);
       // A page that emptied (e.g. the last row moved on) falls back to the last page that has rows.
@@ -554,7 +605,23 @@ export function ScannedContractsPage() {
     } catch (loadError) {
       setError(getScanErrorMessage(loadError, "Không tải được danh sách."));
     }
-  }, [batchPage, contractPage, filter, search]);
+  }, [batchPage, contractPage, filter, search, labelId]);
+
+  // Labels with their counts; asked again whenever the list is, since putting a label on changes the counts.
+  const loadLabels = useCallback(async () => {
+    try {
+      const next = await scannedContractsApi.listLabels();
+      setLabels(next);
+      // The label filtered by was deleted: show every scan again.
+      setLabelId((current) => (current && !next.some((label) => label.labelId === current) ? null : current));
+    } catch {
+      // The list itself reports problems; labels are an extra.
+    }
+  }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadLabels(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadLabels]);
 
   // The file name is sent once typing pauses, not on every key.
   useEffect(() => {
@@ -631,14 +698,46 @@ export function ScannedContractsPage() {
             }}
             query={query}
             onQuery={setQuery}
+            labelFilter={
+              <LabelFilter
+                labels={labels}
+                value={labelId}
+                onChange={(next) => {
+                  setLabelId(next);
+                  setBatchPage(1);
+                }}
+                onManage={can(SCANNED_PERMISSIONS.confirm) ? () => setManaging(true) : undefined}
+              />
+            }
+          />
+          <ManageLabelsDialog
+            labels={labels}
+            open={managing}
+            onOpenChange={setManaging}
+            onChanged={() => {
+              void loadLabels();
+              void load();
+            }}
           />
           {batches ? (
             <>
               <BatchList
                 batches={batches.items}
-                filtered={filter !== "all" || search !== ""}
+                filtered={filter !== "all" || search !== "" || labelId !== null}
                 canDelete={can(SCANNED_PERMISSIONS.upload)}
-                onDeleted={() => void load()}
+                onDeleted={() => {
+                  void load();
+                  void loadLabels();
+                }}
+                labels={{
+                  all: labels,
+                  canLabel: can(SCANNED_PERMISSIONS.upload),
+                  onPick: (next) => {
+                    setLabelId(next);
+                    setBatchPage(1);
+                  },
+                  onLabelsChanged: () => void loadLabels(),
+                }}
               />
               <ListPager page={batchPage} pageSize={BATCHES_PER_PAGE} total={batches.total} onPage={setBatchPage} label="lượt scan" />
             </>

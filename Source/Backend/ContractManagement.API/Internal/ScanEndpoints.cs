@@ -50,6 +50,10 @@ public static class ScanEndpoints
     /// <summary>Addresses to send a scan to (each entry may hold several, as pasted) and an optional note.</summary>
     public sealed record EmailRequest(List<string?>? Recipients, string? Note);
 
+    public sealed record LabelRequest(string? Name, string? Color);
+
+    public sealed record JobLabelsRequest(List<long>? LabelIds);
+
     public sealed record ConfirmRequest(
         string? ContractCode,
         string? ContractName,
@@ -195,10 +199,10 @@ public static class ScanEndpoints
             .AcceptsUpload(MaxBatchUploadBytes);
 
         routes.MapGet("/scanned-contracts/batches", async (
-                int? page, int? pageSize, string? filter, string? q, ScannedContractService service, CancellationToken ct) =>
+                int? page, int? pageSize, string? filter, string? q, long? labelId, ScannedContractService service, CancellationToken ct) =>
             {
                 var which = Enum.TryParse<ScannedBatchFilter>(filter, ignoreCase: true, out var parsed) ? parsed : ScannedBatchFilter.All;
-                return Results.Ok(await service.ListBatchesAsync(page, pageSize, which, q, ct));
+                return Results.Ok(await service.ListBatchesAsync(page, pageSize, which, q, ct, labelId));
             })
             .Need(ScannedContractPermissions.View);
 
@@ -240,6 +244,28 @@ public static class ScanEndpoints
             await service.DeleteJobAsync(jobId, ct);
             return Results.NoContent();
         }).Need(ScannedContractPermissions.View, ScannedContractPermissions.Upload);
+
+        // Labels shared by the company to sort scans. Uploaders create and put them on; checkers also rename and delete.
+        routes.MapGet("/scanned-contracts/labels", async (ScannedContractService service, CancellationToken ct) =>
+            Results.Ok(await service.ListLabelsAsync(ct))).Need(ScannedContractPermissions.View);
+
+        routes.MapPost("/scanned-contracts/labels", async (LabelRequest request, ScannedContractService service, CancellationToken ct) =>
+            Results.Ok(await service.CreateLabelAsync(request.Name, request.Color, ct)))
+            .Need(ScannedContractPermissions.View, ScannedContractPermissions.Upload);
+
+        routes.MapPut("/scanned-contracts/labels/{labelId:long}", async (long labelId, LabelRequest request, ScannedContractService service, CancellationToken ct) =>
+            Results.Ok(await service.UpdateLabelAsync(labelId, request.Name, request.Color, ct)))
+            .Need(ScannedContractPermissions.View, ScannedContractPermissions.Confirm);
+
+        routes.MapDelete("/scanned-contracts/labels/{labelId:long}", async (long labelId, ScannedContractService service, CancellationToken ct) =>
+        {
+            await service.DeleteLabelAsync(labelId, ct);
+            return Results.NoContent();
+        }).Need(ScannedContractPermissions.View, ScannedContractPermissions.Confirm);
+
+        routes.MapPut("/scanned-contracts/jobs/{jobId:long}/labels", async (long jobId, JobLabelsRequest request, ScannedContractService service, CancellationToken ct) =>
+            Results.Ok(await service.SetJobLabelsAsync(jobId, request.LabelIds, ct)))
+            .Need(ScannedContractPermissions.View, ScannedContractPermissions.Upload);
 
         // Optional: makes a CONTRACTS row from the scan, to manage it with the other contracts.
         routes.MapPost("/scanned-contracts/jobs/{jobId:long}/confirm", async (long jobId, ConfirmRequest request, ScannedContractService service, CancellationToken ct) =>

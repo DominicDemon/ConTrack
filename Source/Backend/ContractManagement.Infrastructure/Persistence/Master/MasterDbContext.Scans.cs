@@ -27,8 +27,45 @@ public partial class MasterDbContext
 
     public virtual DbSet<CustomerVaultKeyword> CustomerVaultKeywords { get; set; }
 
+    public virtual DbSet<ScanLabel> ScanLabels { get; set; }
+
+    public virtual DbSet<ScanLabelFile> ScanLabelFiles { get; set; }
+
     partial void OnModelCreatingPartial(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<ScanLabel>(entity =>
+        {
+            entity.ToTable("SCAN_LABEL");
+            entity.HasIndex(e => e.ScanLabelName, "UX_ScanLabel_Name").IsUnique();
+            entity.Property(e => e.ScanLabelId).HasColumnName("scan_label_id");
+            entity.Property(e => e.ScanLabelName)
+                .HasMaxLength(60)
+                .UseCollation("Latin1_General_100_CI_AI")
+                .HasColumnName("scan_label_name");
+            entity.Property(e => e.ScanLabelColor)
+                .HasMaxLength(20)
+                .IsUnicode(false)
+                .HasDefaultValue("slate")
+                .HasColumnName("scan_label_color");
+            entity.Property(e => e.CreatedByEmployeeId).HasColumnName("created_by_employee_id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+        });
+
+        modelBuilder.Entity<ScanLabelFile>(entity =>
+        {
+            entity.ToTable("SCAN_LABEL_FILE");
+            entity.HasKey(e => new { e.ScanLabelId, e.FileStorageFileid });
+            entity.HasIndex(e => e.FileStorageFileid, "IX_ScanLabelFile_File");
+            entity.Property(e => e.ScanLabelId).HasColumnName("scan_label_id");
+            entity.Property(e => e.FileStorageFileid).HasColumnName("file_storage_fileid");
+            entity.Property(e => e.AssignedByEmployeeId).HasColumnName("assigned_by_employee_id");
+            entity.Property(e => e.AssignedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("assigned_at");
+        });
+
         modelBuilder.Entity<CustomerVaultFile>(entity =>
         {
             entity.ToTable("CUSTOMER_VAULT_FILE");

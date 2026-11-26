@@ -743,8 +743,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                 request.Content.Terms = terms;
                 request.Content.TemplateSnapshot = source with { WordStorageKey = wordKey, WordSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(edited)), Terms = terms };
                 DraftValidation.Recheck(request.Content);
-                Directory.CreateDirectory(storage.Root);
-                await File.WriteAllBytesAsync(Path.Combine(storage.Root, wordKey), edited, ct);
+                await storage.WriteAsync(Path.Combine(storage.Root, wordKey), edited, ct);
             }
             return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
             {
@@ -914,9 +913,27 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
     }
 }
 
-public sealed class InternalTemplateStorage(string root)
+/// <summary>
+/// Folder of templates and Word copies of drafts; the signing PDFs live in its sibling "signing" folder. Every file is
+/// written and read through <see cref="WriteAsync"/> and <see cref="ReadAsync"/>, which encrypt at rest when a
+/// <see cref="ContractFileCipher"/> is given (internal host) and pass bytes through otherwise (tests, legacy host).
+/// </summary>
+public sealed class InternalTemplateStorage(string root, ContractFileCipher? cipher = null)
 {
     public string Root { get; } = Path.GetFullPath(root);
+
+    /// <summary>Folder of the contract PDFs of each signing step.</summary>
+    public string SigningRoot => Path.GetFullPath(Path.Combine(Root, "..", "signing"));
+
+    public async Task WriteAsync(string path, byte[] plain, CancellationToken ct)
+    {
+        if (cipher is not null) { await cipher.WriteAsync(path, plain, ct); return; }
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllBytesAsync(path, plain, ct);
+    }
+
+    public async Task<byte[]> ReadAsync(string path, CancellationToken ct) =>
+        cipher is not null ? await cipher.ReadAsync(path, ct) : await File.ReadAllBytesAsync(path, ct);
     public static string ResolveRoot(string? configuredRoot, string contentRoot, string assemblyDirectory)
     {
         if (!string.IsNullOrWhiteSpace(configuredRoot))
@@ -935,7 +952,7 @@ public sealed class InternalTemplateStorage(string root)
     public async Task<TemplateDefinition> Read(FileStorage file, CancellationToken ct)
     {
         if (Path.GetFileName(file.FileStorageStoragekey) != file.FileStorageStoragekey) throw new InvalidOperationException("Invalid template storage key.");
-        var bytes = await File.ReadAllBytesAsync(Path.Combine(Root, file.FileStorageStoragekey), ct);
+        var bytes = await ReadAsync(Path.Combine(Root, file.FileStorageStoragekey), ct);
         if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(file.FileStorageSha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Template checksum mismatch.");
         return JsonSerializer.Deserialize<TemplateDefinition>(bytes, InternalRepository.Json) ?? throw new InvalidOperationException("Invalid template definition.");
     }

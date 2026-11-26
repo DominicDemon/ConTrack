@@ -240,8 +240,7 @@ public sealed class CustomerSigningService(
             signer.ContractElectronicWidth ?? 190, signer.ContractElectronicHeight ?? 54);
         var signed = signatures.StampSignature(source, png, placement);
         var signedKey = $"{link.ContractDocumentId}-{link.ContractVersionId}-final-{Guid.NewGuid():N}.pdf";
-        Directory.CreateDirectory(root);
-        await File.WriteAllBytesAsync(Path.Combine(root, signedKey), signed, ct);
+        await storage.WriteAsync(Path.Combine(root, signedKey), signed, ct);
         try
         {
             var result = await InTransaction(async () =>
@@ -382,7 +381,7 @@ public sealed class CustomerSigningService(
         if (Path.GetFileName(file.FileStorageStoragekey) != file.FileStorageStoragekey) throw new InvalidDataException("Invalid signing storage key.");
         var path = Path.Combine(root, file.FileStorageStoragekey);
         if (!File.Exists(path)) throw new InternalAppException(404, "Không tìm thấy tệp PDF đã lưu của phiên bản này.");
-        var bytes = await File.ReadAllBytesAsync(path, ct);
+        var bytes = await storage.ReadAsync(path, ct);
         if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(file.FileStorageSha256, StringComparison.OrdinalIgnoreCase))
             throw new InternalAppException(409, "File hợp đồng không khớp mã kiểm tra đã lưu.");
         return bytes;

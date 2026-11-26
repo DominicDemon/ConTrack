@@ -7,6 +7,8 @@ import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
 import PortalHeader from "@/components/portal/portal-header";
 import DocumentTabs from "@/components/portal/document-tabs";
+import Pager, { byDate, DateSortHeader, usePaged, type DateOrder } from "@/components/portal/pager";
+import { toast } from "@/components/ui/sonner";
 import { customerApi, customerApiForm, handleAuthError, type CustomerSession } from "@/services/customer-api";
 import { imagesToPdf } from "@/lib/images-to-pdf";
 import { REMEMBER_MINUTES, touchFileKey, useRememberedFileKey } from "@/lib/remembered-file-key";
@@ -82,7 +84,7 @@ export default function CustomerVaultPage() {
   const [session, setSession] = useState<CustomerSession | null>(null);
   const [items, setItems] = useState<Item[] | null>(null); const [usage, setUsage] = useState<Usage | null>(null); const [keyStatus, setKeyStatus] = useState<KeyStatus | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
-  const [trash, setTrash] = useState(false); const [loadedAt, setLoadedAt] = useState(0);
+  const [trash, setTrash] = useState(false); const [loadedAt, setLoadedAt] = useState(0); const [order, setOrder] = useState<DateOrder>("newest");
   const [query, setQuery] = useState(""); const [from, setFrom] = useState(""); const [to, setTo] = useState(""); const [folder, setFolder] = useState("");
   const [key, setKey, remembered, forget] = useRememberedFileKey(); const [showKey, setShowKey] = useState(false);
   const [files, setFiles] = useState<File[]>([]); const [title, setTitle] = useState(""); const [note, setNote] = useState("");
@@ -93,6 +95,7 @@ export default function CustomerVaultPage() {
   const [adding, setAdding] = useState<{ id: string; type: string; value: string } | null>(null);
   const [preview, setPreview] = useState<{ title: string; url: string; type: string } | null>(null);
   const editPanel = useRef<HTMLElement>(null); const camera = useRef<HTMLInputElement>(null); const picker = useRef<HTMLInputElement>(null);
+  const keyInput = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();
@@ -116,6 +119,9 @@ export default function CustomerVaultPage() {
   }, [load, router]);
   // Documents still being read refresh by themselves.
   const reading = (items ?? []).some(i => i.ocrStatus === "QUEUED" || i.ocrStatus === "PROCESSING");
+  // Back to page 1 on a new search or filter; the refresh while documents are read keeps the page.
+  // The date shown in the list: deletion day in the bin, upload day otherwise.
+  const itemPage = usePaged(byDate(items ?? [], item => item.trashedAt ?? item.uploadedAt, order), `${query}|${from}|${to}|${folder}|${trash}|${order}`);
   useEffect(() => {
     if (!reading) return;
     const timer = setInterval(() => { void load().catch(() => {}); }, 4000);
@@ -125,9 +131,13 @@ export default function CustomerVaultPage() {
 
   const run = async (id: string, action: () => Promise<void>) => {
     setBusy(id); setError(""); setNotice("");
-    try { await action(); } catch (e) { if (handleAuthError(e, router.replace)) setError((e as Error).message); } finally { setBusy(null); }
+    // An action on one document (view, email, restore…) reports its error at the top right, where it is seen.
+    try { await action(); } catch (e) { if (handleAuthError(e, router.replace)) toast.error((e as Error).message); } finally { setBusy(null); }
   };
-  const needKey = () => { if (!key.trim()) { setError("Nhập key xem bản scan của bạn trước."); return true; } return false; };
+  const needKey = () => {
+    if (key.trim()) return false;
+    toast.warning("Nhập key xem bản scan của bạn trước."); keyInput.current?.focus(); return true;
+  };
 
   function picked(event: ChangeEvent<HTMLInputElement>) {
     const chosen = Array.from(event.target.files ?? []);
@@ -243,13 +253,13 @@ export default function CustomerVaultPage() {
         <label className={s.label} style={{ flex: "0 1 130px" }}>Từ ngày<input className={ui.field} inputMode="numeric" placeholder="dd/mm/yyyy" value={from} onChange={e => setFrom(maskDay(e.target.value))}/></label>
         <label className={s.label} style={{ flex: "0 1 130px" }}>Đến ngày<input className={ui.field} inputMode="numeric" placeholder="dd/mm/yyyy" value={to} onChange={e => setTo(maskDay(e.target.value))}/></label>
         {!trash && <label className={s.label} style={{ flex: "1 1 220px" }}>Key để xem / gửi / đọc lại<div style={{ display: "flex", gap: 6 }}>
-          <input type={showKey ? "text" : "password"} autoComplete="off" spellCheck={false} maxLength={64} className={ui.field} value={key} onChange={e => setKey(e.target.value)} style={{ fontFamily: "monospace" }}/>
+          <input ref={keyInput} type={showKey ? "text" : "password"} autoComplete="off" spellCheck={false} maxLength={64} className={ui.field} value={key} onChange={e => setKey(e.target.value)} style={{ fontFamily: "monospace" }}/>
           <button type="button" className={s.iconButton} aria-label={showKey ? "Ẩn key" : "Hiện key"} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={16}/> : <Eye size={16}/>}</button></div>{remembered && <div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>Key được nhớ trong tab này {REMEMBER_MINUTES} phút kể từ lần dùng cuối. <button type="button" onClick={forget} style={{ border: 0, background: "none", padding: 0, color: "var(--primary)", cursor: "pointer", fontSize: 11 }}>Quên key ngay</button></div>}</label>}
       </div>
       {!items ? <p className={s.muted}>Đang tải…</p> : items.length === 0 ? <div className={s.empty}>{trash ? <Trash2 size={40} strokeWidth={1.3}/> : <Archive size={40} strokeWidth={1.3}/>}
           <strong>{query || from || to || folder ? "Không tìm thấy tài liệu phù hợp" : trash ? "Thùng rác trống" : "Kho của bạn chưa có tài liệu"}</strong></div>
-        : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Tài liệu</th><th>Thông tin chính</th><th>{trash ? "Ngày xóa" : "Ngày lưu"}</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
-          <tbody>{items.map(item => <tr key={item.id}>
+        : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Tài liệu</th><th>Thông tin chính</th><DateSortHeader label={trash ? "Ngày xóa" : "Ngày lưu"} order={order} onChange={setOrder}/><th><span className="sr-only">Thao tác</span></th></tr></thead>
+          <tbody>{itemPage.rows.map(item => <tr key={item.id}>
             <td style={{ maxWidth: 320 }}><strong style={{ overflowWrap: "anywhere" }}><Highlight text={item.title} query={query}/></strong>
               <div className={s.muted} style={{ fontSize: 11 }}>{item.category ? <><Highlight text={item.category} query={query}/> · </> : ""}<Highlight text={item.fileName} query={query}/> · {mb(item.sizeBytes)}{item.pageCount ? ` · ${item.pageCount} trang` : ""}</div>
               {item.note && <div className={s.muted} style={{ fontSize: 12, overflowWrap: "anywhere" }}><Highlight text={item.note} query={query}/></div>}
@@ -279,7 +289,7 @@ export default function CustomerVaultPage() {
                 {item.ocrStatus !== "QUEUED" && item.ocrStatus !== "PROCESSING" && <button type="button" className={s.iconButton} title="Đọc lại nội dung" aria-label="Đọc lại" disabled={busy !== null} onClick={() => reread(item)}><RefreshCw size={16}/></button>}
                 <button type="button" className={s.iconButton} title="Chuyển vào thùng rác" aria-label="Xóa" disabled={busy !== null} onClick={() => remove(item)}><Trash2 size={16}/></button>
               </>}
-            </div></td></tr>)}</tbody></table></div>}
+            </div></td></tr>)}</tbody></table><Pager {...itemPage} label="tài liệu"/></div>}
     </section>
 
     {editing && <section ref={editPanel} className={ui.card} style={{ marginTop: 16, display: "grid", gap: 10, scrollMarginTop: 16 }} aria-label="Sửa tài liệu">

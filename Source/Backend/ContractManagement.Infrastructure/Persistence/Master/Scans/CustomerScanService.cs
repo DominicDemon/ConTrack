@@ -221,8 +221,9 @@ public sealed class CustomerScanService(
     /// <summary>Stores a customer's own scan as a contract file. This deliberately creates no signed-evidence/review record.</summary>
     public async Task<CustomerScanUploadResult> UploadAsync(long customerId, long documentId, string fileName, byte[] content, CancellationToken cancellationToken)
     {
-        var document = await db.ContractDocuments.AsNoTracking()
-            .Where(row => row.ContractDocumentId == documentId && row.CustomerId == customerId)
+        // Only a contract the customer may see (CustomerScans.SentToCustomer): not a draft never sent to them.
+        var document = await CustomerScans.SentToCustomer(db, customerId)
+            .Where(row => row.ContractDocumentId == documentId)
             .Select(row => new { row.ContractDocumentId, row.ContractDocumentCurrentVersionId, row.EmployeeId })
             .SingleOrDefaultAsync(cancellationToken)
             ?? throw new InternalAppException(404, "Không tìm thấy hợp đồng của bạn.");

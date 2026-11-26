@@ -40,7 +40,8 @@ public sealed class SignedEvidenceContractsTests
     [Fact]
     public async Task CustomerWithTwoLegalEntities_ContractListedOnceAndOverviewOpens()
     {
-        await using var db = Seed(snapshot: null);
+        // A business contract that names no entity: the paper-signing queue lists it once.
+        await using var db = Seed(snapshot: """{"customerId":"1","partyType":"BUSINESS"}""");
         var service = Service(db);
 
         var list = await service.ListContractsAsync(default);
@@ -51,6 +52,17 @@ public sealed class SignedEvidenceContractsTests
         // The draft names no entity: the customer's first one.
         Assert.Equal("Công ty Cổ phần ABC", overview.CustomerName);
         Assert.Equal("0101010101", overview.CustomerTaxCode);
+    }
+
+    [Theory]
+    [InlineData("""{"customerId":"1","partyType":"PERSON"}""")]
+    [InlineData(null)]
+    public async Task APersonContractOrOneWithoutContent_IsNotInThePaperSigningQueue(string? snapshot)
+    {
+        // A person signs online, even while the director has not started the signing yet; a record without content
+        // (inserted by hand) cannot be printed. Neither waits for a paper copy.
+        await using var db = Seed(snapshot);
+        Assert.Empty(await Service(db).ListContractsAsync(default));
     }
 
     [Fact]

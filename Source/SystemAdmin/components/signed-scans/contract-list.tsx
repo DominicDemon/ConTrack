@@ -1,7 +1,6 @@
 "use client";
 
-import { ListPager } from "@/components/scanned-contracts/list-pager";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye } from "lucide-react";
@@ -10,24 +9,63 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 import { getScanErrorMessage } from "@/services/scans/http";
 import { signedEvidenceApi, type ContractListItem } from "@/services/scans/signed-scans";
-import { formatMoney } from "./format";
-import { ContractStatusBadge, EvidenceStatusBadge } from "./status-badge";
+import { ListPager } from "../scanned-contracts/list-pager";
+import { formatMoney, type StatusTone } from "./format";
+import { StatusBadge } from "./status-badge";
 
 export const contractHref = (documentId: string) => `/workspace/signed-contracts/${documentId}`;
 
-function PaperStatus({ item }: { item: ContractListItem }) {
-  if (item.signedOnline) return <span className="text-xs text-muted-foreground">Ký online</span>;
-  if (!item.paperEvidenceStatus) return <span className="text-xs text-muted-foreground">—</span>;
-  return <EvidenceStatusBadge status={item.paperEvidenceStatus} />;
+/**
+ * Where a contract stands in paper signing. The server lists only contracts signed on paper: waiting for their copy,
+ * or with one. "Chờ ký" alone would read as "go and sign"; the paper is often signed already and only the scan is missing.
+ */
+type Step = "review" | "upload" | "resend" | "accepted" | "other";
+
+const STEPS: Record<Step, { label: string; tone: StatusTone; order: number; hint: string }> = {
+  review: { label: "Chờ kiểm tra", tone: "pending", order: 0, hint: "Đã có bản scan: kiểm tra chữ ký, con dấu rồi xác nhận." },
+  resend: { label: "Cần nộp lại", tone: "danger", order: 1, hint: "Bản scan trước không hợp lệ: nộp bản scan khác." },
+  upload: { label: "Chờ nộp bản ký", tone: "info", order: 2, hint: "In, hai bên ký và đóng dấu, rồi scan và tải lên." },
+  accepted: { label: "Đã xác nhận", tone: "success", order: 3, hint: "Bản ký giấy hợp lệ, hợp đồng đã ký." },
+  other: { label: "Khác", tone: "neutral", order: 4, hint: "" },
+};
+
+const stepOf = (item: ContractListItem): Step => {
+  if (item.paperEvidenceStatus === "PendingReview") return "review";
+  if (item.paperEvidenceStatus === "Accepted") return "accepted";
+  if (item.paperEvidenceStatus === "Rejected") return "resend";
+  if (item.contractStatus === "PendingSignature") return "upload";
+  return "other";
+};
+
+type Filter = "todo" | "review" | "upload" | "accepted" | "all";
+const FILTERS: { value: Filter; label: string; steps: Step[] }[] = [
+  { value: "todo", label: "Cần xử lý", steps: ["review", "resend", "upload"] },
+  { value: "review", label: "Chờ kiểm tra", steps: ["review"] },
+  { value: "upload", label: "Chờ nộp bản ký", steps: ["upload", "resend"] },
+  { value: "accepted", label: "Đã xác nhận", steps: ["accepted"] },
+  { value: "all", label: "Tất cả", steps: ["review", "resend", "upload", "accepted", "other"] },
+];
+
+const PAGE_SIZE = 10;
+
+function StepBadge({ item }: { item: ContractListItem }) {
+  const step = STEPS[stepOf(item)];
+  return (
+    <span title={step.hint}>
+      <StatusBadge tone={step.tone}>{step.label}</StatusBadge>
+    </span>
+  );
 }
 
-/** Contracts as the old contract list shows them, with the state of their paper signing. */
+/** The paper-signing queue: copies to check first, then contracts waiting for their signed copy. */
 export function ContractList() {
   const router = useRouter();
-  const [contractPage, setContractPage] = useState(1);
   const [state, setState] = useState<{ items: ContractListItem[] | null; error: string | null }>({ items: null, error: null });
+  const [filter, setFilter] = useState<Filter>("todo");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +79,20 @@ export function ContractList() {
     };
   }, []);
 
+  // Work first: copies to check, then copies to send again, then contracts waiting for a copy; newest first inside a group.
+  const sorted = useMemo(
+    () =>
+      [...(state.items ?? [])].sort(
+        (a, b) => STEPS[stepOf(a)].order - STEPS[stepOf(b)].order || Number(b.documentId) - Number(a.documentId),
+      ),
+    [state.items],
+  );
+  const counts = useMemo(() => {
+    const result = {} as Record<Filter, number>;
+    for (const f of FILTERS) result[f.value] = sorted.filter((item) => f.steps.includes(stepOf(item))).length;
+    return result;
+  }, [sorted]);
+
   if (state.error) {
     return (
       <Alert variant="destructive">
@@ -50,20 +102,51 @@ export function ContractList() {
     );
   }
 
-  const { items } = state;
-  const contractTotal = items?.length ?? 0;
-  const currentPage = Math.min(contractPage, Math.max(1, Math.ceil(contractTotal / 10)));
+  const steps = FILTERS.find((f) => f.value === filter)!.steps;
+  const shown = sorted.filter((item) => steps.includes(stepOf(item)));
+  const pages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const current = Math.min(page, pages);
+  const rows = shown.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
+  const choose = (value: Filter) => {
+    setFilter(value);
+    setPage(1);
+  };
+
   return (
     <Card className="gap-0 border-border bg-card p-0 shadow-sm">
-      <CardContent className="p-4">
-        {!items ? (
+      <CardContent className="space-y-4 p-4">
+        <div role="group" aria-label="Lọc theo bước ký giấy" className="flex flex-wrap gap-2">
+          {FILTERS.map((f) => {
+            const selected = filter === f.value;
+            return (
+              <Button
+                key={f.value}
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-pressed={selected}
+                onClick={() => choose(f.value)}
+                className={cn("rounded-full", selected && "border-primary bg-primary/10 font-semibold text-primary hover:bg-primary/15")}
+              >
+                {f.label}
+                {state.items && <span className="ml-1 tabular-nums text-muted-foreground">({counts[f.value]})</span>}
+              </Button>
+            );
+          })}
+        </div>
+
+        {!state.items ? (
           <div className="space-y-3">
             {[0, 1, 2].map((index) => (
               <Skeleton key={index} className="h-12 w-full" />
             ))}
           </div>
-        ) : items.length === 0 ? (
-          <p className="py-12 text-center text-sm text-muted-foreground">Chưa có hợp đồng nào.</p>
+        ) : shown.length === 0 ? (
+          <p className="py-12 text-center text-sm text-muted-foreground">
+            {filter === "todo"
+              ? "Không có hợp đồng nào cần nộp hay kiểm tra bản ký giấy."
+              : "Không có hợp đồng nào ở bước này."}
+          </p>
         ) : (
           <>
             <div className="hidden md:block">
@@ -74,28 +157,24 @@ export function ContractList() {
                     <TableHead>Tên hợp đồng</TableHead>
                     <TableHead>Khách hàng</TableHead>
                     <TableHead className="text-right">Giá trị</TableHead>
-                    <TableHead className="text-center">Trạng thái</TableHead>
-                    <TableHead className="text-center">Bản ký giấy</TableHead>
+                    <TableHead className="text-center">Bước ký giấy</TableHead>
                     <TableHead className="pr-4 text-right">Thao tác</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {items.slice((currentPage - 1) * 10, currentPage * 10).map((item) => (
+                  {rows.map((item) => (
                     <TableRow key={item.documentId} className="cursor-pointer" onClick={() => router.push(contractHref(item.documentId))}>
                       <TableCell className="font-semibold">{item.documentCode ?? "Chưa cấp mã"}</TableCell>
                       <TableCell className="max-w-64 whitespace-normal">{item.documentName}</TableCell>
                       <TableCell className="max-w-64 whitespace-normal">{item.customerName}</TableCell>
                       <TableCell className="text-right font-semibold text-primary tabular-nums">{formatMoney(item.totalAmount)}</TableCell>
                       <TableCell className="text-center">
-                        <ContractStatusBadge status={item.contractStatus} />
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <PaperStatus item={item} />
+                        <StepBadge item={item} />
                       </TableCell>
                       <TableCell className="text-right">
                         <Button asChild variant="outline" size="sm" onClick={(event) => event.stopPropagation()}>
                           <Link href={contractHref(item.documentId)}>
-                            <Eye className="size-4" /> Chi tiết
+                            <Eye className="size-4" /> {stepOf(item) === "review" ? "Kiểm tra" : stepOf(item) === "accepted" ? "Xem" : "Nộp bản ký"}
                           </Link>
                         </Button>
                       </TableCell>
@@ -105,7 +184,7 @@ export function ContractList() {
               </Table>
             </div>
             <ul className="space-y-3 md:hidden">
-              {items.slice((currentPage - 1) * 10, currentPage * 10).map((item) => (
+              {rows.map((item) => (
                 <li key={item.documentId}>
                   <Link
                     href={contractHref(item.documentId)}
@@ -116,7 +195,7 @@ export function ContractList() {
                         <p className="font-semibold text-foreground">{item.documentCode ?? "Chưa cấp mã"}</p>
                         <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.documentName}</p>
                       </div>
-                      <ContractStatusBadge status={item.contractStatus} />
+                      <StepBadge item={item} />
                     </div>
                     <div className="grid grid-cols-2 gap-2 rounded-lg border bg-muted/40 p-2.5 text-sm">
                       <div>
@@ -127,18 +206,15 @@ export function ContractList() {
                         <p className="text-xs text-muted-foreground">Giá trị</p>
                         <p className="truncate font-semibold text-primary">{formatMoney(item.totalAmount)}</p>
                       </div>
-                      <div className="col-span-2 flex items-center justify-between border-t pt-2">
-                        <p className="text-xs text-muted-foreground">Bản ký giấy</p>
-                        <PaperStatus item={item} />
-                      </div>
                     </div>
                   </Link>
                 </li>
               ))}
             </ul>
+            <ListPager page={current} pageSize={PAGE_SIZE} total={shown.length} onPage={setPage} label="hợp đồng" />
           </>
         )}
       </CardContent>
-    <ListPager page={currentPage} pageSize={10} total={contractTotal} onPage={setContractPage} label="hợp đồng"/></Card>
+    </Card>
   );
 }

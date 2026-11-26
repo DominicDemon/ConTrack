@@ -4,7 +4,7 @@ import { ListPager } from "@/components/scanned-contracts/list-pager";
 import { DateInput } from "@/components/signed-scans/date-input";
 import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Eye, Loader2, Mail, ScanLine, Search } from "lucide-react";
+import { Eye, FileText, Loader2, Mail, ScanLine, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { getScanErrorMessage } from "@/services/scans/http";
 import {
   signedEvidenceApi,
+  type OnlineContractMatch,
   type ScanSearchMatch,
   type ScanSearchResponse,
   type ScanSearchResult,
@@ -56,6 +57,29 @@ function Matches({ matches, query }: { matches: ScanSearchMatch[]; query: string
           <span className="text-muted-foreground">· {describe(match)}</span>
         </li>
       ))}
+    </ul>
+  );
+}
+
+/** What matched on a contract made online: where the value comes from, not an OCR page. */
+function OnlineMatches({ matches, query }: { matches: OnlineContractMatch[]; query: string }) {
+  return (
+    <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+      {matches.map((match, index) => {
+        const label = match.type === "ContractName" ? "tên hợp đồng" : KEYWORD_TYPE_LABELS[match.type].toLowerCase();
+        const where = match.source === "Customer" ? "hồ sơ khách hàng" : "trong hợp đồng";
+        const value = match.type === "ContractName" ? match.value : formatKeywordValue(match.type, match.value);
+        return (
+          <li key={`${match.type}-${match.value}-${index}`}>
+            <span className="rounded border bg-muted/50 px-1.5 py-0.5 tabular-nums">
+              <Highlight text={value} query={query} />
+            </span>{" "}
+            <span className="text-muted-foreground">
+              · {label}, {where}
+            </span>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -118,11 +142,11 @@ function ResultActions({
 }
 
 /**
- * Finds contracts by the keywords read from their scans: contract code, tax code, phone or customer name. Searches
- * while typing and marks the typed text in every result. Both the paper-signing evidence of contracts in the system
- * and scanned old paper contracts are listed.
+ * One search over every contract: contracts made online (by their own data), paper-signing evidence and scanned old
+ * paper contracts (by the keywords read from the scans). Searches while typing and marks the typed text in every result.
  */
 export function ScanSearch() {
+  const [onlinePage, setOnlinePage] = useState(1);
   const [scanPage, setScanPage] = useState(1);
   const [contractPage, setContractPage] = useState(1);
   const [query, setQuery] = useState("");
@@ -154,6 +178,7 @@ export function ScanSearch() {
     try {
       const found = await signedEvidenceApi.search({ q: trimmed, type: filter, from: first, to: last });
       if (request === latest.current) {
+        setOnlinePage(1);
         setScanPage(1);
         setContractPage(1);
         setResponse(found);
@@ -180,7 +205,8 @@ export function ScanSearch() {
   const tooShort = typed.length > 0 && typed.length < MIN_LENGTH;
   // Marks follow the text the shown results were found with.
   const marked = response?.query ?? "";
-  const total = response ? response.items.length + response.scans.length : 0;
+  const online = response?.contracts ?? [];
+  const total = response ? response.items.length + response.scans.length + online.length : 0;
 
   return (
     <div className="space-y-5">
@@ -234,7 +260,9 @@ export function ScanSearch() {
               Bỏ lọc ngày
             </Button>
           )}
-          <span className="text-xs text-muted-foreground">Bản scan cũ: theo ngày tải lên. Bản ký giấy: theo ngày ký.</span>
+          <span className="text-xs text-muted-foreground">
+            Hợp đồng online: theo ngày tạo. Bản scan cũ: theo ngày tải lên. Bản ký giấy: theo ngày ký.
+          </span>
           <span className="ml-auto flex gap-2">
             <Button asChild type="button" variant="ghost" size="sm">
               <Link href="/workspace/scan-emails">
@@ -271,13 +299,49 @@ export function ScanSearch() {
         <div className={cn("space-y-3 border-t pt-4 transition-opacity", searching && "opacity-60")}>
           <p role="status" aria-live="polite" className="text-muted-foreground">
             {total === 0 ? (
-              <>Không tìm thấy bản ký giấy hay bản scan nào khớp với “{response.query}”.</>
+              <>Không tìm thấy hợp đồng online, bản ký giấy hay bản scan nào khớp với “{response.query}”.</>
             ) : (
               <>
                 <strong className="font-semibold text-foreground">{total} kết quả</strong> khớp với “{response.query}”
               </>
             )}
           </p>
+
+          <ul className="space-y-3">
+            {online.slice((onlinePage - 1) * 10, onlinePage * 10).map((contract) => (
+              <li key={`online-${contract.documentId}`} className="rounded-xl border p-4 transition-colors hover:bg-accent/30">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <FileText className="size-4 text-primary" aria-hidden="true" />
+                      <Link
+                        href={
+                          contract.hasDraft === false
+                            ? contractHref(contract.documentId)
+                            : `/workspace/contracts/drafts/${contract.documentId}`
+                        }
+                        className="font-semibold [overflow-wrap:anywhere] text-primary hover:underline"
+                      >
+                        <Highlight text={contract.documentCode ?? contract.documentName} query={marked} />
+                      </Link>
+                      <ContractStatusBadge status={contract.contractStatus} />
+                    </div>
+                    <p className="mt-1 text-sm [overflow-wrap:anywhere]">
+                      <Highlight text={contract.documentName} query={marked} />
+                      {" · "}
+                      <Highlight text={contract.customerName} query={marked} />
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                    <StatusBadge tone="neutral">Hợp đồng online</StatusBadge>
+                    {contract.versionNo ? `phiên bản ${contract.versionNo} · ` : ""}cập nhật {formatDateTime(contract.updatedAt)}
+                  </div>
+                </div>
+                <OnlineMatches matches={contract.matches} query={marked} />
+              </li>
+            ))}
+          </ul>
+          <ListPager page={onlinePage} pageSize={10} total={online.length} onPage={setOnlinePage} label="hợp đồng online"/>
 
           <ul className="space-y-3">
             {response.scans.slice((scanPage - 1) * 10, scanPage * 10).map((scan) => (

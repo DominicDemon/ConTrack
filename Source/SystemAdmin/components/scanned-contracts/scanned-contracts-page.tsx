@@ -389,8 +389,11 @@ export function ScannedContractsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Lượt scan gần đây</CardTitle>
-          <CardDescription>Mở bản scan để xem tệp, sửa từ khóa hoặc tạo hợp đồng từ nó.</CardDescription>
+          <CardTitle>Các lần tải bản scan</CardTitle>
+          <CardDescription>
+            Mỗi lần tải lên gồm một hoặc nhiều bản scan, được mã hóa và đọc chữ (OCR) để tìm lại. Mở bản scan để xem tệp, sửa từ
+            khóa hoặc lập hồ sơ hợp đồng từ nó.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {batches ? (
@@ -406,7 +409,11 @@ export function ScannedContractsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Hợp đồng đã tạo từ bản scan</CardTitle>
+          <CardTitle>Hợp đồng đã lập hồ sơ từ bản scan</CardTitle>
+          <CardDescription>
+            Bản scan đã được đối chiếu và nhập số hợp đồng, khách hàng, ngày ký. Hợp đồng ở đây được quản lý như hợp đồng khác:
+            khách hàng xem được trên cổng khách hàng và hệ thống nhắc trước ngày hết hạn. Không bắt buộc với mọi bản scan.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {contracts ? (

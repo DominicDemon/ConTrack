@@ -15,8 +15,8 @@ function example(rule: Rule) {
   return [rule.companyCode || "FPT", rule.typeCode || "KD", get("year") + get("month") + (rule.includeDay ? get("day") : ""), "000001"].join("-");
 }
 
-export default function NumberRule({ owner, customerId, manage, selected, choose, openSetup, resolveOwner, useResolved }: {
-  resolveOwner?: () => Promise<OwnerIdentity | undefined>; useResolved?: (identity: OwnerIdentity) => void;
+export default function NumberRule({ owner, customerId, manage, selected, choose, openSetup, resolveOwner, onResolved }: {
+  resolveOwner?: () => Promise<OwnerIdentity | undefined>; onResolved?: (identity: OwnerIdentity) => void;
   owner: string; customerId?: string; manage?: boolean; selected?: boolean; choose?: () => void; openSetup?: boolean;
 }) {
   const path = "/number-rules/" + owner + (customerId ? "?customerId=" + encodeURIComponent(customerId) : "");
@@ -56,7 +56,7 @@ export default function NumberRule({ owner, customerId, manage, selected, choose
       const target = identity ? "/number-rules/" + identity.businessId + "?customerId=" + identity.customerId : path;
       const saved = await internalApi<Rule>(target, rule ? "PUT" : "POST", { ...draft, companyCode, typeCode });
       setRule(saved); setEditing(false); setSavedNotice(true);
-      if (identity) { useResolved?.(identity); setRefresh(v => v + 1); } else choose?.();
+      if (identity) { onResolved?.(identity); setRefresh(v => v + 1); } else choose?.();
     } catch (e) {
       setError((e as Error).message);
       if (e instanceof InternalApiError && e.status === 409) { setEditing(false); setRefresh(v => v + 1); }

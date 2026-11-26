@@ -437,7 +437,7 @@ export default function DraftEditor({ id }: { id?: string }) {
       <NumberRule owner="0" selected={!content.numberingBusinessId} choose={() => change(c => ({...c, numberingBusinessId:null}))}/>
       {content.partyType === "BUSINESS" && <NumberRule key={numberFormKey}
         resolveOwner={creatingCustomer ? createCustomer : setupCustomerNumber}
-        useResolved={(identity) => change(c => c.customerId === identity.customerId && c.customerBusinessId === identity.businessId ? {...c, numberingBusinessId:identity.businessId} : c)}
+        onResolved={(identity) => change(c => c.customerId === identity.customerId && c.customerBusinessId === identity.businessId ? {...c, numberingBusinessId:identity.businessId} : c)}
         owner={content.customerBusinessId || ""} customerId={content.customerId} openSetup selected={!!content.customerBusinessId && content.numberingBusinessId === content.customerBusinessId}
         choose={() => change(c => c.customerBusinessId === content.customerBusinessId && c.customerId === content.customerId ? {...c, numberingBusinessId:c.customerBusinessId} : c)}/>}    </section>}
     <section id="provider-fields" tabIndex={-1} className={s.section}><details open={!template.wordStorageKey || undefined}><summary><Building2/> Công ty mình · Bên B</summary><div className={s.fields}>{template.fields.filter(f => f.key.startsWith("PROVIDER_")).map(partyField)}</div></details></section>

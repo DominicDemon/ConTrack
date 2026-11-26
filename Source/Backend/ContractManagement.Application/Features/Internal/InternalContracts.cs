@@ -89,7 +89,19 @@ public sealed record DraftSummary(long Id, string Code, string Name, string Cust
     int Status, string? LatestReviewStatus, long TemplateId = 0, int DocumentType = 1);
 public sealed record ContractArchiveEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
     DateTime CreatedAt, DateTime UpdatedAt, int Status, long VersionNo, bool VersionLocked, int SignatureCount, DateTime? LastSignedAt,
-    decimal TotalAmount, string CurrencyCode, DateTime? EffectiveDate, DateTime? ExpireDate);
+    decimal TotalAmount, string CurrencyCode, DateTime? EffectiveDate, DateTime? ExpireDate)
+{
+    /// <summary>The payment schedule of the current version (Báo cáo hợp đồng): what was confirmed as received and what is still due.</summary>
+    public ArchivePayments Payments { get; init; } = ArchivePayments.None;
+}
+/// <param name="Scheduled">Sum of the instalments; Paid: those Hành chính confirmed as received; Overdue: unpaid ones past their due date.</param>
+/// <param name="Received">Each confirmed instalment and when it was received, for the money-over-time chart.</param>
+public sealed record ArchivePayments(int Installments, int PaidInstallments, decimal Scheduled, decimal Paid, decimal Overdue, DateOnly? NextDue,
+    DateTime? LastPaidAt, List<ArchiveReceipt> Received)
+{
+    public static readonly ArchivePayments None = new(0, 0, 0, 0, 0, null, null, []);
+}
+public sealed record ArchiveReceipt(decimal Amount, DateTime PaidAt);
 public sealed record SigningMonitorEntry(long Id, string Code, string Name, string CustomerName, long EmployeeId, string EmployeeName,
     DateTime UpdatedAt, int Status, long VersionNo, int SignatureCount, int SignedCount, bool CompanySigned, bool CustomerSigned,
     string? LatestReviewStatus, DateTime? LastSignedAt, bool Paper = false);

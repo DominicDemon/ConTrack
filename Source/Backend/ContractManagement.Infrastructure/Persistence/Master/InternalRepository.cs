@@ -491,7 +491,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
                     || (d.ContractDocumentCode != null && d.ContractDocumentCode.Contains(search))
                     || c.CustomerDisplayName.Contains(search))
             orderby d.UpdatedDate ?? d.CreatedDate descending
-            select new { d, e.EmployeeDisplayName, c.CustomerDisplayName, v.ContractVersionVersionNo,
+            select new { d, e.EmployeeDisplayName, c.CustomerDisplayName, v.ContractVersionId, v.ContractVersionVersionNo,
                 v.ContractVersionIslocked, v.ContractVersionTotalamount, v.ContractVersionCurrencycode,
                 v.ContractVersionEffectiveDate, v.ContractVersionExpireDate };
         var rows = await query.Take(Math.Clamp(limit, 1, 5000)).ToListAsync(ct);
@@ -501,15 +501,26 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             .GroupBy(s => s.ContractDocumentId)
             .Select(g => new { Id = g.Key, Count = g.Count(), LastSignedAt = g.Max(x => x.ContractElectronicSignedat) })
             .ToDictionaryAsync(x => x.Id, ct);
+        // The schedule of each contract's current version: amounts, which were received (status 1) and when they fall due.
+        var versionIds = rows.Select(x => x.ContractVersionId).ToArray();
+        var schedule = (await db.ContractPaymentMilestones.AsNoTracking().Where(m => versionIds.Contains(m.ContractVersionId))
+            .Select(m => new { m.ContractVersionId, Amount = m.ContractPaymentMilestoneAmount, Paid = m.ContractPaymentMilestonePaymentstatus == 1,
+                PaidAt = m.ContractPaymentMilestonePaidat, Due = m.ContractPaymentMilestoneDuedate }).ToListAsync(ct)).ToLookup(m => m.ContractVersionId);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
         return rows.Select(x =>
         {
             signatures.TryGetValue(x.d.ContractDocumentId, out var signing);
+            var items = schedule[x.ContractVersionId].ToList();
+            var payments = items.Count == 0 ? ArchivePayments.None : new ArchivePayments(items.Count, items.Count(m => m.Paid),
+                items.Sum(m => m.Amount), items.Where(m => m.Paid).Sum(m => m.Amount), items.Where(m => !m.Paid && m.Due < today).Sum(m => m.Amount),
+                items.Where(m => !m.Paid && m.Due != null).Min(m => m.Due), items.Max(m => m.PaidAt),
+                items.Where(m => m.Paid && m.PaidAt != null).Select(m => new ArchiveReceipt(m.Amount, m.PaidAt!.Value)).ToList());
             return new ContractArchiveEntry(x.d.ContractDocumentId, x.d.ContractDocumentCode ?? "",
                 x.d.ContractDocumentName, x.CustomerDisplayName, x.d.EmployeeId, x.EmployeeDisplayName,
                 x.d.CreatedDate, x.d.UpdatedDate ?? x.d.CreatedDate, x.d.ContractDocumentStatus, x.ContractVersionVersionNo,
                 x.ContractVersionIslocked, signing?.Count ?? 0, signing?.LastSignedAt,
                 x.ContractVersionTotalamount, x.ContractVersionCurrencycode,
-                x.ContractVersionEffectiveDate, x.ContractVersionExpireDate);
+                x.ContractVersionEffectiveDate, x.ContractVersionExpireDate) { Payments = payments };
         }).ToList();
     }
     public async Task<List<SigningMonitorEntry>> SigningMonitor(string? search, int? status, CancellationToken ct, string? partyType = null)

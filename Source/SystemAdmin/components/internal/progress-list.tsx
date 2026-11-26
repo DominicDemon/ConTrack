@@ -29,8 +29,11 @@ export default function ProgressList() {
   const user = useInternalUser();
   const [data, setData] = useState<Page | null>(null); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(true); const [acting, setActing] = useState(false); const [employees, setEmployees] = useState<EmployeeOption[]>([]);
-  const [search, setSearch] = useState(""); const [owner, setOwner] = useState(""); const [stage, setStage] = useState("");
-  const [from, setFrom] = useState(""); const [to, setTo] = useState(""); const [page, setPage] = useState(1); const [reload, setReload] = useState(0);
+  // A link may open the list already filtered (Báo cáo hợp đồng: one customer, one employee, one month). The shell renders
+  // this page only after sign-in, in the browser, so the address can be read when the state starts.
+  const [initial] = useState(() => new URLSearchParams(typeof window === "undefined" ? "" : window.location.search));
+  const [search, setSearch] = useState(initial.get("search") ?? ""); const [owner, setOwner] = useState(initial.get("ownerId") ?? ""); const [stage, setStage] = useState("");
+  const [from, setFrom] = useState(initial.get("from") ?? ""); const [to, setTo] = useState(initial.get("to") ?? ""); const [page, setPage] = useState(1); const [reload, setReload] = useState(0);
   type Column = "name" | "customer" | "owner" | "stage" | "department" | "updated";
   const [sort, setSort] = useState<SortState<Column>>({ key: "updated", dir: "desc" });
   const sortBy = (key: Column, firstDir: "asc" | "desc" = "asc") => { setPage(1); setSort(old => old.key === key ? { key, dir: old.dir === "asc" ? "desc" : "asc" } : { key, dir: firstDir }); };

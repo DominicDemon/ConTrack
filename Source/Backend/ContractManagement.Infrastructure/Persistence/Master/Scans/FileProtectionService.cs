@@ -27,6 +27,15 @@ public sealed class FileEncryptionOptions
     /// administrator gives the private key per request instead.
     /// </summary>
     public string RecoveryPrivateKeyPath { get; set; } = "";
+
+    /// <summary>
+    /// Key (32 bytes, base64) that seals the per-file keys of online-contract files (ContractFileCipher). Set it from the
+    /// environment or user-secrets, never next to the files. Empty: <see cref="ContractFileKeyPath"/> is read instead.
+    /// </summary>
+    public string ContractFileKey { get; set; } = "";
+
+    /// <summary>File holding the contract-file key (base64). Empty in Development: private-storage/dev-keys/contract-file-key.txt.</summary>
+    public string ContractFileKeyPath { get; set; } = "";
 }
 
 /// <summary>The recovery public key, read once from <see cref="FileEncryptionOptions.RecoveryPublicKeyPath"/>.</summary>

@@ -56,3 +56,13 @@ export const screensFor = (permissions: string[]) => {
   const items = permissions.includes("legal.manage") ? ADMIN_OFFICER_NAV_ITEMS : NAV_ITEMS;
   return items.filter(item => item.permissions.length === 0 || item.permissions.some(p => permissions.includes(p)));
 };
+
+export const isSalesWorkspace = (permissions: string[]) => permissions.includes("draft.write")
+  && !["contract.check", "contract.approve", "legal.manage", "employee.manage"].some(permission => permissions.includes(permission));
+
+export function groupedOverviewRole(permissions: string[]) {
+  if (permissions.includes("legal.manage")) return "office";
+  if (permissions.includes("contract.approve") || permissions.includes("employee.manage")) return "director";
+  if (permissions.includes("contract.check")) return "office";
+  return null;
+}

@@ -242,12 +242,37 @@ export interface ScanEmailJob {
   recipients: { email: string; status: "Waiting" | "Sent" | "Failed"; reason: string | null }[];
 }
 
+/** What matched on a contract made online: a keyword type, or ContractName for its title. */
+export interface OnlineContractMatch {
+  type: ScanKeywordType | "ContractName";
+  value: string;
+  page: null;
+  /** Contract: written in the contract itself; Customer: from the customer's record. */
+  source: "Contract" | "Customer";
+}
+
+/** A contract drafted and signed in the system, found by its own data (no scan involved). */
+export interface OnlineContractSearchResult {
+  documentId: string;
+  documentCode: string | null;
+  documentName: string;
+  customerName: string;
+  contractStatus: ContractStatusKey;
+  versionNo: string | null;
+  updatedAt: string;
+  matches: OnlineContractMatch[];
+  /** False for a contract record without drafted content (e.g. made for a test): open its paper-signing page instead. */
+  hasDraft: boolean;
+}
+
 export interface ScanSearchResponse {
   query: string;
   /** Paper-signing evidence of contracts in the system. */
   items: ScanSearchResult[];
   /** Scanned old paper contracts (Hợp đồng giấy scan). */
   scans: ScannedSearchResult[];
+  /** Contracts made online. Missing from an older API. */
+  contracts?: OnlineContractSearchResult[];
 }
 
 export interface DownloadedScanFile {

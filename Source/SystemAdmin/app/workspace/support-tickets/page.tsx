@@ -117,6 +117,10 @@ function SupportTicketsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const ticketIdParam = searchParams.get("ticketId");
+  const selectedSection = searchParams.get("tab");
+  const sectionLabel = selectedSection === "resolve" ? "Báo cáo kết quả xử lý"
+    : selectedSection === "history" ? "Lịch sử & Thông tin"
+    : selectedSection === "assign" ? "Phân công xử lý" : null;
   const user = useTicketUser();
 
   const [tickets, setTickets] = useState<TicketDto[]>([]);
@@ -141,9 +145,10 @@ function SupportTicketsContent() {
     if (!ticketIdParam) return;
     const id = Number(ticketIdParam);
     if (Number.isFinite(id) && id > 0) {
-      router.replace(`/workspace/support-tickets/${id}`);
+      const query = sectionLabel && selectedSection ? "?" + new URLSearchParams({ tab: selectedSection }) : "";
+      router.replace(`/workspace/support-tickets/${id}${query}`);
     }
-  }, [ticketIdParam, router]);
+  }, [ticketIdParam, router, sectionLabel, selectedSection]);
 
   const loadTickets = useCallback(async () => {
     if (!canAccess || isSysAdmin) {
@@ -484,6 +489,7 @@ function SupportTicketsContent() {
                 ? `Yêu cầu hỗ trợ — ${user?.departmentName || "Phòng ban phụ trách"}`
                 : "Yêu cầu hỗ trợ được phân công"}
             </h1>
+            {sectionLabel && <p role="status" className="mt-2 text-sm font-medium text-primary">Chọn một phiếu để mở mục {sectionLabel}.</p>}
             <p className="text-sm text-muted-foreground mt-1">
               {user?.supportRole === "DEPARTMENT_HEAD"
                 ? `Danh sách các yêu cầu hỗ trợ do khách hàng gửi đến ${user?.departmentName || "phòng ban của bạn"}. Phân công nhân viên trong phòng xử lý và duyệt kết quả.`

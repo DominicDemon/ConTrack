@@ -1,5 +1,5 @@
 "use client";
-import WordDocumentLayout, { type DocumentBlock } from "./word-document-layout";
+import WordDocumentLayout, { type DocumentBlock, type WordTextFormat } from "./word-document-layout";
 import { createPortal } from "react-dom";
 import WordClauseForm, { wordCards, wordCustomerValues, type Card } from "./word-clause-form";
 import WordPdfViewer from "./word-pdf-viewer";
@@ -15,6 +15,32 @@ import { internalApi, loadDocumentCategories, type DocumentCategory, type DraftC
 import { typeOptions, useDocumentCategories } from "./use-document-categories";
 
 type Block = DocumentBlock;
+// Keep pending formats attached to their text when the user edits before or inside a selection.
+function withText(block: Block, text: string): Block {
+  if (!block.formatting?.length) return { ...block, text };
+  let left = 0;
+  while (left < Math.min(text.length, block.text.length) && text[left] === block.text[left]) left++;
+  let end = block.text.length;
+  const delta = text.length - end;
+  while (end > left && end + delta > left && block.text[end - 1] === text[end + delta - 1]) end--;
+  const formatting = block.formatting.map(f => ({
+    ...f,
+    start: f.start <= left ? f.start : Math.max(left, f.start >= end ? f.start + delta : left),
+    end: f.end <= left ? f.end : f.end >= end ? f.end + delta : end + delta,
+  })).filter(f => f.end > f.start);
+  return { ...block, text, formatting };
+}
+function formattedText(block: Block) {
+  const formats = block.formatting ?? [];
+  const cuts = [...new Set([0, block.text.length, ...formats.flatMap(f => [f.start, f.end])])].sort((a, b) => a - b);
+  return cuts.slice(1).map((end, i) => {
+    const start = cuts[i];
+    const applicable = formats.filter(f => f.start <= start && f.end >= end);
+    const bold = applicable.filter(f => f.bold !== undefined).at(-1)?.bold;
+    const size = applicable.filter(f => f.size !== undefined).at(-1)?.size;
+    return <span key={start} style={{ fontWeight: bold === undefined ? undefined : bold ? 700 : 400, fontSize: size && `${size}pt` }}>{block.text.slice(start, end)}</span>;
+  });
+}
 type Extraction = { name: string; documentBase64: string; blocks: Block[]; sourceToken: string };
 export function wordBlob(base64: string, type: string) {
   return new Blob([Uint8Array.from(atob(base64), c => c.charCodeAt(0))], { type });
@@ -240,13 +266,26 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
   const located = useRef<number | null>(null);
   useEffect(() => { if (!open || !locate?.location || busy || located.current === locate.request) return; const input = inputs.current[locate.location] ?? document.querySelector<HTMLElement>(`[data-word-ids~="${CSS.escape(locate.location)}"]`); if(input){input.scrollIntoView({block:"center"}); input.focus(); located.current=locate.request;} }, [open, busy, blocks, locate]);
   const activeBlock = blocks.find(b => b.id === active);
+  function formatSelection(change: Pick<WordTextFormat, "bold" | "size">) {
+    if (!activeBlock) return;
+    const input = inputs.current[activeBlock.id];
+    if (!input) return;
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    if (start === end) { setError("Bôi đen phần chữ cần định dạng trước."); return; }
+    setBlocks(current => current.map(b => b.id === activeBlock.id
+      ? { ...b, formatting: [...(b.formatting ?? []), { start, end, ...change }] } : b));
+    invalidate();
+    input.focus();
+    input.setSelectionRange(start, end);
+  }
   function insertContractValue(key: string) {
     if (!activeBlock || !key) return;
     const input = inputs.current[activeBlock.id];
     const start = input?.selectionStart ?? activeBlock.text.length;
     const end = input?.selectionEnd ?? start;
     const text = activeBlock.text.slice(0, start) + "{{" + key + "}}" + activeBlock.text.slice(end);
-    setBlocks(current => current.map(block => block.id === activeBlock.id ? { ...block, text } : block));
+    setBlocks(current => current.map(block => block.id === activeBlock.id ? withText(block, text) : block));
     invalidate();
     input?.focus();
   }
@@ -290,7 +329,15 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
         const target = inputs.current[e.target.value]; target?.focus(); target?.scrollIntoView({ block: "center", behavior: "smooth" });
       }}><option value="">Đi tới mục…</option>{headings.map(b => <option value={b.id} key={b.id}>{b.text.slice(0, 100)}</option>)}</select>
       {extraction && <>
-        <span className={styles.selection}>Bấm vào nội dung để sửa trực tiếp. Chọn một đoạn để chèn nội dung bên dưới.</span>
+        <span className={styles.selection}>Bôi đen chữ để chỉnh độ đậm và cỡ chữ. Chọn một đoạn để chèn nội dung.</span>
+        <div className={styles.formatBar} role="group" aria-label="Định dạng chữ đã chọn">
+          <Button type="button" variant="outline" disabled={busy || !activeBlock} onMouseDown={e => e.preventDefault()} onClick={() => formatSelection({ bold: true })}><strong>In đậm</strong></Button>
+          <Button type="button" variant="outline" disabled={busy || !activeBlock} onMouseDown={e => e.preventDefault()} onClick={() => formatSelection({ bold: false })}>Bỏ đậm</Button>
+          <label className={styles.toolField}>Cỡ chữ <select className={styles.select} disabled={busy || !activeBlock} value="" onChange={e => formatSelection({ size: Number(e.target.value) })}>
+            <option value="" disabled>— pt</option>{[8,9,10,11,12,13,14,15,16,18,20,22,24,26,28,32,36,48,72].map(n => <option key={n} value={n}>{n} pt</option>)}
+          </select></label>
+        </div>
+        {activeBlock?.formatting?.length ? <div className={styles.formatSample}><small>Định dạng đoạn đang chọn</small><p>{formattedText(activeBlock)}</p></div> : null}
         {documentType === 1 && <label>Điền từ hồ sơ <select disabled={busy || !activeBlock} value="" onChange={e => insertContractValue(e.target.value)}>
           <option value="">Chọn chữ trong Word rồi chọn giá trị</option>
           <option value="CONTRACT_NUMBER">Số hợp đồng</option>
@@ -299,12 +346,12 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
           <option value="PAYMENT_METHOD">Phương thức thanh toán</option>
           <option value="PAYMENT_SCHEDULE">Lịch thanh toán</option>
         </select></label>}
-        <div className="flex w-full flex-wrap gap-2">
+        <div className={styles.insertTools}>
           <select aria-label="Thêm mục sau vị trí chọn" className={styles.select} disabled={!canInsert} value="" onChange={e => {
             const kind = e.target.value;
             if (kind === "paragraph" || kind === "clause" || kind === "definition" || kind === "appendix") addContent(kind);
           }}>
-            <option value="">Thêm mục sau vị trí chọn</option>
+            <option value="">Thêm mục</option>
             <option value="paragraph">Đoạn văn</option>
             <option value="clause">Điều khoản</option>
             <option value="definition">Định nghĩa</option>
@@ -313,10 +360,10 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
           <Button type="button" variant="outline" disabled={!canInsert} onClick={() => imageInput.current?.click()}>Chèn ảnh</Button>
           <input ref={imageInput} type="file" aria-label="Ảnh chèn thêm" accept="image/png,image/jpeg" hidden disabled={!canInsert} onChange={e => void addImage(e.target.files?.[0])}/>
         </div>
-        <div className="flex w-full flex-wrap items-center gap-2">
-          <label>Hàng <input aria-label="Số hàng bảng mới" className="w-14 rounded border px-1" type="number" min={1} max={50} value={tableRows} disabled={busy} onChange={e => setTableRows(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}/></label>
-          <label>Cột <input aria-label="Số cột bảng mới" className="w-14 rounded border px-1" type="number" min={1} max={12} value={tableColumns} disabled={busy} onChange={e => setTableColumns(Math.max(1, Math.min(12, Number(e.target.value) || 1)))}/></label>
-          <Button type="button" variant="outline" disabled={busy || tables.length >= 20 || !activeBlock?.location.startsWith("Nội dung")} onClick={addTable}>Chèn bảng sau vị trí chọn</Button>
+        <div className={styles.insertTools} role="group" aria-label="Chèn bảng">
+          <label className={styles.toolField}>Hàng <input aria-label="Số hàng bảng mới" className={styles.tableDimension} type="number" min={1} max={50} value={tableRows} disabled={busy} onChange={e => setTableRows(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}/></label>
+          <label className={styles.toolField}>Cột <input aria-label="Số cột bảng mới" className={styles.tableDimension} type="number" min={1} max={12} value={tableColumns} disabled={busy} onChange={e => setTableColumns(Math.max(1, Math.min(12, Number(e.target.value) || 1)))}/></label>
+          <Button type="button" variant="outline" disabled={busy || tables.length >= 20 || !activeBlock?.location.startsWith("Nội dung")} onClick={addTable}>Chèn bảng</Button>
         </div>
       </>}
     </div>
@@ -331,7 +378,7 @@ export default function TemplateUpload({ onImported, disabled, draft, locate, in
           className={/^(Điều\s+\d|HỢP ĐỒNG|BIÊN BẢN|CỘNG HOÀ|CỘNG HÒA)/i.test(block.text.trim()) ? styles.heading : ""}
           ref={el => {inputs.current[block.id] = el;}} value={block.text} rows={1} maxLength={20000} disabled={busy}
           onFocus={() => setActive(block.id)}
-          onChange={e => {setBlocks(old => old.map(b => b.id === block.id ? {...b,text:e.target.value} : b)); invalidate();}}/>
+          onChange={e => {setBlocks(old => old.map(b => b.id === block.id ? withText(b, e.target.value) : b)); invalidate();}}/>
       </>}/></div> : <p className={styles.empty}>Chọn file Word để mở tài liệu.</p>}
     </div>
   </section>;

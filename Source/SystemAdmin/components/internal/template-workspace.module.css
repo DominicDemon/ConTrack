@@ -41,3 +41,40 @@
  .scroll { padding:10px; }
  .metadata label { min-width:140px; }
 }
+
+.formatSample { flex-basis: 100%; min-width: 0; }
+.formatSample p { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 6rem; overflow: auto; font-family: "Times New Roman", serif; }
+
+.formatBar, .insertTools {
+  display: flex;
+  flex: 1 0 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 14px;
+}
+.formatBar {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--secondary);
+}
+.formatBar button, .insertTools button, .insertTools select {
+  width: auto;
+  min-height: 36px;
+  height: 36px;
+  box-shadow: none;
+}
+.formatBar button { background: var(--background); }
+.toolField { display: inline-flex; align-items: center; gap: 6px; }
+.toolField select { width: auto; }
+.tableDimension {
+  width: 3.5rem;
+  height: 36px;
+  padding-inline: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+}
+.toolbar .selection { white-space: normal; color: var(--muted-foreground); }

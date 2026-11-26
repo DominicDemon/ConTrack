@@ -15,11 +15,13 @@ namespace ContractManagement.API.Internal;
 ///   ApplicationMode=Internal: dotnet run --project ContractManagement.API -- recovery-grant &lt;recovery-private.pem&gt; &lt;employeeId&gt; [fileId]
 ///     lets the employee's current key open every file (or one file) kept with the recovery key, e.g. after the
 ///     employee lost their key and was issued a new one. Each grant is written to AUDIT_LOG.
+///   ApplicationMode=Internal: dotnet run --project ContractManagement.API -- encrypt-contract-files
+///     encrypts the contract PDFs, draft Word copies and templates stored before encryption at rest (ContractFileCipher).
 /// </summary>
 public static class RecoveryCommands
 {
     public static bool IsCommand(string[] args) =>
-        args.Length > 0 && args[0] is "generate-recovery-key" or "recovery-grant";
+        args.Length > 0 && args[0] is "generate-recovery-key" or "recovery-grant" or "encrypt-contract-files";
 
     public static async Task<int> RunAsync(string[] args, IServiceProvider services)
     {
@@ -28,6 +30,7 @@ public static class RecoveryCommands
             return args[0] switch
             {
                 "generate-recovery-key" => Generate(args),
+                "encrypt-contract-files" => await EncryptContractFilesAsync(services),
                 _ => await GrantAsync(args, services),
             };
         }
@@ -123,6 +126,36 @@ public static class RecoveryCommands
 
         await db.SaveChangesAsync();
         Console.WriteLine($"Granted {granted} file(s) to employee {employeeId}; {recoveryRows.Count - granted} already open to them.");
+        return 0;
+    }
+
+    /// <summary>
+    /// Encrypts the online-contract files written before encryption at rest (template folder and signing PDFs). Each file
+    /// is read back and compared before it replaces the plain one; FILE_STORAGE keeps the hash of the plain bytes, so
+    /// nothing in the database changes. Run it once, after a backup of the folders.
+    /// </summary>
+    private static async Task<int> EncryptContractFilesAsync(IServiceProvider services)
+    {
+        var storage = services.GetRequiredService<InternalTemplateStorage>();
+        var cipher = services.GetRequiredService<ContractFileCipher>();
+        if (!cipher.Enabled) throw new InvalidOperationException("FileEncryption:Enabled is false: nothing to do.");
+        int done = 0, skipped = 0;
+        foreach (var folder in new[] { storage.Root, storage.SigningRoot }.Where(Directory.Exists))
+        {
+            foreach (var path in Directory.EnumerateFiles(folder))
+            {
+                var bytes = await File.ReadAllBytesAsync(path);
+                if (ContractFileCipher.IsEncrypted(bytes)) { skipped++; continue; }
+                var sealedBytes = cipher.Protect(bytes);
+                if (!cipher.Unprotect(sealedBytes).AsSpan().SequenceEqual(bytes)) throw new CryptographicException($"Round trip failed for {path}; nothing replaced.");
+                var temp = path + ".enc-tmp";
+                await File.WriteAllBytesAsync(temp, sealedBytes);
+                File.Move(temp, path, overwrite: true);
+                done++;
+            }
+        }
+
+        Console.WriteLine($"Encrypted {done} file(s); {skipped} already encrypted. Folders: {storage.Root}, {storage.SigningRoot}");
         return 0;
     }
 }

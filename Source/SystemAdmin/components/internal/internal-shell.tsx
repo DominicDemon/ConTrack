@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { ThemeToggle } from "@/components/theme-toggle";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CheckCircle2, ChevronDown, Clock, FileText, ListFilter, LogOut, ShieldCheck, UserPlus, UserRound } from "lucide-react";
+import { CheckCircle2, ChevronDown, Clock, Menu, FileText, ListFilter, LogOut, ShieldCheck, UserPlus, UserRound } from "lucide-react";
 import { screensFor, type NavItem } from "./internal-nav";
 import { APP_NAME } from "@/lib/application-branding";
 import { internalApi, InternalApiError, type InternalUser } from "@/services/internal-api";
@@ -17,6 +17,7 @@ export const useInternalUser = () => useContext(UserContext)!;
 export type SupportTicketTabKey = "assign" | "resolve" | "history";
 
 export default function InternalShell({ children }: { children: ReactNode }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const [user, setUser] = useState<InternalUser | null>(null);
   const [error, setError] = useState("");
   const [attempt, retry] = useState(0);
@@ -25,6 +26,8 @@ export default function InternalShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const path = usePathname();
 
+  const hideSidebar = !menuOpen;
+  useEffect(() => { setMenuOpen(false); }, [path]);
   const isSupportPath = path.startsWith("/workspace/support-tickets");
   const ticketDetailMatch = path.match(/^\/workspace\/support-tickets\/(\d+)/);
   const currentTicketId = ticketDetailMatch ? ticketDetailMatch[1] : null;
@@ -144,29 +147,12 @@ export default function InternalShell({ children }: { children: ReactNode }) {
         <ChangePassword user={user} onChanged={setUser} onLogout={logout} />
       ) : (
         <UserContext.Provider value={user}>
-          <div className={s.shell}>
-            <aside className={s.sidebar}>
-              <div className={s.brand}>
-                <span className={s.brandMark}>
-                  <FileText size={21} />
-                </span>
-                {APP_NAME}
-              </div>
+          <div className={`${s.shell} ${s.salesShell}`}>
+            <aside id="workspace-sidebar" inert={hideSidebar} className={`${s.sidebar} ${s.salesSidebar} ${hideSidebar ? s.hiddenSidebar : ""}`}>
               <nav>
-                <span className={s.eyebrow} style={{ padding: "0 12px 8px" }}>
-                  {user.department ?? "Không gian nội bộ"}
-                </span>
                 {screensFor(user.permissions).map((item) => {
                   const Icon = item.icon;
                   if (item.href === "/workspace/support-tickets") {
-                    const isSupportDept = Boolean(
-                      user.department &&
-                      (user.department.includes("Kỹ Thuật") ||
-                       user.department.includes("Kế Toán") ||
-                       user.department.includes("Hành Chính") ||
-                       user.department.includes("Pháp Chế"))
-                    );
-                    if (!isSupportDept) return null;
 
                     const visibleSections = supportSubItems.filter(
                       (sub) => !sub.managerOnly || user.isManager,
@@ -328,9 +314,13 @@ export default function InternalShell({ children }: { children: ReactNode }) {
             </aside>
             <div className={s.main}>
               <header className={s.header}>
-                <span style={{ fontWeight: 600, fontSize: 14 }}>
-                  Quản lý hợp đồng <span className={s.muted}> / Không gian nội bộ</span>
-                </span>
+                <div className={s.menuBrand}>
+                  <button type="button" className={s.iconButton} aria-label={menuOpen ? "Đóng menu" : "Mở menu"} aria-expanded={menuOpen} aria-controls="workspace-sidebar" onClick={() => setMenuOpen(open => !open)}><Menu size={20} aria-hidden="true"/></button>
+                  <Link href="/workspace" className={s.brand} aria-label={`${APP_NAME} – Tổng quan`} onClick={() => setMenuOpen(false)}>
+                    <span className={s.brandMark}><FileText size={20} aria-hidden="true" /></span>
+                    {APP_NAME}
+                  </Link>
+                </div>
                 <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
                   <ThemeToggle />
                   <AdminNotificationBell tickets={user.permissions.some((p) => p.startsWith("ticket."))} />

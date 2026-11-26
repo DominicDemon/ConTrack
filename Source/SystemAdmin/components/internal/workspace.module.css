@@ -228,3 +228,55 @@
 .contractQuickActions > button { gap: 8px; padding-inline: 12px; white-space: nowrap; }
 .contractQuickActions > button > svg { flex-shrink: 0; }
 .contractQuickActions > button > strong { margin-inline-start: auto; }
+
+.shell.salesShell { position: relative; isolation: isolate; grid-template-columns: minmax(0, 1fr); }
+.salesShell .header { position: relative; z-index: 2; }
+.menuBrand { display: flex; align-items: center; gap: 10px; }
+.menuBrand .brandMark { width: 32px; height: 32px; }
+@media (max-width: 450px) {
+  .salesShell .header { gap: 4px; padding-inline: 8px; }
+  .menuBrand, .menuBrand .brand { gap: 4px; }
+}
+.sidebar.salesSidebar {
+  position: absolute;
+  z-index: 1;
+  inset: 74px auto 0 0;
+  width: min(235px, 86vw);
+  overflow-y: auto;
+  box-shadow: 8px 0 24px rgb(0 0 0 / 12%);
+  transition: transform 220ms ease, opacity 180ms ease, visibility 220ms;
+}
+.sidebar.hiddenSidebar { transform: translateX(-100%); opacity: 0; visibility: hidden; pointer-events: none; }
+@media (max-width: 850px) {
+  .sidebar.salesSidebar { inset-block-start: 56px; flex-direction: column; align-items: stretch; }
+  .salesSidebar nav { margin-left: 0; grid-auto-flow: row; }
+}
+@media (prefers-reduced-motion: reduce) { .sidebar.salesSidebar { transition: none; } }
+.salesShortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.navActive.salesShortcut { min-height: clamp(88px, 13vh, 132px); padding: 16px 20px; font-size: 1rem; border: 1px solid var(--border); }
+.salesShortcut:hover { background: var(--secondary); border-color: var(--primary); }
+.salesShortcut svg { flex-shrink: 0; color: var(--primary); }
+.salesShortcut svg:last-child { margin-inline-start: auto; }
+.recentContractsHeading { justify-content: space-between; flex-wrap: wrap; }
+.recentContractsHeading h2 { font-size: 16px; font-weight: 650; }
+.recentContractCode { margin-top: 4px; color: var(--muted-foreground); font-size: 11px; }
+@media (max-width: 600px) { .salesShortcuts { grid-template-columns: minmax(0, 1fr); } }
+
+.salesShell .main:has(.groupedOverview) { display: flex; flex-direction: column; }
+.page.groupedOverview { display: flex; flex: 1; flex-direction: column; width: 100%; max-width: none; margin: 0; }
+.overviewGroups { display: flex; flex: 1; gap: 16px; }
+.overviewGroup { display: flex; flex: 1; flex-direction: column; min-width: 0; padding: 16px; gap: 12px; }
+.overviewGroup h2 { font-size: 1.125rem; font-weight: 650; margin: 0; }
+.overviewWide { flex: 1.65; }
+.overviewTiles { flex: 1; display: grid; grid-auto-rows: 1fr; gap: 12px; }
+.overviewWide .overviewTiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.overviewTile { justify-content: center; flex-direction: column; text-align: center; min-height: 80px; }
+.overviewTile:hover, .overviewTile:focus-visible { outline: 1px solid var(--primary); outline-offset: -1px; }
+@media (max-width: 800px) {
+  .overviewGroups { flex-direction: column; }
+  .overviewTiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 420px) {
+  .overviewTiles, .overviewWide .overviewTiles { grid-template-columns: 1fr; }
+  .overviewTile { min-height: 48px; flex-direction: row; justify-content: flex-start; text-align: start; }
+}

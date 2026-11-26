@@ -4,7 +4,8 @@ namespace ContractManagement.Application.Features.Internal;
 
 public sealed record WordBlock(string Id, string Location, string Text,
     int? TableId = null, int? Row = null, int? Cell = null, int ColSpan = 1, string? VerticalMerge = null,
-    List<WordImagePreview>? Images = null, bool Heading = false, string? BodyUnit = null, bool ClauseTitle = false);
+    List<WordImagePreview>? Images = null, bool Heading = false, string? BodyUnit = null, bool ClauseTitle = false, List<WordTextFormat>? Formatting = null);
+public sealed record WordTextFormat(int Start, int End, bool? Bold = null, int? Size = null);
 public sealed record WordImagePreview(string Mime, string Base64);
 public sealed record WordExtraction(string Name, string DocumentBase64, List<WordBlock> Blocks, List<DraftField> CoreFields)
 {

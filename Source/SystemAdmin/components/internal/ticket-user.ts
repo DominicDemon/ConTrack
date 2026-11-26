@@ -4,17 +4,7 @@ import { useInternalUser } from "./internal-shell";
 /** The fields main's ticket pages read from the legacy auth store, taken from the internal session (department + position). */
 export function useTicketUser() {
   const user = useInternalUser();
-  const isSupportDept = Boolean(
-    user?.department &&
-    (user.department.includes("Kỹ Thuật") ||
-     user.department.includes("Kế Toán") ||
-     user.department.includes("Hành Chính") ||
-     user.department.includes("Pháp Chế"))
-  );
-  const canAccess =
-    Boolean(user) &&
-    isSupportDept &&
-    (user.permissions.includes("ticket.handle") || user.permissions.includes("ticket.manage.all"));
+  const canAccess = Boolean(user?.permissions.some(permission => permission === "ticket.handle" || permission === "ticket.manage.all"));
 
   return {
     username: user?.username ?? "",

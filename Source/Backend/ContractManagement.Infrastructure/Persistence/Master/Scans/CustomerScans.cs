@@ -26,6 +26,16 @@ public static class CustomerScans
 
     private sealed record Identity(string? Phone, string? Email, IReadOnlyList<string> TaxCodes);
 
+    /// <summary>
+    /// The contracts a customer may see on the portal: sent to them for review at least once, or already waiting for
+    /// signature, signed or completed. A draft the company has not approved and sent stays hidden: nothing reaches the
+    /// customer before Hành chính approves it.
+    /// </summary>
+    public static IQueryable<ContractDocument> SentToCustomer(MasterDbContext db, long customerId) =>
+        db.ContractDocuments.AsNoTracking().Where(document => document.CustomerId == customerId && document.TenantId == null
+            && ((document.ContractDocumentStatus >= (int)ContractDocumentStatus.PendingSignature && document.ContractDocumentStatus <= (int)ContractDocumentStatus.Completed)
+                || db.ContractReviewRequests.Any(review => review.ContractDocumentId == document.ContractDocumentId)));
+
     public static async Task<IReadOnlyList<CustomerScanMatch>> ForCustomerAsync(MasterDbContext db, long customerId, CancellationToken cancellationToken)
     {
         var who = await IdentityAsync(db, customerId, cancellationToken);

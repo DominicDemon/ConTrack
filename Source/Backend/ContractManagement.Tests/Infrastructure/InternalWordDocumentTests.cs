@@ -44,6 +44,28 @@ public class InternalWordDocumentTests
     }
 
     [Fact]
+    public void FormatsOnlySelectedCharactersAcrossRunsInsideTable()
+    {
+        using var source = new MemoryStream();
+        using (var doc = WordprocessingDocument.Create(source, WordprocessingDocumentType.Document))
+        {
+            var cell = new Paragraph(new Run(new Text("Ông Giám ")), new Run(new RunProperties(new Italic()), new Text("đốc ký")));
+            doc.AddMainDocumentPart().Document = new Document(new Body(new Table(new TableRow(
+                new TableCell(cell), new TableCell(new Paragraph(new Run(new Text("Giám đốc"))))))));
+        }
+        var bytes = source.ToArray();
+        var blocks = InternalWordDocument.Blocks(bytes);
+        blocks[0] = blocks[0] with { Formatting = [new(4, 12, true, 18)] };
+        var result = InternalWordDocument.Edit(bytes, blocks);
+        using var output = WordprocessingDocument.Open(new MemoryStream(result), false);
+        var runs = output.MainDocumentPart!.Document!.Descendants<Run>().ToList();
+        Assert.Equal("Giám đốc", string.Concat(runs.Where(r => r.RunProperties?.Bold?.Val?.Value == true).Select(r => r.InnerText)));
+
+        Assert.NotNull(runs.Single(r => r.InnerText == "đốc").RunProperties!.Italic);
+        Assert.All(runs.Where(r => r.RunProperties?.Bold?.Val?.Value == true), r => Assert.Equal("36", r.RunProperties!.FontSize!.Val!.Value));
+        Assert.Null(runs.Last().RunProperties?.Bold);
+    }
+    [Fact]
     public void ContractFontReplacesThemeAndStyleFontsWithoutChangingFormattingOrImages()
     {
         var result = InternalWordDocument.StandardizeContractFont(MixedFonts());

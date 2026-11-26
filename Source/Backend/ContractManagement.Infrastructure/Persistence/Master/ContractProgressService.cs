@@ -9,7 +9,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 /// <param name="From">First day (Vietnam time) the contract was created, inclusive.</param>
 /// <param name="To">Last day (Vietnam time) the contract was created, inclusive.</param>
 public sealed record ProgressFilter(string? Search = null, long? OwnerId = null, string? Stage = null, int? WaitingDays = null, bool Mine = false, int Page = 1,
-    DateOnly? From = null, DateOnly? To = null);
+    DateOnly? From = null, DateOnly? To = null, bool Recent = false);
 /// <param name="CanDelete">A rejected or cancelled contract this employee may remove for good (ContractHardDelete).</param>
 public sealed record ProgressRow(long Id, string Code, string Name, string Customer, long OwnerId, string Owner, string Stage, string Department, DateTime? EnteredAt, string? LastActor, bool NeedsMe,
     int Status = 0, bool CanDelete = false, DateTime? CreatedAt = null);
@@ -126,6 +126,10 @@ public sealed class ContractProgressService(MasterDbContext db)
         var sentCount = rows.Count(r => sent.Contains(r.Id));
         if (filter.Stage == "SENT") rows = rows.Where(r => sent.Contains(r.Id)).ToList();
         else if (!string.IsNullOrEmpty(filter.Stage)) rows = rows.Where(x => x.Stage == filter.Stage).ToList();
-        return new(rows.OrderBy(x => x.EnteredAt == null).ThenBy(x => x.EnteredAt).ThenBy(x => x.Id).Skip((filter.Page - 1) * 10).Take(10).ToList(), rows.Count, filter.Page, 10, counts, now, sentCount);
+        var ordered = filter.Recent
+            ? rows.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+            : rows.OrderBy(x => x.EnteredAt == null).ThenBy(x => x.EnteredAt).ThenBy(x => x.Id);
+        var pageSize = filter.Recent ? 5 : 10;
+        return new(ordered.Skip((filter.Page - 1) * pageSize).Take(pageSize).ToList(), rows.Count, filter.Page, pageSize, counts, now, sentCount);
     }
 }

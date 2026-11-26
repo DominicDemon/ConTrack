@@ -11,7 +11,7 @@ import ContractTabs from "./contract-tabs";
 import s from "./workspace.module.css";
 
 /** Every step a contract goes through, in order; the list filters on them. */
-const stages: Record<string, string> = {
+export const stages: Record<string, string> = {
   DRAFT: "Đang soạn", OFFICE: "Hành chính kiểm tra", RETURNED: "Trả lại chỉnh sửa", APPROVED: "Chờ Sale gửi", OFFICE_SEND: "Chờ Hành chính gửi",
   CUSTOMER: "Chờ khách phản hồi", CHANGES: "Khách yêu cầu xử lý", FINAL_CHECK: "Duyệt bản chốt", SIGNATURE: "Chờ ký",
   PAPER_SIGNATURE: "Chờ nộp bản ký giấy", PAPER_REVIEW: "Chờ xác nhận bản ký giấy", SIGNED: "Đã ký", CANCELLED: "Đã hủy", REJECTED: "Bị từ chối",

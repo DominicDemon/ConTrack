@@ -173,11 +173,15 @@ public sealed class InternalWordDocument(IConfiguration configuration)
             if (blocks.Count != paragraphs.Count || blocks.Select(b => b.Id).Distinct().Count() != blocks.Count
                 || blocks.Sum(b => b.Text.Length) > 100000)
                 throw new ArgumentException("Danh sách đoạn văn không khớp với file.");
+            var sizeBookmarkId = Roots(doc).SelectMany(r => r.Root.Descendants<BookmarkStart>())
+                .Select(b => int.TryParse(b.Id, out var id) ? id : 0).DefaultIfEmpty().Max();
             for (var i = 0; i < paragraphs.Count; i++)
             {
                 if (blocks[i].Id != paragraphs[i].Block.Id || blocks[i].Text.Length > 20000)
                     throw new ArgumentException("Đoạn văn không hợp lệ.");
                 Replace(paragraphs[i].Paragraph, paragraphs[i].Block.Text, blocks[i].Text);
+                if (blocks[i].Formatting is { Count: > 0 } changes)
+                    ApplyTextFormatting(paragraphs[i].Paragraph, blocks[i].Text.Length, changes, ref sizeBookmarkId);
             }
             if (bodyOrder != null)
             {
@@ -405,6 +409,64 @@ public sealed class InternalWordDocument(IConfiguration configuration)
     }
 
     // Keep unchanged prefix/suffix runs, including their formatting. Replacement inherits the first affected run.
+    private static void ApplyTextFormatting(Paragraph paragraph, int length, List<WordTextFormat> changes, ref int bookmarkId)
+    {
+        if (changes.Count > 256 || changes.Any(f => f is null || f.Start < 0 || f.End <= f.Start ||
+            f.End > length || f.Size is < 8 or > 72 || (f.Bold is null && f.Size is null)))
+            throw new ArgumentException("Vùng chữ hoặc cỡ chữ không hợp lệ.");
+
+        var offset = 0;
+        foreach (var node in TextNodes(paragraph).ToList())
+        {
+            var start = offset;
+            var text = node.Text;
+            offset += text.Length;
+            var edits = changes.Where(f => f.Start < offset && f.End > start).ToList();
+            if (edits.Count == 0 || node.Parent is not Run run || text.Length == 0) continue;
+            // Split around the text node, preserving tabs, drawings and field characters in their original order.
+            var prefix = (Run)run.CloneNode(false);
+            prefix.RunProperties = (RunProperties?)run.RunProperties?.CloneNode(true);
+            foreach (var child in run.ChildElements.TakeWhile(c => c != node).Where(c => c is not RunProperties).ToList())
+            {
+                child.Remove();
+                prefix.Append(child);
+            }
+            if (prefix.ChildElements.Any(c => c is not RunProperties)) run.InsertBeforeSelf(prefix);
+            var cuts = edits.SelectMany(f => new[] { Math.Max(start, f.Start), Math.Min(offset, f.End) })
+                .Append(start).Append(offset).Distinct().Order().ToArray();
+            for (var i = 1; i < cuts.Length; i++)
+            {
+                var part = (Run)run.CloneNode(false);
+                var props = part.RunProperties = (RunProperties?)run.RunProperties?.CloneNode(true) ?? new RunProperties();
+                foreach (var edit in edits.Where(f => f.Start <= cuts[i-1] && f.End >= cuts[i]))
+                {
+                    if (edit.Bold is bool bold)
+                    {
+                        props.Bold = new Bold { Val = bold };
+                        props.BoldComplexScript = new BoldComplexScript { Val = bold };
+                    }
+                    if (edit.Size is int size)
+                    {
+                        var value = (size * 2).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                        props.FontSize = new FontSize { Val = value };
+                        props.FontSizeComplexScript = new FontSizeComplexScript { Val = value };
+
+                    }
+                }
+                part.Append(new Text(text[(cuts[i-1]-start)..(cuts[i]-start)]) { Space = SpaceProcessingModeValues.Preserve });
+                if (edits.Any(f => f.Size.HasValue && f.Start <= cuts[i-1] && f.End >= cuts[i]))
+                {
+                    var id = (++bookmarkId).ToString();
+                    run.InsertBeforeSelf(new BookmarkStart { Id = id, Name = "ConTrackSize_" + id });
+                    run.InsertBeforeSelf(part);
+                    run.InsertBeforeSelf(new BookmarkEnd { Id = id });
+                }
+                else run.InsertBeforeSelf(part);
+            }
+            node.Remove();
+            if (!run.ChildElements.Any(c => c is not RunProperties)) run.Remove();
+        }
+    }
     private static void Replace(Paragraph paragraph, string oldText, string newText)
     {
         if (oldText == newText) return;
@@ -542,8 +604,13 @@ public sealed class InternalWordDocument(IConfiguration configuration)
                 if (overrides.Contains("size"))
                 {
                     var size = title ? format.TitleFontSize : heading ? format.HeadingFontSize : format.BodyFontSize;
-                    foreach (var run in paragraph.Descendants<Run>().Where(r => r.Elements<Text>().Any()))
+                    var localSizes = new HashSet<string>();
+                    foreach (var element in paragraph.Descendants())
                     {
+                        if (element is BookmarkStart mark && mark.Name?.Value?.StartsWith("ConTrackSize_", StringComparison.Ordinal) == true)
+                            localSizes.Add(mark.Id!.Value!);
+                        if (element is BookmarkEnd end && end.Id?.Value is string id) localSizes.Remove(id);
+                        if (element is not Run run || localSizes.Count > 0 || !run.Elements<Text>().Any()) continue;
                         run.RunProperties ??= new RunProperties();
                         var halfPoints = ((int)Math.Round(size * 2)).ToString(System.Globalization.CultureInfo.InvariantCulture);
                         run.RunProperties.FontSize = new FontSize { Val = halfPoints };

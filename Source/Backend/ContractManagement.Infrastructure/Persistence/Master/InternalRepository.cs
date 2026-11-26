@@ -8,10 +8,13 @@ using ContractDocumentFileRoles = ContractManagement.Domain.Internal.Scans.Contr
 using SignedEvidenceStatus = ContractManagement.Domain.Internal.Scans.SignedEvidenceStatus;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 
 namespace ContractManagement.Infrastructure.Persistence.Master;
 
-public sealed class InternalRepository(MasterDbContext db, InternalTemplateStorage storage, InternalWordTemplates? word = null) : IInternalRepository
+public sealed class InternalRepository(MasterDbContext db, InternalTemplateStorage storage, InternalWordTemplates? word = null,
+    IConfiguration? configuration = null, IHostEnvironment? environment = null) : IInternalRepository
 {
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     internal const string SnapshotKey = "__draft.v1";
@@ -55,7 +58,7 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
             else
                 permissions = permissions.Append("ticket.handle").Distinct().ToArray();
         }
-        else
+        else if (!CanUseLocalSupport(employee.EmployeeUsername))
         {
             permissions = permissions.Where(p => p != "ticket.handle" && p != "ticket.manage.all").Distinct().ToArray();
         }
@@ -63,6 +66,11 @@ public sealed class InternalRepository(MasterDbContext db, InternalTemplateStora
         return new(id, employee.EmployeeDisplayName, employee.EmployeeUsername, permissions, employee.EmployeeMustChangePassword,
             departmentRow?.DepartmentName, isManager || isSysAdmin);
     }
+    private bool CanUseLocalSupport(string username) =>
+        environment?.IsDevelopment() == true &&
+        (configuration?["LocalTesting:SupportUsers"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Contains(username, StringComparer.OrdinalIgnoreCase);
+
     public Task<List<TemplateDefinition>> Templates(CancellationToken ct) => TemplateLibrary(false, ct);
     public Task<List<TemplateDefinition>> TemplateLibrary(bool allTypes, CancellationToken ct) => TemplateLibrary(allTypes, ct, null);
 

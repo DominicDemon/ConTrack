@@ -194,8 +194,13 @@ public static class ScanEndpoints
             .Need(ScannedContractPermissions.View, ScannedContractPermissions.Upload)
             .AcceptsUpload(MaxBatchUploadBytes);
 
-        routes.MapGet("/scanned-contracts/batches", async (int? page, int? pageSize, ScannedContractService service, CancellationToken ct) =>
-            Results.Ok(await service.ListBatchesAsync(page, pageSize, ct))).Need(ScannedContractPermissions.View);
+        routes.MapGet("/scanned-contracts/batches", async (
+                int? page, int? pageSize, string? filter, string? q, ScannedContractService service, CancellationToken ct) =>
+            {
+                var which = Enum.TryParse<ScannedBatchFilter>(filter, ignoreCase: true, out var parsed) ? parsed : ScannedBatchFilter.All;
+                return Results.Ok(await service.ListBatchesAsync(page, pageSize, which, q, ct));
+            })
+            .Need(ScannedContractPermissions.View);
 
         routes.MapGet("/scanned-contracts/batches/{batchId:long}", async (long batchId, ScannedContractService service, CancellationToken ct) =>
             Results.Ok(await service.GetBatchAsync(batchId, ct))).Need(ScannedContractPermissions.View);
@@ -226,6 +231,13 @@ public static class ScanEndpoints
         routes.MapDelete("/scanned-contracts/jobs/{jobId:long}/keywords/{keywordId:long}", async (long jobId, long keywordId, ScannedContractService service, CancellationToken ct) =>
         {
             await service.RemoveKeywordAsync(jobId, keywordId, ct);
+            return Results.NoContent();
+        }).Need(ScannedContractPermissions.View, ScannedContractPermissions.Upload);
+
+        // A scan uploaded by mistake: by the uploader or a checker; not once a contract was made from it.
+        routes.MapDelete("/scanned-contracts/jobs/{jobId:long}", async (long jobId, ScannedContractService service, CancellationToken ct) =>
+        {
+            await service.DeleteJobAsync(jobId, ct);
             return Results.NoContent();
         }).Need(ScannedContractPermissions.View, ScannedContractPermissions.Upload);
 

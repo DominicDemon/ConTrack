@@ -10,12 +10,17 @@ const BY_EXTENSION: Record<string, string> = { pdf: "application/pdf", png: "ima
 /** Types a browser tab shows by itself: a scanned PDF or a photo of the paper. */
 const VIEWABLE = /^(application\/pdf|image\/(png|jpeg|gif|webp))$/;
 
-/** Download and view buttons for a scan file, which may be encrypted: the employee's 12-character key is asked when needed. */
-export function ScanFileButtons({ load, fileName, contentType }: {
+interface ScanFileSource {
   load: (key: string | undefined) => Promise<Blob>;
   fileName: string;
   contentType?: string | null;
-}) {
+}
+
+/**
+ * Opens a scan file, which may be encrypted: the employee's 12-character key is asked when needed.
+ * open(true) downloads it; open(false) shows it in a new tab when the browser can.
+ */
+export function useScanFile({ load, fileName, contentType }: ScanFileSource) {
   const { ensureKey, withFileKey } = useFileKey();
   const [opening, setOpening] = useState(false);
   // The opened file is kept for this page, so viewing after a download needs neither the key nor the server again.
@@ -59,6 +64,12 @@ export function ScanFileButtons({ load, fileName, contentType }: {
     }
   };
 
+  return { open, opening, viewable };
+}
+
+/** Download and view buttons for a scan file. */
+export function ScanFileButtons(source: ScanFileSource) {
+  const { open, opening, viewable } = useScanFile(source);
   return (
     <>
       <Button variant="outline" size="sm" disabled={opening} onClick={() => void open(true)}>

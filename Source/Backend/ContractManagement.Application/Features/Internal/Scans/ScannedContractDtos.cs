@@ -25,7 +25,27 @@ public sealed record ScannedJobSummaryDto(
     string OcrStatus,
     string JobStatus,
     long? ContractId,
-    string? ContractCode);
+    string? ContractCode,
+    int? PageCount = null,
+    string? FoundContractCode = null,
+    string? FoundTaxCode = null,
+    string? FoundCustomerName = null,
+    string? SameFileAs = null,
+    int SameContractCodeCount = 0);
+
+/// <summary>Which scans the list keeps: all, those to check again, those without a contract yet, or the employee's own.</summary>
+public enum ScannedBatchFilter { All, Review, NoContract, Mine }
+
+/// <summary>How many scans the employee may see, by state; each count opens the matching filter.</summary>
+public sealed record ScannedBatchSummaryDto(int Files, int Review, int NoContract, int Reading, int Mine);
+
+/// <summary>A page of batches plus the counts over every scan the employee may see.</summary>
+public sealed record ScannedBatchListDto(
+    IReadOnlyList<ScannedBatchDto> Items,
+    int Total,
+    int Page,
+    int PageSize,
+    ScannedBatchSummaryDto Summary);
 
 /// <summary>What OCR read, offered to the checker to start the contract from. Every value can be changed.</summary>
 public sealed record ScannedSuggestionDto(

@@ -20,6 +20,31 @@ export interface ScannedJobSummary {
   jobStatus: OcrJobStatus;
   contractId: string | null;
   contractCode: string | null;
+  pageCount: number | null;
+  /** The first contract code, tax code and party name OCR read, to recognise the scan without opening it. */
+  foundContractCode: string | null;
+  foundTaxCode: string | null;
+  foundCustomerName: string | null;
+  /** The name of another scan with exactly the same content, if any. */
+  sameFileAs: string | null;
+  /** How many other scans carry the same contract code. */
+  sameContractCodeCount: number;
+}
+
+/** Which scans the list keeps. */
+export type ScannedBatchFilter = "all" | "review" | "noContract" | "mine";
+
+/** Counts over every scan the employee may see; they do not change with the filter. */
+export interface ScannedBatchSummary {
+  files: number;
+  review: number;
+  noContract: number;
+  reading: number;
+  mine: number;
+}
+
+export interface ScannedBatchList extends ScanPage<ScannedBatch> {
+  summary: ScannedBatchSummary;
 }
 
 /** One page of a list; total counts every row the employee may see. */
@@ -125,8 +150,11 @@ export const scannedContractsApi = {
     return data;
   },
 
-  async listBatches(page = 1, pageSize = 10): Promise<ScanPage<ScannedBatch>> {
-    const { data } = await scanApi.get<ScanPage<ScannedBatch>>("/scanned-contracts/batches", { params: { page, pageSize } });
+  /** With a filter or a file name, only batches holding a matching scan are listed, each with just those scans. */
+  async listBatches(page = 1, pageSize = 10, filter: ScannedBatchFilter = "all", q = ""): Promise<ScannedBatchList> {
+    const { data } = await scanApi.get<ScannedBatchList>("/scanned-contracts/batches", {
+      params: { page, pageSize, filter, q: q.trim() || undefined },
+    });
     return data;
   },
 
@@ -166,6 +194,11 @@ export const scannedContractsApi = {
 
   async removeKeyword(jobId: string, keywordId: string): Promise<void> {
     await scanApi.delete(`/scanned-contracts/jobs/${jobId}/keywords/${keywordId}`);
+  },
+
+  /** A scan uploaded by mistake; refused while OCR reads it or once a contract was made from it. */
+  async deleteJob(jobId: string): Promise<void> {
+    await scanApi.delete(`/scanned-contracts/jobs/${jobId}`);
   },
 
   async confirm(jobId: string, input: ConfirmScannedContractInput): Promise<ScannedJobDetail> {

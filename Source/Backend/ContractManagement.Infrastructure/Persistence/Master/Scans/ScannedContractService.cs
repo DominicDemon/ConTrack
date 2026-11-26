@@ -32,6 +32,7 @@ public sealed class ScannedContractService(
     public const string JobEntity = "OCR_JOB";
     public const string KeywordAddedAction = "ScanKeywordAdded";
     public const string KeywordRemovedAction = "ScanKeywordRemoved";
+    public const string JobDeletedAction = "ScannedJobDeleted";
 
     /// <summary>One upload; a scanner usually makes one PDF per contract.</summary>
     public const int MaxFilesPerBatch = 20;
@@ -173,22 +174,62 @@ public sealed class ScannedContractService(
     public const int MaxPageSize = 50;
 
     /// <summary>Newest first, one page at a time: the list grows with every upload and is asked for again while OCR reads.</summary>
-    public async Task<ScanPageDto<ScannedBatchDto>> ListBatchesAsync(int? page, int? pageSize, CancellationToken cancellationToken)
+    /// <remarks>
+    /// With a filter or a file name, a batch is listed when one of its files matches, and only the matching files are shown.
+    /// The summary always counts every scan the employee may see, so it does not change with the filter.
+    /// </remarks>
+    public async Task<ScannedBatchListDto> ListBatchesAsync(
+        int? page, int? pageSize, ScannedBatchFilter filter, string? fileName, CancellationToken cancellationToken)
     {
         var (number, size) = Paging(page, pageSize, 10);
         var me = currentEmployee.EmployeeId;
         var seesAll = SeesAll;
+
+        // Only scanned contracts: their jobs have no CONTRACT_DOCUMENTS row.
+        var visible =
+            from job in db.OcrJobs.AsNoTracking()
+            join batch in db.OcrBatches.AsNoTracking() on job.OcrBatchId equals batch.OcrPatchId
+            where job.ContractDocumentId == null && (seesAll || batch.UploadedByEmployeeId == me)
+            select new { job, Mine = batch.UploadedByEmployeeId == me };
+        var withContract = db.Contracts.AsNoTracking().Where(contract => contract.FileStorageFileid != null);
+        var review = new[] { OcrJobStatuses.NeedReview, OcrJobStatuses.Failed };
+        var reading = new[] { OcrJobStatuses.Queued, OcrJobStatuses.Processing };
+
+        var matching = filter switch
+        {
+            ScannedBatchFilter.Review => visible.Where(row => review.Contains(row.job.OcrJobProcessingStatus)),
+            ScannedBatchFilter.NoContract => visible.Where(row => !reading.Contains(row.job.OcrJobProcessingStatus)
+                && !withContract.Any(contract => contract.FileStorageFileid == row.job.FileStorageFileid)),
+            ScannedBatchFilter.Mine => visible.Where(row => row.Mine),
+            _ => visible,
+        };
+        var name = fileName?.Trim();
+        if (!string.IsNullOrEmpty(name))
+        {
+            matching = matching.Where(row => db.FileStorages.Any(file =>
+                file.FileStorageFileid == row.job.FileStorageFileid && file.FileStorageFilename.Contains(name)));
+        }
+
+        var matchingJobs = matching.Select(row => row.job);
         var query = db.OcrBatches.AsNoTracking()
-            .Where(batch => seesAll || batch.UploadedByEmployeeId == me)
-            // Only batches of scanned contracts: their jobs have no CONTRACT_DOCUMENTS row.
-            .Where(batch => db.OcrJobs.Any(job => job.OcrBatchId == batch.OcrPatchId && job.ContractDocumentId == null));
+            .Where(batch => matchingJobs.Any(job => job.OcrBatchId == batch.OcrPatchId));
         var total = await query.CountAsync(cancellationToken);
         var batches = await query
             .OrderByDescending(batch => batch.OcrPatchId)
             .Skip((number - 1) * size)
             .Take(size)
             .ToListAsync(cancellationToken);
-        return new ScanPageDto<ScannedBatchDto>(await ToBatchDtosAsync(batches, cancellationToken), total, number, size);
+
+        var summary = new ScannedBatchSummaryDto(
+            await visible.CountAsync(cancellationToken),
+            await visible.CountAsync(row => review.Contains(row.job.OcrJobProcessingStatus), cancellationToken),
+            await visible.CountAsync(row => !reading.Contains(row.job.OcrJobProcessingStatus)
+                && !withContract.Any(contract => contract.FileStorageFileid == row.job.FileStorageFileid), cancellationToken),
+            await visible.CountAsync(row => reading.Contains(row.job.OcrJobProcessingStatus), cancellationToken),
+            await visible.CountAsync(row => row.Mine, cancellationToken));
+
+        return new ScannedBatchListDto(
+            await ToBatchDtosAsync(batches, cancellationToken, matchingJobs), total, number, size, summary);
     }
 
     /// <summary>Page from 1, size from 1 to <see cref="MaxPageSize"/>; a page past the end comes back empty.</summary>
@@ -572,6 +613,52 @@ public sealed class ScannedContractService(
     }
 
     /// <summary>A job of a scanned contract (no CONTRACT_DOCUMENTS row) in a batch this employee may see.</summary>
+    /// <summary>
+    /// Removes a scan uploaded by mistake (wrong file, unreadable, a test): the encrypted file and its OCR copy, its
+    /// keywords, the keys that open it, the job, and the batch once empty. Who may: the one who uploaded it, or a checker
+    /// (GetJobRowAsync only finds scans in batches the employee may see). Refused while OCR still reads it, and once a
+    /// contract was made from it: the contract keeps the scan as its original. Written to AUDIT_LOG.
+    /// </summary>
+    public async Task DeleteJobAsync(long jobId, CancellationToken cancellationToken)
+    {
+        var (job, file) = await GetJobRowAsync(jobId, cancellationToken);
+        if (job.OcrJobProcessingStatus is OcrJobStatuses.Queued or OcrJobStatuses.Processing)
+        {
+            throw new InternalAppException(409, "Hệ thống đang đọc nội dung bản scan. Hãy chờ đọc xong rồi xóa.");
+        }
+
+        if (await db.Contracts.AnyAsync(contract => contract.FileStorageFileid == file.FileStorageFileid, cancellationToken))
+        {
+            throw new InternalAppException(409, "Bản scan này đã được lập hồ sơ hợp đồng nên không xóa được.");
+        }
+
+        var fileId = file.FileStorageFileid;
+        await db.ExecuteInTransactionAsync(async () =>
+        {
+            // Rows that name the scan without a foreign key first, then the job and the file.
+            await db.ContractScanKeywords.Where(row => row.FileStorageFileid == fileId).ExecuteDeleteAsync(cancellationToken);
+            await db.FileEncryptionKeys.Where(row => row.FileStorageFileid == fileId).ExecuteDeleteAsync(cancellationToken);
+            await db.CustomerFileKeys.Where(row => row.FileStorageFileid == fileId).ExecuteDeleteAsync(cancellationToken);
+            // Duplicate warnings (table of an optional script): removed when the table exists.
+            // Dynamic SQL so a database without the table still runs this statement.
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"IF OBJECT_ID(N'SCANNED_JOB_DUPLICATE') IS NOT NULL EXEC sp_executesql N'DELETE FROM SCANNED_JOB_DUPLICATE WHERE ocr_job_id = @job OR other_ocr_job_id = @job', N'@job BIGINT', @job = {jobId}",
+                cancellationToken);
+            await db.OcrJobs.Where(row => row.OcrJobId == jobId).ExecuteDeleteAsync(cancellationToken);
+            await db.FileStorages.Where(row => row.FileStorageFileid == fileId).ExecuteDeleteAsync(cancellationToken);
+            await db.OcrBatches.Where(batch => batch.OcrPatchId == job.OcrBatchId && !db.OcrJobs.Any(other => other.OcrBatchId == batch.OcrPatchId))
+                .ExecuteDeleteAsync(cancellationToken);
+            db.AuditLogs.Add(Audit(JobDeletedAction, JobEntity, jobId,
+                new { fileId, fileName = file.FileStorageFilename, sha256 = file.FileStorageSha256, batchId = job.OcrBatchId, ocrStatus = job.OcrJobProcessingStatus }));
+            await db.SaveChangesAsync(cancellationToken);
+            return true;
+        }, cancellationToken);
+
+        // The bytes go once the rows are gone; a file left behind by a failure here is unreadable without its keys.
+        await files.DeleteAsync(file.FileStorageStoragekey, CancellationToken.None);
+        await staging.DeleteAsync(fileId, CancellationToken.None);
+    }
+
     private async Task<(OcrJob Job, FileStorage File)> GetJobRowAsync(long jobId, CancellationToken cancellationToken)
     {
         var row = await (
@@ -617,11 +704,13 @@ public sealed class ScannedContractService(
         return readers;
     }
 
-    private async Task<IReadOnlyList<ScannedBatchDto>> ToBatchDtosAsync(IReadOnlyList<OcrBatch> batches, CancellationToken cancellationToken)
+    /// <param name="jobScope">When given, only these jobs of each batch are shown (the list's filter).</param>
+    private async Task<IReadOnlyList<ScannedBatchDto>> ToBatchDtosAsync(
+        IReadOnlyList<OcrBatch> batches, CancellationToken cancellationToken, IQueryable<OcrJob>? jobScope = null)
     {
         var batchIds = batches.Select(batch => batch.OcrPatchId).ToList();
         var jobs = await (
-                from job in db.OcrJobs.AsNoTracking()
+                from job in jobScope ?? db.OcrJobs.AsNoTracking()
                 join file in db.FileStorages.AsNoTracking() on job.FileStorageFileid equals file.FileStorageFileid
                 where batchIds.Contains(job.OcrBatchId)
                 select new { job, file })
@@ -634,6 +723,53 @@ public sealed class ScannedContractService(
             .ToDictionary(contract => contract.FileStorageFileid!.Value);
         var people = await PeopleAsync(batches.Select(batch => (long?)batch.UploadedByEmployeeId), cancellationToken);
 
+        // What OCR read, shown on the row so the scan is recognised without opening it.
+        var ids = jobs.Select(row => row.file.FileStorageFileid).ToList();
+        var shown = new[] { (int)ScanKeywordType.ContractCode, (int)ScanKeywordType.TaxCode, (int)ScanKeywordType.CustomerName };
+        var keywords = (await db.ContractScanKeywords.AsNoTracking()
+                .Where(keyword => ids.Contains(keyword.FileStorageFileid) && shown.Contains(keyword.ContractScanKeywordType))
+                .Select(keyword => new
+                {
+                    keyword.FileStorageFileid,
+                    keyword.ContractScanKeywordType,
+                    keyword.ContractScanKeywordValue,
+                    keyword.ContractScanKeywordSource,
+                    keyword.ContractScanKeywordPagenumber,
+                })
+                .ToListAsync(cancellationToken))
+            .ToLookup(keyword => keyword.FileStorageFileid);
+        string? First(long fileId, ScanKeywordType type) => keywords[fileId]
+            .Where(keyword => keyword.ContractScanKeywordType == (int)type)
+            .OrderBy(keyword => keyword.ContractScanKeywordSource)
+            .ThenBy(keyword => keyword.ContractScanKeywordPagenumber)
+            .Select(keyword => keyword.ContractScanKeywordValue)
+            .FirstOrDefault();
+
+        // Possible duplicates among the scanned contracts the employee may see: the same file, or the same contract code.
+        var me = currentEmployee.EmployeeId;
+        var seesAll = SeesAll;
+        var otherScans =
+            from job in db.OcrJobs.AsNoTracking()
+            join batch in db.OcrBatches.AsNoTracking() on job.OcrBatchId equals batch.OcrPatchId
+            join file in db.FileStorages.AsNoTracking() on job.FileStorageFileid equals file.FileStorageFileid
+            where job.ContractDocumentId == null && (seesAll || batch.UploadedByEmployeeId == me)
+            select file;
+        var hashes = jobs.Select(row => row.file.FileStorageSha256).Distinct().ToList();
+        var sameFiles = (await otherScans
+                .Where(file => hashes.Contains(file.FileStorageSha256))
+                .Select(file => new { file.FileStorageFileid, file.FileStorageSha256, file.FileStorageFilename })
+                .ToListAsync(cancellationToken))
+            .ToLookup(file => file.FileStorageSha256);
+        var codes = ids.Select(id => First(id, ScanKeywordType.ContractCode)).OfType<string>().Distinct().ToList();
+        var sameCodes = (await db.ContractScanKeywords.AsNoTracking()
+                .Where(keyword => keyword.ContractScanKeywordType == (int)ScanKeywordType.ContractCode
+                    && codes.Contains(keyword.ContractScanKeywordValue)
+                    && otherScans.Any(file => file.FileStorageFileid == keyword.FileStorageFileid))
+                .Select(keyword => new { keyword.ContractScanKeywordValue, keyword.FileStorageFileid })
+                .Distinct()
+                .ToListAsync(cancellationToken))
+            .ToLookup(keyword => keyword.ContractScanKeywordValue, StringComparer.OrdinalIgnoreCase);
+
         return batches.Select(batch => new ScannedBatchDto(
                 batch.OcrPatchId,
                 batch.BatchStatus,
@@ -644,16 +780,25 @@ public sealed class ScannedContractService(
                     .OrderBy(row => row.job.OcrJobId)
                     .Select(row =>
                     {
-                        var contract = contracts.GetValueOrDefault(row.file.FileStorageFileid);
+                        var fileId = row.file.FileStorageFileid;
+                        var contract = contracts.GetValueOrDefault(fileId);
+                        var code = First(fileId, ScanKeywordType.ContractCode);
                         return new ScannedJobSummaryDto(
                             row.job.OcrJobId,
-                            row.file.FileStorageFileid,
+                            fileId,
                             row.file.FileStorageFilename,
                             row.file.FileStorageFilesize,
                             OcrJobStatuses.ToApiStatus(row.job.OcrJobProcessingStatus).ToString(),
                             row.job.OcrJobProcessingStatus,
                             contract?.ContractId,
-                            contract?.ContractCode);
+                            contract?.ContractCode,
+                            row.job.PageCount,
+                            code,
+                            First(fileId, ScanKeywordType.TaxCode),
+                            First(fileId, ScanKeywordType.CustomerName),
+                            sameFiles[row.file.FileStorageSha256]
+                                .FirstOrDefault(other => other.FileStorageFileid != fileId)?.FileStorageFilename,
+                            code is null ? 0 : sameCodes[code].Count(other => other.FileStorageFileid != fileId));
                     })
                     .ToList()))
             .ToList();

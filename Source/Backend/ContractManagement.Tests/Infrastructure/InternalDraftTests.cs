@@ -93,7 +93,7 @@ public class InternalDraftTests
         var ids = new List<long>();
         try
         {
-            var input = new DraftContent { TemplateId = template.Id, CustomerId = customer.Id, PartyType = "BUSINESS", CustomerBusinessId = business2.Id, Name = "Nháp kiểm thử", Terms = template.Terms.ToList(),
+            var input = new DraftContent { EffectiveDate = DateOnly.FromDateTime(DateTime.Today), ExpireDate = DateOnly.FromDateTime(DateTime.Today.AddYears(1)), TemplateId = template.Id, CustomerId = customer.Id, PartyType = "BUSINESS", CustomerBusinessId = business2.Id, Name = "Nháp kiểm thử", Terms = template.Terms.ToList(),
                 Items = [new(null, "Hạng mục kiểm thử", 2, 100000, 10, 0)], VatPercent = 10 };
             input.Fields["CUSTOMER_COMPANY"] = business2.Name; input.Fields["CUSTOMER_TAX_CODE"] = business2.TaxCode;
             var draft = await service.Save(null, new(input, null, null), sale, default); ids.Add(draft.Id);

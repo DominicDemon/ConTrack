@@ -172,7 +172,8 @@ public class ContractReviewTests
         async Task<DraftRecord> Approve(DraftRecord draft, InternalUser sale, InternalUser office)
         {
             await approvals.Act(draft.Id, "submit", new(draft.RowVersion, draft.VersionRowVersion), sale, default);
-            foreach (var permission in new[] { "contract.check", "contract.approve" })
+            // One step since the pre-send Sếp turn was removed: Hành chính approves and the Sale sends.
+            foreach (var permission in new[] { "contract.check" })
             {
                 draft = (await repo.Draft(draft.Id, default))!;
                 var state = await approvals.View(draft.Id, sale, default);
@@ -195,7 +196,7 @@ public class ContractReviewTests
         {
             DraftContent Content(long customer)
             {
-                var c = new DraftContent { TemplateId = template.Id, CustomerId = customer, PartyType = "PERSON", Name = "Hợp đồng gửi khách", Terms = template.Terms.Select(t => t with { Content = "Nội dung " + t.Key }).ToList(),
+                var c = new DraftContent { EffectiveDate = DateOnly.FromDateTime(DateTime.Today), ExpireDate = DateOnly.FromDateTime(DateTime.Today.AddYears(1)), TemplateId = template.Id, CustomerId = customer, PartyType = "PERSON", Name = "Hợp đồng gửi khách", Terms = template.Terms.Select(t => t with { Content = "Nội dung " + t.Key }).ToList(),
                     Items = [new(null, "Dịch vụ", 1, 1000000, 0, 0)], VatPercent = 10 };
                 foreach (var f in template.Fields) c.Fields[f.Key] = "Giá trị";
                 c.Milestones = [new("PAY1", "Thanh toán toàn bộ", c.Terms[0].Key, 100)];
@@ -211,11 +212,11 @@ public class ContractReviewTests
             // A draft for a customer with no email anywhere cannot be sent.
             var noEmail = await drafts.Save(null, new(Content(customerB.Id), null, null), sale, default); docIds.Add(noEmail.Id);
             Assert.NotNull(noEmail.SendBlockedReason);
-            Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => reviews.SendReview(noEmail.Id, new(null, noEmail.RowVersion, noEmail.VersionRowVersion, LinkExpiresAt: expires), sale, default))).Status);
+            Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => reviews.SendReview(noEmail.Id, new(null, noEmail.RowVersion, noEmail.VersionRowVersion, ContentConfirmed: true, LinkExpiresAt: expires), sale, default))).Status);
 
             // 1. Send: version locked, link emailed with the sale's expiry, no SMS. The token is stored hashed.
             draft = await Approve(draft, sale, office);
-            var first = await reviews.SendReview(draft.Id, new("Mời anh xem", draft.RowVersion, draft.VersionRowVersion, LinkExpiresAt: expires), sale, default);
+            var first = await reviews.SendReview(draft.Id, new("Mời anh xem", draft.RowVersion, draft.VersionRowVersion, ContentConfirmed: true, LinkExpiresAt: expires), sale, default);
             Assert.Equal(ContractReviewStatus.Sent, first.Status);
             Assert.True(first.LinkEmailSent);
             Assert.Equal(expires.UtcDateTime, first.LinkExpiresAt!.Value, TimeSpan.FromSeconds(1));
@@ -309,7 +310,7 @@ public class ContractReviewTests
             Assert.Equal(comment.Id, reply.ParentId);
             await reviews.ResolveComment(comment.Id, sale, default);
             Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => portal.Respond(customerA.Id, first.Id, new("APPROVE", null, "0000", view.RowVersion), null, null, default))).Status);
-            await Assert.ThrowsAsync<ArgumentException>(() => portal.Respond(customerA.Id, first.Id, new("REQUEST_CHANGES", " ", view.DocumentHash, view.RowVersion), null, null, default));
+            // A blank note is allowed here: the customer already commented on a term (ContractReviewPolicy, since the per-item comments).
             var changes = await portal.Respond(customerA.Id, first.Id, new("REQUEST_CHANGES", "Giảm giá 5%", view.DocumentHash, view.RowVersion), "127.0.0.1", "test", default);
             Assert.Equal(ContractReviewStatus.ChangesRequested, changes.Status);
             Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => portal.Respond(customerA.Id, first.Id, new("APPROVE", null, view.DocumentHash, changes.RowVersion), null, null, default))).Status);
@@ -326,7 +327,7 @@ public class ContractReviewTests
             v2.Content.Items[0] = v2.Content.Items[0] with { DiscountPercent = 5 };
             var edited = await drafts.Save(draft.Id, new(v2.Content, v2.RowVersion, v2.VersionRowVersion), sale, default);
             edited = await Approve(edited, sale, office);
-            var second = await reviews.SendReview(draft.Id, new(null, edited.RowVersion, edited.VersionRowVersion, LinkExpiresAt: expires), sale, default);
+            var second = await reviews.SendReview(draft.Id, new(null, edited.RowVersion, edited.VersionRowVersion, ContentConfirmed: true, LinkExpiresAt: expires), sale, default);
             var history = await reviews.Reviews(draft.Id, office, default);
             Assert.Equal([ContractReviewStatus.Sent, ContractReviewStatus.Superseded], history.Select(r => r.Status));
             Assert.Equal(2, history[0].VersionNo);
@@ -350,7 +351,7 @@ public class ContractReviewTests
             // 7. Rejection branch: reject then close.
             var draft2 = await drafts.Save(null, new(Content(customerA.Id), null, null), sale, default); docIds.Add(draft2.Id);
             draft2 = await Approve(draft2, sale, office);
-            var r2 = await reviews.SendReview(draft2.Id, new(null, draft2.RowVersion, draft2.VersionRowVersion, LinkExpiresAt: expires), sale, default);
+            var r2 = await reviews.SendReview(draft2.Id, new(null, draft2.RowVersion, draft2.VersionRowVersion, ContentConfirmed: true, LinkExpiresAt: expires), sale, default);
             var v = await portal.Review(customerA.Id, r2.Id, default);
             await portal.Respond(customerA.Id, r2.Id, new("REJECT", "Không phù hợp", v.DocumentHash, v.RowVersion), null, null, default);
             Assert.Equal(7, (await drafts.Get(draft2.Id, sale, default)).Status);
@@ -362,8 +363,9 @@ public class ContractReviewTests
             Assert.Equal(6, (await drafts.Get(draft2.Id, sale, default)).Status);
             Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => reviews.Followup(r2.Id, new(ContractReviewStatus.Negotiate, null, closed.RowVersion), sale, default))).Status);
 
-            // 8. Reset is refused once the customer changed the temporary password.
-            Assert.Equal(409, (await Assert.ThrowsAsync<InternalAppException>(() => reviews.ResetTemporaryPassword(customerA.Id, sale, default))).Status);
+            // 8. A customer who set a password of their own and forgot it gets a new temporary one, to change at the next sign-in.
+            await reviews.ResetTemporaryPassword(customerA.Id, office, default);
+            Assert.True((await portal.Get(customerA.Id, default))!.MustChangePassword);
         }
         finally
         {

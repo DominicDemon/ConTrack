@@ -112,9 +112,9 @@ public sealed class ContractProgressService(MasterDbContext db)
                     version.ContractVersionIslocked, item.CustomerPersonalPhone, item.CustomerEmail) is null;
             if (officeReady) stage = "OFFICE_SEND";
             var owner = doc.EmployeeId == actor.Id;
-            var department = stage switch { "OFFICE" or "RETURNED" or "OFFICE_SEND" or "PAPER_REVIEW" => "Hành chính", "DIRECTOR" or "FINAL_CHECK" => "Sếp", "CUSTOMER" => "Khách hàng",
+            var department = stage switch { "OFFICE" or "RETURNED" or "OFFICE_SEND" or "PAPER_REVIEW" or "FINAL_CHECK" => "Hành chính", "DIRECTOR" => "Sếp", "CUSTOMER" => "Khách hàng",
                 "SIGNATURE" => "Các bên ký", "PAPER_SIGNATURE" => "Hai bên ký giấy", "SIGNED" => "Đã ký", "CANCELLED" or "REJECTED" => "Đã đóng", _ => officeOrigin ? "Hành chính" : "Sale" };
-            var mine = stage switch { "OFFICE" or "RETURNED" or "PAPER_REVIEW" => actor.CanReviewLegal, "DIRECTOR" or "FINAL_CHECK" => actor.CanApprove,
+            var mine = stage switch { "OFFICE" or "RETURNED" or "PAPER_REVIEW" or "FINAL_CHECK" => actor.CanReviewLegal, "DIRECTOR" => actor.CanApprove,
                 "OFFICE_SEND" => actor.CanReviewLegal && owner, "DRAFT" or "CHANGES" when officeOrigin => actor.CanReviewLegal && owner,
                 "DRAFT" or "APPROVED" or "CHANGES" => !officeOrigin && actor.CanWrite && owner,
                 "PAPER_SIGNATURE" => actor.CanReviewLegal || actor.CanApprove || (actor.CanWrite && owner), _ => false };

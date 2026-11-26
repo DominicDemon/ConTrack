@@ -59,8 +59,9 @@ public class MasterDatabaseTests
             var table = StoreObjectIdentifier.Table(entity.GetTableName()!, entity.GetSchema());
             return entity.GetProperties().Select(property => $"{table.Name}.{property.GetColumnName(table)}");
         }).ToHashSet(StringComparer.Ordinal);
-        Assert.Equal(833, columns.Count);
-        Assert.True(columns.SetEquals(mapped), "EF mappings must match all live table and column names.");
+        // Every mapped column exists in the live database. The database also keeps tables the code reads with plain SQL
+        // (TENANT, PRODUCTS…), so it is not required to equal the model.
+        Assert.Empty(mapped.Except(columns).Order());
 
         // Every SELECT is compiled and executed by SQL Server, including column types.
         foreach (var entity in db.Model.GetEntityTypes())

@@ -1,5 +1,7 @@
 "use client";
 import ContractTabs from "@/components/internal/contract-tabs";
+import { ListPager } from "@/components/scanned-contracts/list-pager";
+import { SortHeader, type SortState } from "@/components/internal/list-tools";
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -17,7 +19,7 @@ type Entry = {
   paperSigned: boolean;
   payment: { total: number; paid: number; paidInstallment: number | null };
 };
-type Page = { items: Entry[]; hasMore: boolean };
+type Page = { items: Entry[]; hasMore: boolean; total: number };
 type Installment = { id: string; title: string; amount: number; dueDate: string | null; paid: boolean; paidAt: string | null };
 
 function paymentLabel(payment: Entry["payment"]) {
@@ -129,6 +131,10 @@ function SignedContractsTable({ documentId }: { documentId: string | null }) {
   const { canCheck, permissions } = useInternalUser();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [method, setMethod] = useState("");
+  type Column = "name" | "customer" | "employee" | "version" | "signed";
+  const [sort, setSort] = useState<SortState<Column>>({ key: "signed", dir: "desc" });
+  const sortBy = (key: Column, firstDir: "asc" | "desc" = "asc") => { setPage(1); setSort(old => old.key === key ? { key, dir: old.dir === "asc" ? "desc" : "asc" } : { key, dir: firstDir }); };
   const [result, setResult] = useState<Page | null>(null);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Entry | null>(null);
@@ -141,20 +147,24 @@ function SignedContractsTable({ documentId }: { documentId: string | null }) {
     const timer = setTimeout(() => {
       const params = new URLSearchParams({ page: String(page), search: search.trim() });
       if (documentId) params.set("documentId", documentId);
+      if (method) params.set("method", method);
+      params.set("sort", sort.key); params.set("desc", String(sort.dir === "desc"));
       void internalApi<Page>(`/signed-contracts?${params}`).then(data => { if (active) setResult(data); })
         .catch(e => { if (active) setError(e.message); });
     }, 200);
     return () => { active = false; clearTimeout(timer); };
-  }, [search, page, refresh, documentId]);
+  }, [search, page, refresh, documentId, method, sort]);
   return <main className={s.page}><ContractTabs/>
-    <div className={s.titleRow}><h1>Hợp đồng đã ký</h1></div>
+    <div className={s.titleRow}><div><span className={s.eyebrow}>Hợp đồng</span><h1>Hợp đồng đã ký</h1><p className={s.muted}>Bản đã ký của từng hợp đồng, cách ký và tình trạng thanh toán.</p></div></div>
     <section className={ui.card}>
       <div className={s.toolbar}>{documentId ? <Link href="/workspace/contracts/signed">Xem tất cả hợp đồng đã ký</Link> : <input className={ui.field} type="search" aria-label="Tìm hợp đồng đã ký"
         placeholder="Tìm theo số hợp đồng, tên hợp đồng hoặc khách hàng…" value={search}
-        onChange={e => { setSearch(e.target.value); setPage(1); }}/>}</div>
+        onChange={e => { setSearch(e.target.value); setPage(1); }}/>}
+        {!documentId && <select aria-label="Lọc cách ký" className={ui.field} style={{ maxWidth: 220 }} value={method} onChange={e => { setMethod(e.target.value); setPage(1); }}>
+          <option value="">Ký điện tử và ký giấy</option><option value="ELECTRONIC">Ký điện tử</option><option value="PAPER">Ký giấy, đóng dấu</option></select>}</div>
       {error ? <p role="alert" className={ui.error}>{error}</p> : !result ? <p className={s.empty}>Đang tải hợp đồng…</p>
-        : result.items.length === 0 ? <p className={s.empty}>{search ? "Không tìm thấy hợp đồng phù hợp." : "Chưa có hợp đồng đã ký."}</p>
-        : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Hợp đồng</th><th>Khách hàng</th><th>Sale phụ trách</th><th>Phiên bản</th><th>Ký hoàn tất</th><th>Thanh toán</th><th></th></tr></thead>
+        : result.items.length === 0 ? <div className={s.empty}><strong>{search || method ? "Không tìm thấy hợp đồng phù hợp" : "Chưa có hợp đồng đã ký"}</strong><p>{search || method ? "Thử đổi từ khóa hoặc bộ lọc." : "Hợp đồng ký xong sẽ xuất hiện tại đây."}</p></div>
+        : <div className={s.tableWrap}><table className={s.table}><thead><tr><SortHeader label="Hợp đồng" column="name" sort={sort} onSort={sortBy}/><SortHeader label="Khách hàng" column="customer" sort={sort} onSort={sortBy}/><SortHeader label="Phụ trách" column="employee" sort={sort} onSort={sortBy}/><SortHeader label="Phiên bản" column="version" sort={sort} onSort={sortBy} firstDir="desc"/><SortHeader label="Ký hoàn tất" column="signed" sort={sort} onSort={sortBy} firstDir="desc"/><th>Thanh toán</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
           <tbody>{result.items.map(row => <tr key={row.versionId}><td><strong>{row.name}</strong><div className={s.muted}>{row.code}</div></td>
             <td>{row.customerName}</td><td>{row.employeeName}</td><td>v{row.versionNo}</td><td>{row.signedAt ? dateTime(row.signedAt) : "—"}</td>
             <td><span className={s.badge}>{paymentLabel(row.payment)}</span>
@@ -163,10 +173,7 @@ function SignedContractsTable({ documentId }: { documentId: string | null }) {
               ? <Link className={ui.secondaryButton} href={`/workspace/signed-contracts/${row.documentId}`}>Mở hồ sơ ký giấy</Link>
               : <span className={s.muted}>Đã xác nhận bản ký giấy</span>)
               : <button className={ui.secondaryButton} onClick={() => setSelected(row)}>Xem bản đã ký</button>}</td></tr>)}</tbody></table></div>}
-      {(page > 1 || result?.hasMore) && <nav aria-label="Phân trang" className={s.toolbar}>
-        <button className={ui.secondaryButton} disabled={page === 1} onClick={() => setPage(page - 1)}>Trang trước</button>
-        <span>Trang {page}</span><button className={ui.secondaryButton} disabled={!result?.hasMore} onClick={() => setPage(page + 1)}>Trang sau</button>
-      </nav>}
+      {!!result && <ListPager page={page} pageSize={10} total={result.total} onPage={setPage} label="hợp đồng"/>}
     </section>
     {selected && <SignedPdf entry={selected} close={() => setSelected(null)}/>}
     {paymentEntry && <PaymentDialog entry={paymentEntry} close={() => setPaymentEntry(null)} onSaved={() => setRefresh(n => n + 1)}/>}

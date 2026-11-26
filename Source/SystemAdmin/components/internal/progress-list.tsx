@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { ListPager } from "@/components/scanned-contracts/list-pager";
+import { SortHeader, type SortState } from "@/components/internal/list-tools";
 import Link from "next/link";
 import { CalendarClock, CheckCircle2, FilePlus2, Files, Hourglass, Send, Trash2, XCircle } from "lucide-react";
 import { SummaryCards } from "@/components/ui/custom/summary-cards";
@@ -30,6 +31,9 @@ export default function ProgressList() {
   const [busy, setBusy] = useState(true); const [acting, setActing] = useState(false); const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [search, setSearch] = useState(""); const [owner, setOwner] = useState(""); const [stage, setStage] = useState("");
   const [from, setFrom] = useState(""); const [to, setTo] = useState(""); const [page, setPage] = useState(1); const [reload, setReload] = useState(0);
+  type Column = "name" | "customer" | "owner" | "stage" | "department" | "updated";
+  const [sort, setSort] = useState<SortState<Column>>({ key: "updated", dir: "desc" });
+  const sortBy = (key: Column, firstDir: "asc" | "desc" = "asc") => { setPage(1); setSort(old => old.key === key ? { key, dir: old.dir === "asc" ? "desc" : "asc" } : { key, dir: firstDir }); };
   const [items, setItems] = useState<ExpiringContract[] | null>(null);
   const [expiryError, setExpiryError] = useState("");
   const [expiryPage, setExpiryPage] = useState(1);
@@ -49,11 +53,12 @@ export default function ProgressList() {
       const params = new URLSearchParams({ page: String(page) });
       if (search.trim()) params.set("search", search.trim()); if (owner) params.set("ownerId", owner); if (stage) params.set("stage", stage);
       if (from) params.set("from", from); if (to) params.set("to", to);
+      params.set("sort", sort.key); params.set("desc", String(sort.dir === "desc"));
       setBusy(true);
       internalApi<Page>(`/contract-progress?${params}`).then(v => { if (active) { setData(v); setError(""); } })
         .catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setBusy(false); });
     }, 250);
-    return () => { active = false; clearTimeout(timer); }; }, [search, owner, stage, page, reload, from, to, badRange]);
+    return () => { active = false; clearTimeout(timer); }; }, [search, owner, stage, page, reload, from, to, badRange, sort]);
 
   const counts = data?.counts ?? {};
   const count = (keys: string[]) => keys.reduce((n, k) => n + (counts[k] ?? 0), 0);
@@ -117,7 +122,7 @@ export default function ProgressList() {
       {badRange && <p role="alert" className={ui.error} style={{ marginBottom: 12 }}>“Từ ngày” phải trước hoặc bằng “Đến ngày”.</p>}
       {busy && !data ? <div className={s.empty}>Đang tải hợp đồng…</div> : !data || data.items.length === 0 ? <div className={s.empty}><Files size={42} strokeWidth={1.3}/>
         <strong>{filtered ? "Không tìm thấy hợp đồng phù hợp" : "Chưa có hợp đồng"}</strong><p>{filtered ? "Thử đổi từ khóa hoặc bộ lọc." : "Bấm Tạo hợp đồng để soạn hợp đồng đầu tiên."}</p></div>
-      : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Hợp đồng</th><th>Khách hàng</th><th>Phụ trách</th><th>Trạng thái</th><th>Bộ phận đang xử lý</th><th>Cập nhật</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
+      : <div className={s.tableWrap}><table className={s.table}><thead><tr><SortHeader label="Hợp đồng" column="name" sort={sort} onSort={sortBy}/><SortHeader label="Khách hàng" column="customer" sort={sort} onSort={sortBy}/><SortHeader label="Phụ trách" column="owner" sort={sort} onSort={sortBy}/><SortHeader label="Trạng thái" column="stage" sort={sort} onSort={sortBy}/><SortHeader label="Bộ phận đang xử lý" column="department" sort={sort} onSort={sortBy}/><SortHeader label="Cập nhật" column="updated" sort={sort} onSort={sortBy} firstDir="desc"/><th><span className="sr-only">Thao tác</span></th></tr></thead>
         <tbody>{data.items.map(row => <tr key={row.id}>
           <td><Link href={`/workspace/contracts/drafts/${row.id}`}><strong>{row.name}</strong></Link>{row.code && <div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{row.code}</div>}</td>
           <td>{row.customer}</td>
@@ -130,10 +135,7 @@ export default function ProgressList() {
             <Link className={ui.secondaryButton} href={`/workspace/contracts/drafts/${row.id}`}>Mở</Link>
             {row.canDelete && <button className={ui.secondaryButton} disabled={acting} onClick={() => remove(row)} aria-label={`Xóa hẳn ${row.name}`}><Trash2 size={15}/>Xóa hẳn</button>}
           </div></td></tr>)}</tbody></table></div>}
-      {!!data && data.total > data.pageSize && <div className={s.toolbar} style={{ justifyContent: "space-between", marginTop: 12, marginBottom: 0 }}>
-        <span className={s.muted}>Trang {page} · {data.total} hợp đồng</span>
-        <div style={{ display: "flex", gap: 8 }}><button className={ui.secondaryButton} disabled={page === 1 || busy} onClick={() => setPage(p => p - 1)}>Trang trước</button>
-          <button className={ui.secondaryButton} disabled={busy || page * data.pageSize >= data.total} onClick={() => setPage(p => p + 1)}>Trang sau</button></div></div>}
+      {!!data && <ListPager page={page} pageSize={data.pageSize} total={data.total} onPage={setPage} label="hợp đồng" disabled={busy}/>}
     </section>
   </div>;
 }

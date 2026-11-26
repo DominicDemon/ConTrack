@@ -237,12 +237,26 @@ public sealed class ScannedContractService(
         return await ReadFileAsync(file, fileKey, cancellationToken);
     }
 
-    public async Task<ScanPageDto<ScannedContractDto>> ListContractsAsync(int? page, int? pageSize, CancellationToken cancellationToken)
+    /// <param name="search">Part of the contract number or name.</param>
+    /// <param name="sort">code, name, signed, value or created (default); <paramref name="desc"/> flips it.</param>
+    public async Task<ScanPageDto<ScannedContractDto>> ListContractsAsync(int? page, int? pageSize, CancellationToken cancellationToken,
+        string? search = null, string? sort = null, bool desc = true)
     {
         var (number, size) = Paging(page, pageSize, 20);
-        var total = await ScopedContracts().CountAsync(cancellationToken);
-        var contracts = await ScopedContracts()
-            .OrderByDescending(contract => contract.ContractId)
+        var term = search?.Trim();
+        var scoped = string.IsNullOrEmpty(term) ? ScopedContracts()
+            : ScopedContracts().Where(c => c.ContractCode.Contains(term) || c.ContractName.Contains(term));
+        var total = await scoped.CountAsync(cancellationToken);
+        var ordered = (sort, desc) switch
+        {
+            ("code", false) => scoped.OrderBy(c => c.ContractCode), ("code", true) => scoped.OrderByDescending(c => c.ContractCode),
+            ("name", false) => scoped.OrderBy(c => c.ContractName), ("name", true) => scoped.OrderByDescending(c => c.ContractName),
+            ("signed", false) => scoped.OrderBy(c => c.SignedDate), ("signed", true) => scoped.OrderByDescending(c => c.SignedDate),
+            ("value", false) => scoped.OrderBy(c => c.ContractValue), ("value", true) => scoped.OrderByDescending(c => c.ContractValue),
+            (_, false) => scoped.OrderBy(c => c.ContractId),
+            _ => scoped.OrderByDescending(c => c.ContractId),
+        };
+        var contracts = await ordered
             .Skip((number - 1) * size)
             .Take(size)
             .ToListAsync(cancellationToken);

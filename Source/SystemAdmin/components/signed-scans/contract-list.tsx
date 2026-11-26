@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils";
 import { getScanErrorMessage } from "@/services/scans/http";
 import { signedEvidenceApi, type ContractListItem } from "@/services/scans/signed-scans";
 import { ListPager } from "../scanned-contracts/list-pager";
+import { SortHeader, useListView } from "@/components/internal/list-tools";
+import { Input } from "@/components/ui/input";
 import { formatMoney, type StatusTone } from "./format";
 import { StatusBadge } from "./status-badge";
 
@@ -49,7 +51,6 @@ const FILTERS: { value: Filter; label: string; steps: Step[] }[] = [
   { value: "all", label: "Tất cả", steps: ["review", "resend", "upload", "accepted", "other"] },
 ];
 
-const PAGE_SIZE = 10;
 
 function StepBadge({ item }: { item: ContractListItem }) {
   const step = STEPS[stepOf(item)];
@@ -65,7 +66,7 @@ export function ContractList() {
   const router = useRouter();
   const [state, setState] = useState<{ items: ContractListItem[] | null; error: string | null }>({ items: null, error: null });
   const [filter, setFilter] = useState<Filter>("todo");
-  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +94,11 @@ export function ContractList() {
     return result;
   }, [sorted]);
 
+  const list = useListView(sorted, { search, fields: item => [item.documentCode, item.documentName, item.customerName], filterKey: filter,
+    filter: item => FILTERS.find(f => f.value === filter)!.steps.includes(stepOf(item)),
+    sorts: { step: item => STEPS[stepOf(item)].order, code: item => item.documentCode, name: item => item.documentName, customer: item => item.customerName, amount: item => item.totalAmount },
+    initial: { key: "step", dir: "asc" } });
+
   if (state.error) {
     return (
       <Alert variant="destructive">
@@ -102,19 +108,13 @@ export function ContractList() {
     );
   }
 
-  const steps = FILTERS.find((f) => f.value === filter)!.steps;
-  const shown = sorted.filter((item) => steps.includes(stepOf(item)));
-  const pages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
-  const current = Math.min(page, pages);
-  const rows = shown.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE);
-  const choose = (value: Filter) => {
-    setFilter(value);
-    setPage(1);
-  };
+  const rows = list.rows;
+  const choose = (value: Filter) => setFilter(value);
 
   return (
     <Card className="gap-0 border-border bg-card p-0 shadow-sm">
       <CardContent className="space-y-4 p-4">
+        <Input type="search" aria-label="Tìm hợp đồng" placeholder="Tìm mã, tên hợp đồng hoặc khách hàng…" value={search} onChange={(event) => setSearch(event.target.value)} className="max-w-md" />
         <div role="group" aria-label="Lọc theo bước ký giấy" className="flex flex-wrap gap-2">
           {FILTERS.map((f) => {
             const selected = filter === f.value;
@@ -141,9 +141,9 @@ export function ContractList() {
               <Skeleton key={index} className="h-12 w-full" />
             ))}
           </div>
-        ) : shown.length === 0 ? (
+        ) : list.total === 0 ? (
           <p className="py-12 text-center text-sm text-muted-foreground">
-            {filter === "todo"
+            {search ? "Không tìm thấy hợp đồng phù hợp. Thử đổi từ khóa." : filter === "todo"
               ? "Không có hợp đồng nào cần nộp hay kiểm tra bản ký giấy."
               : "Không có hợp đồng nào ở bước này."}
           </p>
@@ -153,11 +153,11 @@ export function ContractList() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Mã hợp đồng</TableHead>
-                    <TableHead>Tên hợp đồng</TableHead>
-                    <TableHead>Khách hàng</TableHead>
-                    <TableHead className="text-right">Giá trị</TableHead>
-                    <TableHead className="text-center">Bước ký giấy</TableHead>
+                    <SortHeader label="Mã hợp đồng" column="code" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap"/>
+                    <SortHeader label="Tên hợp đồng" column="name" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap"/>
+                    <SortHeader label="Khách hàng" column="customer" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap"/>
+                    <SortHeader label="Giá trị" column="amount" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-right" firstDir="desc"/>
+                    <SortHeader label="Bước ký giấy" column="step" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-center"/>
                     <TableHead className="pr-4 text-right">Thao tác</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -211,7 +211,7 @@ export function ContractList() {
                 </li>
               ))}
             </ul>
-            <ListPager page={current} pageSize={PAGE_SIZE} total={shown.length} onPage={setPage} label="hợp đồng" />
+            <ListPager page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} label="hợp đồng" />
           </>
         )}
       </CardContent>

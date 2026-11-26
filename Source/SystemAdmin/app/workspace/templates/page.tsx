@@ -12,15 +12,11 @@ import s from "@/components/internal/workspace.module.css";
 import { useInternalUser } from "@/components/internal/internal-shell";
 import { internalApi, dateTime, documentTypeLabel, type TemplateSummary } from "@/services/internal-api";
 import { typeOptions, useDocumentCategories } from "@/components/internal/use-document-categories";
-
-function searchText(value: string) {
-  return value.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replaceAll("đ", "d").trim();
-}
+import { SortHeader, useListView } from "@/components/internal/list-tools";
 
 export default function TemplatesPage() {
   // Every document template (contract, appendix, handover record…), hidden ones included; Hành chính manages them.
   const { canManageTemplates } = useInternalUser(); const categories = useDocumentCategories();
-  const [page, setPage] = useState(1);
   const [rows, setRows] = useState<TemplateSummary[]>([]); const [search, setSearch] = useState("");
   const [type, setType] = useState(""); const [status, setStatus] = useState(""); const [parent, setParent] = useState("");
   const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [busy, setBusy] = useState(true); const [acting, setActing] = useState(false); const [reload, setReload] = useState(0);
@@ -30,17 +26,15 @@ export default function TemplatesPage() {
     void internalApi<TemplateSummary[]>("/contract-template-library").then(list => { if (active) setRows(list); })
       .catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setBusy(false); });
     return () => { active = false; }; }, [reload, canManageTemplates]);
+  const list = useListView(rows, { search, fields: r => [r.name, r.parentName, r.id], filterKey: [type, status, parent],
+    filter: r => (!type || r.documentType === Number(type)) && (!status || (status === "ACTIVE") === r.active)
+      && (!parent || (parent === "NONE" ? !r.parentTemplateId : r.parentTemplateId === parent || r.id === parent)),
+    sorts: { name: r => r.name, type: r => documentTypeLabel(r.documentType), parent: r => r.parentName, used: r => r.documentCount,
+      status: r => r.active, updated: r => r.updatedAt ?? r.createdAt }, initial: { key: "updated", dir: "desc" } });
 
   if (!canManageTemplates) return <div className={s.page}><p role="alert" className={ui.error}>Bạn không có quyền quản lý mẫu văn bản.</p></div>;
 
-  const term = searchText(search);
   const contracts = rows.filter(r => r.documentType === 1);
-  const shown = rows.filter(r => (!type || r.documentType === Number(type)) && (!status || (status === "ACTIVE") === r.active)
-    && (!parent || (parent === "NONE" ? !r.parentTemplateId : r.parentTemplateId === parent || r.id === parent))
-    && (!term || [r.name, r.parentName ?? ""].some(v => searchText(v).includes(term))));
-  const pageSize = 10;
-  const currentPage = Math.min(page, Math.max(1, Math.ceil(shown.length / pageSize)));
-  const pageRows = shown.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const hidden = rows.filter(r => !r.active).length;
   const filtered = !!(search || type || status || parent);
   const replace = (row: TemplateSummary) => setRows(list => list.map(r => r.id === row.id ? row : r));
@@ -68,14 +62,16 @@ export default function TemplatesPage() {
     ]}/></div>
     {error && <p role="alert" className={ui.error} style={{ marginBottom: 16 }}>{error}</p>}
     {notice && <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>{notice}</p>}
-    <section className={ui.card}><div className={s.toolbar}><input aria-label="Tìm mẫu văn bản" className={ui.field} placeholder="Tìm tên mẫu hoặc mẫu hợp đồng cha…" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}/>
-      <select aria-label="Lọc loại văn bản" className={ui.field} style={{ maxWidth: 220 }} value={type} onChange={e => { setType(e.target.value); setPage(1); }}><option value="">Tất cả loại văn bản</option>{typeOptions(categories, null, true).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
-      <select aria-label="Lọc trạng thái" className={ui.field} style={{ maxWidth: 220 }} value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}><option value="">Tất cả trạng thái</option><option value="ACTIVE">Đang dùng</option><option value="HIDDEN">Đã ẩn</option></select>
-      <select aria-label="Lọc theo mẫu hợp đồng cha" className={ui.field} style={{ maxWidth: 240 }} value={parent} onChange={e => { setParent(e.target.value); setPage(1); }}><option value="">Mọi mẫu cha</option><option value="NONE">Không gắn mẫu cha</option>{contracts.map(c => <option key={c.id} value={c.id}>{c.name} và mẫu con</option>)}</select>
+    <section className={ui.card}><div className={s.toolbar}><input aria-label="Tìm mẫu văn bản" className={ui.field} placeholder="Tìm tên mẫu hoặc mẫu hợp đồng cha…" value={search} onChange={e => { setSearch(e.target.value); }}/>
+      <select aria-label="Lọc loại văn bản" className={ui.field} style={{ maxWidth: 220 }} value={type} onChange={e => { setType(e.target.value); }}><option value="">Tất cả loại văn bản</option>{typeOptions(categories, null, true).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+      <select aria-label="Lọc trạng thái" className={ui.field} style={{ maxWidth: 220 }} value={status} onChange={e => { setStatus(e.target.value); }}><option value="">Tất cả trạng thái</option><option value="ACTIVE">Đang dùng</option><option value="HIDDEN">Đã ẩn</option></select>
+      <select aria-label="Lọc theo mẫu hợp đồng cha" className={ui.field} style={{ maxWidth: 240 }} value={parent} onChange={e => { setParent(e.target.value); }}><option value="">Mọi mẫu cha</option><option value="NONE">Không gắn mẫu cha</option>{contracts.map(c => <option key={c.id} value={c.id}>{c.name} và mẫu con</option>)}</select>
       <button className={ui.secondaryButton} disabled={busy} onClick={refresh} aria-label="Làm mới"><RefreshCw size={16}/></button></div>
-      {busy ? <div className={s.empty}>Đang tải mẫu văn bản…</div> : shown.length === 0 ? <div className={s.empty}><Files size={42} strokeWidth={1.3}/><strong>{filtered ? "Không tìm thấy mẫu phù hợp" : "Chưa có mẫu văn bản"}</strong><p>{filtered ? "Thử đổi từ khóa hoặc bộ lọc." : "Tạo mẫu văn bản đầu tiên từ một file Word."}</p></div>
-      : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Mẫu văn bản</th><th>Loại</th><th>Mẫu hợp đồng cha</th><th>Đã dùng</th><th>Trạng thái</th><th>Cập nhật</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
-        <tbody>{pageRows.map(r => <tr key={r.id}><td><strong>{r.name}</strong><div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{r.word ? "Tệp Word" : "Mẫu hệ thống"} · ID {r.id}</div></td>
+      {busy ? <div className={s.empty}>Đang tải mẫu văn bản…</div> : list.total === 0 ? <div className={s.empty}><Files size={42} strokeWidth={1.3}/><strong>{filtered ? "Không tìm thấy mẫu phù hợp" : "Chưa có mẫu văn bản"}</strong><p>{filtered ? "Thử đổi từ khóa hoặc bộ lọc." : "Tạo mẫu văn bản đầu tiên từ một file Word."}</p></div>
+      : <div className={s.tableWrap}><table className={s.table}><thead><tr><SortHeader label="Mẫu văn bản" column="name" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Loại" column="type" sort={list.sort} onSort={list.sortBy}/>
+          <SortHeader label="Mẫu hợp đồng cha" column="parent" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Đã dùng" column="used" sort={list.sort} onSort={list.sortBy} firstDir="desc"/>
+          <SortHeader label="Trạng thái" column="status" sort={list.sort} onSort={list.sortBy} firstDir="desc"/><SortHeader label="Cập nhật" column="updated" sort={list.sort} onSort={list.sortBy} firstDir="desc"/><th><span className="sr-only">Thao tác</span></th></tr></thead>
+        <tbody>{list.rows.map(r => <tr key={r.id}><td><strong>{r.name}</strong><div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{r.word ? "Tệp Word" : "Mẫu hệ thống"} · ID {r.id}</div></td>
           <td>{documentTypeLabel(r.documentType)}{r.childCount > 0 && <div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{r.childCount} mẫu con</div>}</td>
           <td>{r.parentName ?? <span className={s.muted}>—</span>}</td>
           <td>{r.documentCount ? <span className={s.badge}>{r.documentCount} văn bản</span> : <span className={s.muted}>Chưa dùng</span>}</td>
@@ -97,7 +93,7 @@ export default function TemplatesPage() {
               </DropdownMenu>
             </> : <button className={ui.secondaryButton} disabled={acting} onClick={() => toggle(r)}>Khôi phục</button>}
           </div></td></tr>)}</tbody></table></div>}
-      {!busy && <ListPager page={currentPage} pageSize={pageSize} total={shown.length} onPage={setPage} label="mẫu văn bản"/>}
+      {!busy && <ListPager page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} label="mẫu văn bản"/>}
     </section>
     {upload && <TemplateUpload key={`${upload.row.id}-${upload.replace}`} startOpen
       replace={upload.replace ? { id: upload.row.id, name: upload.row.name, documentType: upload.row.documentType } : undefined}

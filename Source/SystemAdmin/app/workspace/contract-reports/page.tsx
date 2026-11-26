@@ -6,6 +6,8 @@ import { useInternalUser } from "@/components/internal/internal-shell";
 import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
 import { documentStatusLabel, internalApi, money, type ContractArchiveEntry } from "@/services/internal-api";
+import { ListPager } from "@/components/scanned-contracts/list-pager";
+import { SortHeader, useListView } from "@/components/internal/list-tools";
 
 const dayInput = (date: Date) => {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -42,7 +44,6 @@ export default function ContractReportsPage() {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
-  const [page, setPage] = useState(1);
 
   useEffect(() => {
     if (!user.canManageAll) return;
@@ -57,7 +58,7 @@ export default function ContractReportsPage() {
       if (from) params.set("createdFrom", dayStart(from));
       if (to) params.set("createdTo", dayEnd(to));
       void internalApi<ContractArchiveEntry[]>(`/contract-archive?${params}`)
-        .then(data => { if (active) { setRows(data); setPage(1); } })
+        .then(data => { if (active) setRows(data); })
         .catch(e => { if (active) setError((e as Error).message); })
         .finally(() => { if (active) setBusy(false); });
     }, 180);
@@ -72,8 +73,10 @@ export default function ContractReportsPage() {
     rows.forEach(row => totals.set(row.currencyCode || "VND", (totals.get(row.currencyCode || "VND") ?? 0) + row.totalAmount));
     return [...totals.entries()];
   }, [rows]);
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const visibleRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Search and filters run on the server; sort and pages on the rows it returned.
+  const list = useListView(rows, { search: "", fields: () => [], filterKey: [from, to, search, status, party], pageSize: PAGE_SIZE,
+    sorts: { code: r => r.code || r.name, customer: r => r.customerName, employee: r => r.employeeName, status: r => r.status, amount: r => r.totalAmount,
+      created: r => r.createdAt, effective: r => r.effectiveDate, expire: r => r.expireDate }, initial: { key: "created", dir: "desc" } });
   const activeStatuses = new Set([3, 4]);
   const expired = rows.filter(row => row.expireDate && new Date(row.expireDate) < new Date() && activeStatuses.has(row.status)).length;
   const expiring = rows.filter(row => {
@@ -121,11 +124,11 @@ export default function ContractReportsPage() {
 
     <section className={ui.card}>
       <div className={s.titleRow} style={{ marginBottom: 12 }}><div><h2 style={{ fontSize: 17, margin: 0 }}>Danh sách hợp đồng</h2><p className={s.muted}>{rows.length.toLocaleString("vi-VN")} hồ sơ · tối đa 5.000 hồ sơ mỗi lượt</p></div><CalendarRange size={18}/></div>
-      {busy ? <div className={s.empty}>Đang tải báo cáo…</div> : rows.length === 0 ? <div className={s.empty}>Không tìm thấy hợp đồng phù hợp với bộ lọc.</div> :
-        <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Mã / Hợp đồng</th><th>Khách hàng</th><th>Người phụ trách</th><th>Trạng thái</th><th>Giá trị</th><th>Ngày tạo</th><th>Hiệu lực</th><th>Hết hạn</th></tr></thead><tbody>{visibleRows.map(row => <tr key={row.id}>
+      {busy ? <div className={s.empty}>Đang tải báo cáo…</div> : rows.length === 0 ? <div className={s.empty}><strong>Không tìm thấy hợp đồng phù hợp</strong><p>Thử đổi khoảng ngày, từ khóa hoặc bộ lọc.</p></div> :
+        <div className={s.tableWrap}><table className={s.table}><thead><tr><SortHeader label="Mã / Hợp đồng" column="code" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Khách hàng" column="customer" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Người phụ trách" column="employee" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Trạng thái" column="status" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Giá trị" column="amount" sort={list.sort} onSort={list.sortBy} firstDir="desc"/><SortHeader label="Ngày tạo" column="created" sort={list.sort} onSort={list.sortBy} firstDir="desc"/><SortHeader label="Hiệu lực" column="effective" sort={list.sort} onSort={list.sortBy} firstDir="desc"/><SortHeader label="Hết hạn" column="expire" sort={list.sort} onSort={list.sortBy} firstDir="desc"/></tr></thead><tbody>{list.rows.map(row => <tr key={row.id}>
           <td><strong>{row.code || `#${row.id}`}</strong><div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{row.name}</div></td><td>{row.customerName}</td><td>{row.employeeName}</td><td><span className={s.badge}>{documentStatusLabel[row.status] ?? row.status}</span></td><td>{money(row.totalAmount)} {row.currencyCode}</td><td>{dateText(row.createdAt)}</td><td>{dateText(row.effectiveDate)}</td><td>{dateText(row.expireDate)}</td>
         </tr>)}</tbody></table></div>}
-      {rows.length > PAGE_SIZE && <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}><span className={s.muted}>Trang {page} / {pageCount}</span><div style={{ display: "flex", gap: 8 }}><button className={ui.secondaryButton} disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Trước</button><button className={ui.secondaryButton} disabled={page >= pageCount} onClick={() => setPage(value => value + 1)}>Sau</button></div></div>}
+      {!busy && <ListPager page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} label="hợp đồng"/>}
     </section>
   </div>;
 }

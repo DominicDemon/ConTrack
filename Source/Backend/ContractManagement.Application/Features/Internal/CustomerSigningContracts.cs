@@ -12,11 +12,12 @@ public sealed record SignedContractEntry(long DocumentId, long VersionId, string
 }
 public sealed record SignedPaymentSummary(int Total, int Paid, int? PaidInstallment);
 public sealed record SignedPaymentInstallment(long Id, string Title, decimal Amount, DateOnly? DueDate, bool Paid, DateTime? PaidAt);
-public sealed record SignedContractPage(List<SignedContractEntry> Items, bool HasMore);
+public sealed record SignedContractPage(List<SignedContractEntry> Items, bool HasMore, int Total = 0);
 
 public interface ICustomerSigningService
 {
-    Task<SignedContractPage> SignedContracts(InternalUser user, string? search, int page, CancellationToken ct, long? documentId = null);
+    Task<SignedContractPage> SignedContracts(InternalUser user, string? search, int page, CancellationToken ct, long? documentId = null,
+        string? sort = null, bool desc = true, string? method = null);
     Task<List<SignedPaymentInstallment>> SignedPayments(InternalUser user, long documentId, long versionId, CancellationToken ct);
     Task ConfirmSignedPayment(InternalUser user, long documentId, long versionId, long installmentId, CancellationToken ct);
     Task<byte[]> InternalFinalDocument(InternalUser user, long documentId, long versionId, CancellationToken ct);

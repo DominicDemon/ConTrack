@@ -9,7 +9,7 @@ namespace ContractManagement.Infrastructure.Persistence.Master;
 /// <param name="From">First day (Vietnam time) the contract was created, inclusive.</param>
 /// <param name="To">Last day (Vietnam time) the contract was created, inclusive.</param>
 public sealed record ProgressFilter(string? Search = null, long? OwnerId = null, string? Stage = null, int? WaitingDays = null, bool Mine = false, int Page = 1,
-    DateOnly? From = null, DateOnly? To = null, bool Recent = false);
+    DateOnly? From = null, DateOnly? To = null, bool Recent = false, string? Sort = null, bool Desc = false);
 /// <param name="CanDelete">A rejected or cancelled contract this employee may remove for good (ContractHardDelete).</param>
 public sealed record ProgressRow(long Id, string Code, string Name, string Customer, long OwnerId, string Owner, string Stage, string Department, DateTime? EnteredAt, string? LastActor, bool NeedsMe,
     int Status = 0, bool CanDelete = false, DateTime? CreatedAt = null);
@@ -126,9 +126,18 @@ public sealed class ContractProgressService(MasterDbContext db)
         var sentCount = rows.Count(r => sent.Contains(r.Id));
         if (filter.Stage == "SENT") rows = rows.Where(r => sent.Contains(r.Id)).ToList();
         else if (!string.IsNullOrEmpty(filter.Stage)) rows = rows.Where(x => x.Stage == filter.Stage).ToList();
+        // Sort by a column of the list (Quản lý hợp đồng); without one, the oldest waiting step first.
+        Func<ProgressRow, object?>? key = filter.Sort switch
+        {
+            "name" => x => x.Name, "customer" => x => x.Customer, "owner" => x => x.Owner, "stage" => x => x.Stage,
+            "department" => x => x.Department, "updated" => x => x.EnteredAt ?? x.CreatedAt, "created" => x => x.CreatedAt, _ => null
+        };
+        var vi = StringComparer.Create(new System.Globalization.CultureInfo("vi-VN"), true);
+        var byValue = Comparer<object?>.Create((a, b) => a is string x && b is string y ? vi.Compare(x, y) : Comparer<object?>.Default.Compare(a, b));
         var ordered = filter.Recent
             ? rows.OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
-            : rows.OrderBy(x => x.EnteredAt == null).ThenBy(x => x.EnteredAt).ThenBy(x => x.Id);
+            : key is null ? rows.OrderBy(x => x.EnteredAt == null).ThenBy(x => x.EnteredAt).ThenBy(x => x.Id)
+            : filter.Desc ? rows.OrderByDescending(key, byValue).ThenByDescending(x => x.Id) : rows.OrderBy(key, byValue).ThenBy(x => x.Id);
         var pageSize = filter.Recent ? 5 : 10;
         return new(ordered.Skip((filter.Page - 1) * pageSize).Take(pageSize).ToList(), rows.Count, filter.Page, pageSize, counts, now, sentCount);
     }

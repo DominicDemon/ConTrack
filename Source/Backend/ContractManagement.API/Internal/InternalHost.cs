@@ -559,8 +559,8 @@ public static class InternalHost
                 if (!long.TryParse(ownerId, out var parsed) || parsed <= 0) throw new ArgumentException("Nhân viên không hợp lệ."); owner = parsed; }
             return Results.Ok(await r.Drafts(owner, search, status, ct, partyType));
         });
-        secured.MapGet("/signed-contracts", async (string? search, int? page, long? documentId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
-            Results.Ok(await signing.SignedContracts(Current(c), search, page ?? 1, ct, documentId)));
+        secured.MapGet("/signed-contracts", async (string? search, int? page, long? documentId, string? sort, bool? desc, string? method, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
+            Results.Ok(await signing.SignedContracts(Current(c), search, page ?? 1, ct, documentId, sort, desc ?? true, method is "PAPER" or "ELECTRONIC" ? method : null)));
         var signedPayments = secured.MapGroup("/signed-contracts/{documentId:long}/versions/{versionId:long}/payments");
         signedPayments.MapGet("", async (long documentId, long versionId, HttpContext c, ICustomerSigningService signing, CancellationToken ct) =>
             Results.Ok(await signing.SignedPayments(Current(c), documentId, versionId, ct)));

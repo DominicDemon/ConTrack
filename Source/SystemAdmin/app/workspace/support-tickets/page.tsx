@@ -22,6 +22,17 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable } from "@/components/ui/custom/data-table";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import type { Column } from "@tanstack/react-table";
+
+/** A column heading that sorts the list, like the other lists of the workspace (SortHeader). */
+const sortable = (label: string, align?: "center") => function SortableHeader({ column }: { column: Column<TicketDto, unknown> }) {
+  const state = column.getIsSorted(); const Icon = state === "asc" ? ArrowUp : state === "desc" ? ArrowDown : ArrowUpDown;
+  return <button type="button" title="Bấm để sắp xếp" onClick={() => column.toggleSorting(state === "asc")}
+    className={cn("inline-flex items-center gap-1 whitespace-nowrap font-medium", align === "center" && "w-full justify-center")}>
+    {label}<Icon className={cn("size-3.5", !state && "opacity-40")} aria-hidden/></button>;
+};
+const PRIORITY_RANK: Record<string, number> = { Urgent: 4, High: 3, Medium: 2, Low: 1 };
 import { SelectFilter } from "@/components/ui/custom/select-filter";
 import { SplitActionMenu } from "@/components/ui/custom/split-action-menu";
 import {
@@ -289,7 +300,7 @@ function SupportTicketsContent() {
         id: "ticketInfo",
         accessorFn: (row) =>
           `${row.ticketCode} ${row.ticketSubject} ${row.tenantName} ${row.tenantCode} ${row.department}`,
-        header: "Tổ chức / Tenant",
+        header: sortable("Tổ chức / Tenant"),
         cell: ({ row }) => {
           const item = row.original;
           return (
@@ -320,7 +331,7 @@ function SupportTicketsContent() {
       },
       {
         accessorKey: "ticketCode",
-        header: "Mã Ticket & Thời gian",
+        header: sortable("Mã Ticket & Thời gian"),
         cell: ({ row }) => {
           const item = row.original;
           const d = new Date(item.createdAt);
@@ -358,7 +369,7 @@ function SupportTicketsContent() {
       },
       {
         accessorKey: "ticketSubject",
-        header: "Tiêu đề & Nội dung",
+        header: sortable("Tiêu đề & Nội dung"),
         cell: ({ row }) => {
           const item = row.original;
           return (
@@ -375,7 +386,7 @@ function SupportTicketsContent() {
       },
       {
         accessorKey: "serviceName",
-        header: "Dịch vụ & Phụ trách",
+        header: sortable("Dịch vụ & Phụ trách"),
         cell: ({ row }) => {
           const item = row.original;
           const svc = item.serviceName || item.module || "Dịch vụ chung";
@@ -395,7 +406,8 @@ function SupportTicketsContent() {
       },
       {
         accessorKey: "ticketPriority",
-        header: () => <div className="text-center">Độ ưu tiên</div>,
+        header: sortable("Độ ưu tiên", "center"),
+        sortingFn: (a, b) => (PRIORITY_RANK[String(a.original.ticketPriority)] ?? 0) - (PRIORITY_RANK[String(b.original.ticketPriority)] ?? 0),
         cell: ({ row }) => (
           <div className="flex justify-center min-w-[100px]">
             <TicketPriorityBadge priority={row.original.ticketPriority} />
@@ -404,7 +416,7 @@ function SupportTicketsContent() {
       },
       {
         accessorKey: "ticketStatus",
-        header: () => <div className="text-center">Trạng thái</div>,
+        header: sortable("Trạng thái", "center"),
         cell: ({ row }) => (
           <div className="flex justify-center min-w-[120px]">
             <TicketStatusBadge status={row.original.ticketStatus} />

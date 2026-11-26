@@ -7,6 +7,8 @@ import { internalStyles as ui } from "@/components/internal/internal-theme";
 import { EmployeeFormDialog, TemporaryPasswordDialog } from "@/components/internal/employee-dialogs";
 import s from "@/components/internal/workspace.module.css";
 import { internalApi, dateTime, type EmployeeAdminRow, type DepartmentOption, type TemporaryPasswordResult } from "@/services/internal-api";
+import { ListPager } from "@/components/scanned-contracts/list-pager";
+import { SortHeader, useListView } from "@/components/internal/list-tools";
 
 export default function EmployeesPage() {
   const user = useInternalUser();
@@ -20,9 +22,11 @@ export default function EmployeesPage() {
       .catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setBusy(false); });
     return () => { active = false; }; }, [reload]);
   const departmentName = (id: string | null) => departments.find(d => d.id === id)?.name;
-  const term = search.trim().toLowerCase();
-  const shown = rows.filter(r => (!status || r.status === status) && (!department || r.departmentId === department)
-    && (!term || [r.name, r.username, r.code, r.email ?? "", r.phone ?? ""].some(v => v.toLowerCase().includes(term))));
+  const list = useListView(rows, { search, fields: r => [r.name, r.username, r.code, r.email, r.phone], filterKey: [status, department],
+    filter: r => (!status || r.status === status) && (!department || r.departmentId === department),
+    sorts: { name: r => r.name, contact: r => r.email ?? r.phone, department: r => departments.find(x => x.id === r.departmentId)?.name, status: r => r.status, login: r => r.lastLoginAt },
+    initial: { key: "name", dir: "asc" } });
+  const shown = list.rows;
   const locked = rows.filter(r => r.status !== "ACTIVE").length;
   const replace = (row: EmployeeAdminRow) => setRows(list => list.some(r => r.id === row.id) ? list.map(r => r.id === row.id ? row : r) : [...list, row].sort((a, b) => a.name.localeCompare(b.name, "vi")));
   // Manager seats change with a position, so the department list (who manages what) is reloaded after each save.
@@ -48,7 +52,7 @@ export default function EmployeesPage() {
       <select aria-label="Lọc trạng thái" className={ui.field} style={{ maxWidth: 220 }} value={status} onChange={e => setStatus(e.target.value)}><option value="">Tất cả trạng thái</option><option value="ACTIVE">Đang hoạt động</option><option value="LOCKED">Đã khóa</option></select>
       <button className={ui.secondaryButton} disabled={busy} onClick={() => { setBusy(true); setError(""); setReload(reload + 1); }} aria-label="Làm mới"><RefreshCw size={16}/></button></div>
       {busy ? <div className={s.empty}>Đang tải danh sách nhân viên…</div> : shown.length === 0 ? <div className={s.empty}><UsersRound size={42} strokeWidth={1.3}/><strong>{search || status || department ? "Không tìm thấy nhân viên phù hợp" : "Chưa có tài khoản nhân viên"}</strong><p>{search || status || department ? "Thử đổi từ khóa hoặc bộ lọc." : "Tạo tài khoản đầu tiên và xếp nhân viên vào phòng ban."}</p></div>
-      : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Nhân viên</th><th>Liên hệ</th><th>Phòng ban · Chức vụ</th><th>Trạng thái</th><th>Đăng nhập gần nhất</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
+      : <div className={s.tableWrap}><table className={s.table}><thead><tr><SortHeader label="Nhân viên" column="name" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Liên hệ" column="contact" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Phòng ban · Chức vụ" column="department" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Trạng thái" column="status" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Đăng nhập gần nhất" column="login" sort={list.sort} onSort={list.sortBy} firstDir="desc"/><th><span className="sr-only">Thao tác</span></th></tr></thead>
         <tbody>{shown.map(r => { const self = r.id === user.id; const reason = self ? "Không thể tự thao tác trên tài khoản của chính mình" : undefined; const name = departmentName(r.departmentId);
           return <tr key={r.id}><td><strong>{r.name}</strong>{self && <span className={s.muted}> (bạn)</span>}<div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{r.username} · {r.code}</div></td>
             <td>{r.email ?? <span className={s.muted}>Chưa có email</span>}<div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{r.phone ?? "Chưa có SĐT"}</div></td>
@@ -60,6 +64,7 @@ export default function EmployeesPage() {
               <button className={ui.secondaryButton} disabled={acting || self} title={reason} onClick={() => reset(r)}>Cấp mật khẩu tạm</button>
               <button className={ui.secondaryButton} disabled={acting || self} title={reason} onClick={() => toggle(r)}>{r.status === "ACTIVE" ? "Khóa" : "Mở khóa"}</button>
             </div></td></tr>; })}</tbody></table></div>}
+      {!busy && <ListPager page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} label="nhân viên"/>}
     </section><p className={s.muted} style={{ marginTop: 14 }}>Phòng ban và chức vụ quyết định màn hình nhân viên được dùng; thay đổi có hiệu lực ngay ở thao tác kế tiếp. Mỗi phòng có một quản lý. Bạn không thể đổi phòng ban, khóa hay cấp lại mật khẩu cho chính mình.</p>
     {form && <EmployeeFormDialog employee={form.employee} departments={departments} onClose={() => setForm(null)}
       onSaved={result => { setForm(null); refreshDepartments(); if ("temporaryPassword" in result) { replace(result.employee); setIssued(result); } else { replace(result); setNotice(`Đã cập nhật phòng ban của ${result.username}.`); } }}/>}

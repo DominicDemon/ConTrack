@@ -236,8 +236,8 @@ public static class ScanEndpoints
             return Results.Ok(await service.GetJobAsync(jobId, ct));
         }).Need(ScannedContractPermissions.View, ScannedContractPermissions.Confirm);
 
-        routes.MapGet("/scanned-contracts", async (int? page, int? pageSize, ScannedContractService service, CancellationToken ct) =>
-            Results.Ok(await service.ListContractsAsync(page, pageSize, ct))).Need(ScannedContractPermissions.View);
+        routes.MapGet("/scanned-contracts", async (int? page, int? pageSize, string? search, string? sort, bool? desc, ScannedContractService service, CancellationToken ct) =>
+            Results.Ok(await service.ListContractsAsync(page, pageSize, ct, search, sort, desc ?? true))).Need(ScannedContractPermissions.View);
 
         routes.MapGet("/scanned-contracts/{contractId:long}/file", async (long contractId, HttpContext context, ScannedContractService service, CancellationToken ct) =>
         {

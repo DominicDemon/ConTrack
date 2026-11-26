@@ -7,6 +7,8 @@ import { DocumentCategoryDialog } from "@/components/internal/catalog-dialogs";
 import s from "@/components/internal/workspace.module.css";
 import { useInternalUser } from "@/components/internal/internal-shell";
 import { internalApi, loadDocumentCategories, type DocumentCategory } from "@/services/internal-api";
+import { ListPager } from "@/components/scanned-contracts/list-pager";
+import { SortHeader, useListView } from "@/components/internal/list-tools";
 
 /** One line describing what a document of this type needs before it is sent. */
 function needs(c: DocumentCategory) {
@@ -26,10 +28,16 @@ export default function DocumentCategoriesPage() {
   const [rows, setRows] = useState<DocumentCategory[]>([]); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(true); const [reload, setReload] = useState(0); const [acting, setActing] = useState(false);
   const [editing, setEditing] = useState<DocumentCategory | "new" | null>(null);
+  const [search, setSearch] = useState(""); const [status, setStatus] = useState(""); const [origin, setOrigin] = useState("");
   useEffect(() => { let active = true;
     void loadDocumentCategories(true).then(list => { if (active) setRows(list); })
       .catch(e => { if (active) setError(e.message); }).finally(() => { if (active) setBusy(false); });
     return () => { active = false; }; }, [reload]);
+  const list = useListView(rows, { search, fields: r => [r.name, r.rule.effectiveLabel, r.rule.expireLabel, r.rule.itemsLabel], filterKey: [status, origin],
+    filter: r => (!status || (status === "ACTIVE") === r.active) && (!origin || (origin === "BUILTIN") === r.builtin),
+    sorts: { name: r => r.name, date: r => r.rule.effectiveLabel, templates: r => r.templateCount, status: r => r.active, id: r => r.id },
+    initial: { key: "id", dir: "asc" } });
+  const filtered = !!(search || status || origin);
 
   if (!canManageTemplates) return <div className={s.page}><p role="alert" className={ui.error}>Bạn không có quyền quản lý loại văn bản.</p></div>;
   const refresh = () => { setBusy(true); setError(""); setReload(n => n + 1); };
@@ -50,10 +58,14 @@ export default function DocumentCategoriesPage() {
     ]}/></div>
     {error && <p role="alert" className={ui.error} style={{ marginBottom: 16 }}>{error}</p>}
     {notice && <p role="status" className={ui.notice} style={{ marginBottom: 16 }}>{notice}</p>}
-    <section className={ui.card}>
-      {busy ? <div className={s.empty}>Đang tải loại văn bản…</div> : rows.length === 0 ? <div className={s.empty}><Files size={42} strokeWidth={1.3}/><strong>Chưa có loại văn bản</strong><p>Chạy script 020-document-categories.sql để tạo các loại có sẵn.</p></div>
-      : <div className={s.tableWrap}><table className={s.table}><thead><tr><th>Loại văn bản</th><th>Ngày</th><th>Bắt buộc trước khi gửi khách</th><th>Mẫu</th><th>Trạng thái</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
-        <tbody>{rows.map(r => <tr key={r.id}><td><strong>{r.name}</strong><div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{r.locked ? "Loại gốc của luồng ký" : r.builtin ? "Có sẵn" : "Tự thêm"}</div></td>
+    <section className={ui.card}><div className={s.toolbar}>
+      <input aria-label="Tìm loại văn bản" className={ui.field} placeholder="Tìm tên loại, tên ngày hoặc tên bảng…" value={search} onChange={e => setSearch(e.target.value)}/>
+      <select aria-label="Lọc trạng thái" className={ui.field} style={{ maxWidth: 220 }} value={status} onChange={e => setStatus(e.target.value)}><option value="">Tất cả trạng thái</option><option value="ACTIVE">Đang dùng</option><option value="HIDDEN">Đã ẩn</option></select>
+      <select aria-label="Lọc nguồn gốc" className={ui.field} style={{ maxWidth: 220 }} value={origin} onChange={e => setOrigin(e.target.value)}><option value="">Có sẵn và tự thêm</option><option value="BUILTIN">Có sẵn</option><option value="CUSTOM">Tự thêm</option></select></div>
+      {busy ? <div className={s.empty}>Đang tải loại văn bản…</div> : list.total === 0 ? <div className={s.empty}><Files size={42} strokeWidth={1.3}/><strong>{filtered ? "Không tìm thấy loại phù hợp" : "Chưa có loại văn bản"}</strong><p>{filtered ? "Thử đổi từ khóa hoặc bộ lọc." : "Chạy script 020-document-categories.sql để tạo các loại có sẵn."}</p></div>
+      : <div className={s.tableWrap}><table className={s.table}><thead><tr><SortHeader label="Loại văn bản" column="name" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Ngày" column="date" sort={list.sort} onSort={list.sortBy}/><th>Bắt buộc trước khi gửi khách</th>
+          <SortHeader label="Mẫu" column="templates" sort={list.sort} onSort={list.sortBy} firstDir="desc"/><SortHeader label="Trạng thái" column="status" sort={list.sort} onSort={list.sortBy} firstDir="desc"/><th><span className="sr-only">Thao tác</span></th></tr></thead>
+        <tbody>{list.rows.map(r => <tr key={r.id}><td><strong>{r.name}</strong><div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{r.locked ? "Loại gốc của luồng ký" : r.builtin ? "Có sẵn" : "Tự thêm"}</div></td>
           <td>{r.rule.effectiveLabel}{r.rule.expireShown && <div className={s.muted} style={{ fontSize: 11, marginTop: 4 }}>{r.rule.expireLabel}</div>}</td>
           <td className={s.muted}>{needs(r)}</td>
           <td>{r.templateCount ? <span className={s.badge}>{r.templateCount} mẫu</span> : <span className={s.muted}>Chưa dùng</span>}</td>
@@ -62,6 +74,7 @@ export default function DocumentCategoriesPage() {
             {!r.locked && <button className={ui.secondaryButton} disabled={acting} onClick={() => setEditing(r)}>Sửa</button>}
             {!r.locked && r.templateCount === 0 && <button className={ui.secondaryButton} disabled={acting} onClick={() => remove(r)}>Xóa</button>}
           </div></td></tr>)}</tbody></table></div>}
+      {!busy && <ListPager page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} label="loại văn bản"/>}
     </section>
     {editing && <DocumentCategoryDialog category={editing === "new" ? null : editing} onClose={() => setEditing(null)}
       onSaved={row => { setEditing(null); setNotice(editing === "new" ? `Đã thêm ${row.name}.` : `Đã cập nhật ${row.name}.`); refresh(); }}/>}

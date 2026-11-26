@@ -45,15 +45,25 @@ export function DateSortHeader({ label, order, onChange }: { label: string; orde
 }
 
 /** "11–20 / 34" with previous and next; hidden when everything fits on one page. */
+const pageNumbers = (page: number, pages: number): (number | null)[] => {
+  const shown = new Set([1, pages, page - 2, page - 1, page, page + 1, page + 2].filter(value => value >= 1 && value <= pages));
+  const sorted = [...shown].sort((a, b) => a - b);
+  return sorted.flatMap((value, index) => index > 0 && value - sorted[index - 1] > 1 ? [null, value] : [value]);
+};
+
 export default function Pager({ page, pages, total, size, setPage, label }: {
   page: number; pages: number; total: number; size: number; setPage: (page: number) => void; label: string;
 }) {
   if (pages <= 1) return null;
   const first = (page - 1) * size + 1, last = Math.min(page * size, total);
-  return <nav aria-label={`Phân trang ${label}`} style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, padding: "12px 4px 2px", flexWrap: "wrap" }}>
-    <span className={s.muted} style={{ fontSize: 13 }}>{first}–{last} / {total} {label}</span>
-    <button type="button" className={ui.secondaryButton} disabled={page <= 1} onClick={() => setPage(page - 1)} aria-label="Trang trước"><ChevronLeft size={16}/></button>
-    <span style={{ fontSize: 13, minWidth: 64, textAlign: "center" }} aria-current="page">Trang {page}/{pages}</span>
-    <button type="button" className={ui.secondaryButton} disabled={page >= pages} onClick={() => setPage(page + 1)} aria-label="Trang sau"><ChevronRight size={16}/></button>
+  return <nav aria-label={`Phân trang ${label}`} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 4px 2px", flexWrap: "wrap", borderTop: "1px solid var(--border)", marginTop: 12 }}>
+    <span className={s.muted} style={{ fontSize: 13 }} aria-live="polite">{first}–{last} / {total} {label}</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+      <button type="button" className={ui.secondaryButton} disabled={page <= 1} onClick={() => setPage(page - 1)}><ChevronLeft size={15}/>Trước</button>
+      {pageNumbers(page, pages).map((value, index) => value === null
+        ? <span key={`gap-${index}`} aria-hidden="true" className={s.muted} style={{ padding: "0 4px" }}>…</span>
+        : <button key={value} type="button" className={value === page ? ui.primaryButton : ui.secondaryButton} aria-current={value === page ? "page" : undefined} aria-label={`Trang ${value}`} onClick={() => setPage(value)} style={{ minWidth: 36, justifyContent: "center", paddingInline: 8 }}>{value}</button>)}
+      <button type="button" className={ui.secondaryButton} disabled={page >= pages} onClick={() => setPage(page + 1)}>Sau<ChevronRight size={15}/></button>
+    </div>
   </nav>;
 }

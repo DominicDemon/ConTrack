@@ -135,7 +135,10 @@ public sealed class CustomerSigningService(
            && evidence.ContractSignedEvidenceStatus == (int)SignedEvidenceStatus.Accepted
         select file;
 
-    public async Task<SignedContractPage> SignedContracts(InternalUser user, string? search, int page, CancellationToken ct, long? documentId = null)
+    /// <param name="sort">name, customer, employee, version or signed (default); <paramref name="desc"/> flips it.</param>
+    /// <param name="method">PAPER: printed and stamped; ELECTRONIC: signed online; null: both.</param>
+    public async Task<SignedContractPage> SignedContracts(InternalUser user, string? search, int page, CancellationToken ct, long? documentId = null,
+        string? sort = null, bool desc = true, string? method = null)
     {
         const int size = 10;
         if (page < 1 || page > int.MaxValue / size) throw new InternalAppException(400, "Số trang không hợp lệ.");
@@ -150,15 +153,25 @@ public sealed class CustomerSigningService(
                     let signedAt = v.ContractVersionSigndate ?? db.ContractElectronicSignatures
                         .Where(s => s.ContractVersionId == v.ContractVersionId && s.ContractElectronicStatus == Signed)
                         .Max(s => s.ContractElectronicSignedat)
-                    orderby signedAt descending, v.ContractVersionId descending
-                    select new SignedContractEntry(d.ContractDocumentId, v.ContractVersionId, d.ContractDocumentCode ?? "",
-                        d.ContractDocumentName, c.CustomerDisplayName, e.EmployeeDisplayName, v.ContractVersionVersionNo, signedAt)
-                    {
-                        PaperSigned = paper.Any(f => f.ContractDocumentId == d.ContractDocumentId && f.ContractVersionId == v.ContractVersionId)
-                    };
-        var rows = await query.Skip((page - 1) * size).Take(size + 1).ToListAsync(ct);
+                    let isPaper = paper.Any(f => f.ContractDocumentId == d.ContractDocumentId && f.ContractVersionId == v.ContractVersionId)
+                    where method == null || (method == "PAPER") == isPaper
+                    select new { d, v, Customer = c.CustomerDisplayName, Employee = e.EmployeeDisplayName, signedAt, isPaper };
+        var total = await query.CountAsync(ct);
+        var ordered = (sort, desc) switch
+        {
+            ("name", false) => query.OrderBy(x => x.d.ContractDocumentName), ("name", true) => query.OrderByDescending(x => x.d.ContractDocumentName),
+            ("customer", false) => query.OrderBy(x => x.Customer), ("customer", true) => query.OrderByDescending(x => x.Customer),
+            ("employee", false) => query.OrderBy(x => x.Employee), ("employee", true) => query.OrderByDescending(x => x.Employee),
+            ("version", false) => query.OrderBy(x => x.v.ContractVersionVersionNo), ("version", true) => query.OrderByDescending(x => x.v.ContractVersionVersionNo),
+            (_, false) => query.OrderBy(x => x.signedAt),
+            _ => query.OrderByDescending(x => x.signedAt),
+        };
+        var rows = await ordered.ThenByDescending(x => x.v.ContractVersionId).Skip((page - 1) * size).Take(size + 1)
+            .Select(x => new SignedContractEntry(x.d.ContractDocumentId, x.v.ContractVersionId, x.d.ContractDocumentCode ?? "",
+                x.d.ContractDocumentName, x.Customer, x.Employee, x.v.ContractVersionVersionNo, x.signedAt) { PaperSigned = x.isPaper })
+            .ToListAsync(ct);
         var items = rows.Take(size).ToList();
-        if (items.Count == 0) return new(items, false);
+        if (items.Count == 0) return new(items, false, total);
         var versions = items.Select(row => row.VersionId).ToArray();
         var installments = (await db.ContractPaymentMilestones.AsNoTracking()
             .Where(m => versions.Contains(m.ContractVersionId))
@@ -170,7 +183,7 @@ public sealed class CustomerSigningService(
             var flags = installments[(row.DocumentId, row.VersionId)].Select(m => m.Paid).ToArray();
             var paid = flags.Count(value => value);
             return row with { Payment = new(flags.Length, paid, flags.Length == 2 && paid == 1 ? Array.IndexOf(flags, true) + 1 : null) };
-        }).ToList(), rows.Count > size);
+        }).ToList(), rows.Count > size, total);
     }
 
     private async Task RequireSignedVersion(InternalUser user, long documentId, long versionId, CancellationToken ct)

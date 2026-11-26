@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { SortHeader, useListView } from "@/components/internal/list-tools";
+import { ListPager } from "@/components/scanned-contracts/list-pager";
+import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -14,6 +17,10 @@ import { formatDateTime } from "./format";
 export function ScanEmailHistory() {
   const [rows, setRows] = useState<ScanEmailHistoryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState(""); const [kind, setKind] = useState(""); const [result, setResult] = useState("");
+  const list = useListView(rows ?? [], { search, fields: r => [r.sender, r.fileName, ...r.sent, ...r.failed], filterKey: [kind, result],
+    filter: r => (!kind || r.kind === kind) && (!result || (result === "FAILED") === r.failed.length > 0),
+    sorts: { sentAt: r => r.sentAt, sender: r => r.sender, file: r => r.fileName, to: r => r.sent.length }, initial: { key: "sentAt", dir: "desc" } });
   // The director oversees sendings without the scan screens: file names are shown without a link for them.
   const { can } = useScanAccess();
   const linkable = (kind: ScanEmailHistoryItem["kind"]) =>
@@ -36,18 +43,27 @@ export function ScanEmailHistory() {
   if (rows.length === 0) return <p className="text-sm text-muted-foreground">Chưa có bản scan nào được gửi qua email.</p>;
 
   return (
+    <div className="space-y-4">
+    <div className="flex flex-wrap gap-2">
+      <Input type="search" aria-label="Tìm lần gửi" placeholder="Tìm người gửi, tên tệp hoặc email nhận…" value={search} onChange={(event) => setSearch(event.target.value)} className="max-w-md" />
+      <select aria-label="Lọc loại tệp" className="h-9 rounded-md border bg-background px-3 text-sm" value={kind} onChange={(event) => setKind(event.target.value)}>
+        <option value="">Bản ký giấy và bản scan</option><option value="evidence">Bản ký giấy</option><option value="scan">Bản scan hợp đồng giấy</option></select>
+      <select aria-label="Lọc kết quả gửi" className="h-9 rounded-md border bg-background px-3 text-sm" value={result} onChange={(event) => setResult(event.target.value)}>
+        <option value="">Mọi kết quả</option><option value="OK">Gửi được hết</option><option value="FAILED">Có địa chỉ lỗi</option></select>
+    </div>
+    {list.total === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">Không tìm thấy lần gửi phù hợp. Thử đổi từ khóa hoặc bộ lọc.</p> : <>
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead>Thời gian</TableHead>
-          <TableHead>Người gửi</TableHead>
-          <TableHead>Tệp</TableHead>
-          <TableHead>Đã gửi tới</TableHead>
+          <SortHeader label="Thời gian" column="sentAt" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap" firstDir="desc"/>
+          <SortHeader label="Người gửi" column="sender" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap"/>
+          <SortHeader label="Tệp" column="file" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap"/>
+          <SortHeader label="Đã gửi tới" column="to" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap" firstDir="desc"/>
           <TableHead>Lỗi</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((row, index) => (
+        {list.rows.map((row, index) => (
           <TableRow key={`${row.sentAt}-${index}`}>
             <TableCell className="whitespace-nowrap text-sm">{formatDateTime(row.sentAt)}</TableCell>
             <TableCell className="text-sm">{row.sender}</TableCell>
@@ -70,5 +86,7 @@ export function ScanEmailHistory() {
         ))}
       </TableBody>
     </Table>
+    <ListPager page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} label="lần gửi" /></>}
+    </div>
   );
 }

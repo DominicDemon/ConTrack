@@ -30,6 +30,16 @@ import {
   SummaryCards,
 } from "@/components/ui/custom/summary-cards";
 import { cn } from "@/lib/utils";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import type { Column } from "@tanstack/react-table";
+
+/** A column heading that sorts the list, like the other portal lists (SortHeader). */
+const sortable = (label: string, align?: "center") => function SortableHeader({ column }: { column: Column<TicketDto, unknown> }) {
+  const state = column.getIsSorted(); const Icon = state === "asc" ? ArrowUp : state === "desc" ? ArrowDown : ArrowUpDown;
+  return <button type="button" title="Bấm để sắp xếp" onClick={() => column.toggleSorting(state === "asc")}
+    className={cn("inline-flex items-center gap-1 whitespace-nowrap font-medium", align === "center" && "w-full justify-center")}>
+    {label}<Icon className={cn("size-3.5", !state && "opacity-40")} aria-hidden/></button>;
+};
 import {
   customerTicketApi,
   TicketDto,
@@ -233,7 +243,7 @@ export default function CustomerSupportTicketsPage() {
         id: "searchInfo",
         accessorFn: (row) =>
           `${row.ticketCode} ${row.ticketSubject} ${row.ticketDescription} ${row.department} ${row.serviceName || row.module || ""}`,
-        header: "Tiêu đề yêu cầu",
+        header: sortable("Tiêu đề yêu cầu"),
         cell: ({ row }) => {
           const item = row.original;
           return (
@@ -250,7 +260,7 @@ export default function CustomerSupportTicketsPage() {
       },
       {
         accessorKey: "department",
-        header: "Gửi đến (Phòng ban)",
+        header: sortable("Gửi đến (Phòng ban)"),
         cell: ({ row }) => {
           const item = row.original;
           return (
@@ -262,7 +272,7 @@ export default function CustomerSupportTicketsPage() {
       },
       {
         accessorKey: "serviceName",
-        header: "Dịch vụ",
+        header: sortable("Dịch vụ"),
         cell: ({ row }) => {
           const item = row.original;
           const serviceLabel =
@@ -276,7 +286,7 @@ export default function CustomerSupportTicketsPage() {
       },
       {
         accessorKey: "ticketStatus",
-        header: () => <div className="text-center">Trạng thái</div>,
+        header: sortable("Trạng thái", "center"),
         cell: ({ row }) => (
           <div className="flex justify-center min-w-[120px]">
             <TicketStatusBadge status={row.original.ticketStatus} />

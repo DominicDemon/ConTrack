@@ -1,6 +1,7 @@
 "use client";
 import { ListPager } from "@/components/scanned-contracts/list-pager";
 import ContractTabs from "@/components/internal/contract-tabs";
+import { SortHeader, useListView } from "@/components/internal/list-tools";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, FileSignature, RefreshCw, Trash2 } from "lucide-react";
@@ -10,7 +11,7 @@ import { internalStyles as ui } from "@/components/internal/internal-theme";
 import s from "@/components/internal/workspace.module.css";
 
 export default function CompanySigningQueuePage() {
-  const [contractPage, setContractPage] = useState(1);
+  const [search, setSearch] = useState(""); const [signer, setSigner] = useState("");
   const [rows, setRows] = useState<CompanySigningQueueItem[]>([]);
   const [selected, setSelected] = useState<CompanySigningQueueItem | null>(null);
   const [documentUrl, setDocumentUrl] = useState("");
@@ -28,6 +29,11 @@ export default function CompanySigningQueuePage() {
     catch (e) { setError((e as Error).message); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+  const list = useListView(rows, { search, fields: r => [r.code, r.contractName, r.customerName], filterKey: signer,
+    filter: r => !signer || r.signerName === signer,
+    sorts: { code: r => r.code, name: r => r.contractName, customer: r => r.customerName, signer: r => r.signerName, created: r => r.createdAt },
+    initial: { key: "created", dir: "asc" } });
+  const signers = [...new Set(rows.map(r => r.signerName))].sort((a, b) => a.localeCompare(b, "vi"));
   useEffect(() => {
     if (!selected) { setDocumentUrl(""); return; }
     let active = true;
@@ -96,16 +102,18 @@ export default function CompanySigningQueuePage() {
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }
-  const contractTotal = rows.length;
-  const currentPage = Math.min(contractPage, Math.max(1, Math.ceil(contractTotal / 10)));
   return <main className={`${s.page} ${s.signingPage}`} data-ui="company-signing-queue"><ContractTabs/>
     <div className={s.titleRow}><div><span className={s.eyebrow}>HỢP ĐỒNG ĐÃ ĐƯỢC PHÊ DUYỆT</span><h1>Ký phía công ty</h1><p className={s.muted}>Công ty ký trước. Sau đó khách đăng nhập Portal, xác minh OTP và ký trên hợp đồng của mình.</p></div>
       <button className={ui.secondaryButton} disabled={busy} onClick={() => void load()}><RefreshCw size={16}/> Làm mới</button></div>
     {error && <p role="alert" className={ui.error}>{error}</p>}{notice && <p role="status" className={ui.notice}>{notice}</p>}
     {!rows.length ? <section className={ui.card}><p>Chưa có hợp đồng chờ công ty ký. Hành chính duyệt bản chốt xong, phiên ký sẽ tự tạo và xuất hiện tại đây.</p></section> :
-      <section className={ui.card} aria-label="Danh sách hợp đồng chờ công ty ký"><div className={s.tableWrap}><table className={s.table}><thead><tr><th>Mã hợp đồng</th><th>Hợp đồng</th><th>Khách hàng</th><th>Người ký</th><th></th></tr></thead><tbody>
-        {rows.slice((currentPage - 1) * 10, currentPage * 10).map(row => <tr key={row.signatureId}><td>{row.code}</td><td>{row.contractName}</td><td>{row.customerName}</td><td>{row.signerName}</td><td><button className={ui.secondaryButton} onClick={() => { setSelected(row); setConfirmed(false); clearSignature(); }}>Xem PDF và ký</button></td></tr>)}
-      </tbody></table></div><ListPager page={currentPage} pageSize={10} total={contractTotal} onPage={setContractPage} label="hợp đồng"/></section>}
+      <section className={ui.card} aria-label="Danh sách hợp đồng chờ công ty ký"><div className={s.toolbar}>
+        <input aria-label="Tìm hợp đồng chờ ký" className={ui.field} placeholder="Tìm mã, tên hợp đồng hoặc khách hàng…" value={search} onChange={e => setSearch(e.target.value)}/>
+        <select aria-label="Lọc người ký" className={ui.field} style={{ maxWidth: 240 }} value={signer} onChange={e => setSigner(e.target.value)}><option value="">Mọi người ký</option>{signers.map(n => <option key={n} value={n}>{n}</option>)}</select></div>
+        {list.total === 0 ? <div className={s.empty}><FileSignature size={42} strokeWidth={1.3}/><strong>Không tìm thấy hợp đồng phù hợp</strong><p>Thử đổi từ khóa hoặc bộ lọc.</p></div>
+        : <div className={s.tableWrap}><table className={s.table}><thead><tr><SortHeader label="Mã hợp đồng" column="code" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Hợp đồng" column="name" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Khách hàng" column="customer" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Người ký" column="signer" sort={list.sort} onSort={list.sortBy}/><SortHeader label="Chờ từ" column="created" sort={list.sort} onSort={list.sortBy}/><th><span className="sr-only">Thao tác</span></th></tr></thead><tbody>
+        {list.rows.map(row => <tr key={row.signatureId}><td>{row.code}</td><td>{row.contractName}</td><td>{row.customerName}</td><td>{row.signerName}</td><td className={s.muted}>{new Date(row.createdAt).toLocaleString("vi-VN")}</td><td><button className={ui.secondaryButton} onClick={() => { setSelected(row); setConfirmed(false); clearSignature(); }}>Xem PDF và ký</button></td></tr>)}
+      </tbody></table></div>}<ListPager page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} label="hợp đồng"/></section>}
     {selected && <section className={`${ui.card} ${s.companySigningDetail}`} aria-label="Ký hợp đồng">
       <header className={s.companySigningDetailHeader}><div><span className={s.signingCode}>{selected.code} · {selected.customerName}</span><h2>{selected.contractName}</h2><p>PDF chốt đã được khách hàng đồng ý. Chữ ký sẽ ghi trực tiếp lên bản này.</p></div><button className={ui.secondaryButton} onClick={() => setSelected(null)}>Đóng</button></header>
       <div className={s.companySigningWork}>

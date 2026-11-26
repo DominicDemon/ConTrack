@@ -11,6 +11,10 @@ import { MAX_SCAN_BYTES, pageCountLabel, ScanPagesPicker, type ScanPages } from 
 import { StatusBadge } from "@/components/signed-scans/status-badge";
 import { ScanFileButtons } from "./scan-file-buttons";
 import { ListPager } from "./list-pager";
+import { SortHeader, type SortState } from "@/components/internal/list-tools";
+import { Input } from "@/components/ui/input";
+
+type ContractColumn = "code" | "name" | "signed" | "value" | "created";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -248,7 +252,7 @@ function ContractFileButtons({ contract }: { contract: ScannedContract }) {
   );
 }
 
-function ContractTable({ contracts }: { contracts: ScannedContract[] }) {
+function ContractTable({ contracts, sort, onSort }: { contracts: ScannedContract[]; sort: SortState<ContractColumn>; onSort: (key: ContractColumn, firstDir?: "asc" | "desc") => void }) {
   if (contracts.length === 0) {
     return <p className="py-8 text-center text-sm text-muted-foreground">Chưa có hợp đồng scan nào.</p>;
   }
@@ -258,11 +262,11 @@ function ContractTable({ contracts }: { contracts: ScannedContract[] }) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Số hợp đồng</TableHead>
-              <TableHead>Tên hợp đồng</TableHead>
+              <SortHeader label="Số hợp đồng" column="code" sort={sort} onSort={onSort} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap"/>
+              <SortHeader label="Tên hợp đồng" column="name" sort={sort} onSort={onSort} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap"/>
               <TableHead>Khách hàng</TableHead>
-              <TableHead>Ngày ký</TableHead>
-              <TableHead className="text-right">Giá trị</TableHead>
+              <SortHeader label="Ngày ký" column="signed" sort={sort} onSort={onSort} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap" firstDir="desc"/>
+              <SortHeader label="Giá trị" column="value" sort={sort} onSort={onSort} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-right" firstDir="desc"/>
               <TableHead className="pr-4 text-right">Thao tác</TableHead>
             </TableRow>
           </TableHeader>
@@ -321,13 +325,16 @@ export function ScannedContractsPage() {
   const [contracts, setContracts] = useState<ScanPage<ScannedContract> | null>(null);
   const [batchPage, setBatchPage] = useState(1);
   const [contractPage, setContractPage] = useState(1);
+  const [contractSearch, setContractSearch] = useState("");
+  const [contractSort, setContractSort] = useState<SortState<ContractColumn>>({ key: "created", dir: "desc" });
+  const sortContracts = (key: ContractColumn, firstDir: "asc" | "desc" = "asc") => { setContractPage(1); setContractSort(old => old.key === key ? { key, dir: old.dir === "asc" ? "desc" : "asc" } : { key, dir: firstDir }); };
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const [nextBatches, nextContracts] = await Promise.all([
         scannedContractsApi.listBatches(batchPage, BATCHES_PER_PAGE),
-        scannedContractsApi.listContracts(contractPage, CONTRACTS_PER_PAGE),
+        scannedContractsApi.listContracts(contractPage, CONTRACTS_PER_PAGE, { search: contractSearch.trim() || undefined, sort: contractSort.key, desc: contractSort.dir === "desc" }),
       ]);
       // A page that emptied (e.g. the last row moved on) falls back to the last page that has rows.
       const lastBatchPage = Math.max(1, Math.ceil(nextBatches.total / BATCHES_PER_PAGE));
@@ -340,11 +347,11 @@ export function ScannedContractsPage() {
     } catch (loadError) {
       setError(getScanErrorMessage(loadError, "Không tải được danh sách."));
     }
-  }, [batchPage, contractPage]);
+  }, [batchPage, contractPage, contractSearch, contractSort]);
 
   // Loaded from a timer callback, not in the effect body itself (react-hooks/set-state-in-effect).
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
+    const timer = window.setTimeout(() => void load(), 250); // also waits for typing in the search box
     return () => window.clearTimeout(timer);
   }, [load]);
 
@@ -418,7 +425,11 @@ export function ScannedContractsPage() {
         <CardContent>
           {contracts ? (
             <>
-              <ContractTable contracts={contracts.items} />
+              <Input type="search" aria-label="Tìm hợp đồng scan" placeholder="Tìm số hoặc tên hợp đồng…" value={contractSearch}
+                onChange={(event) => { setContractSearch(event.target.value); setContractPage(1); }} className="mb-4 max-w-md" />
+              {contracts.items.length === 0 && contractSearch
+                ? <p className="py-12 text-center text-sm text-muted-foreground">Không tìm thấy hợp đồng phù hợp. Thử đổi từ khóa.</p>
+                : <ContractTable contracts={contracts.items} sort={contractSort} onSort={sortContracts} />}
               <ListPager page={contractPage} pageSize={CONTRACTS_PER_PAGE} total={contracts.total} onPage={setContractPage} label="hợp đồng" />
             </>
           ) : (

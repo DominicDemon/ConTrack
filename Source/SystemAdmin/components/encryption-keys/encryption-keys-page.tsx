@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { SortHeader, useListView } from "@/components/internal/list-tools";
+import { ListPager } from "@/components/scanned-contracts/list-pager";
 import { FileKey2, KeyRound, Loader2 } from "lucide-react";
 import { formatDateTime } from "@/components/signed-scans/format";
 import { StatusBadge } from "@/components/signed-scans/status-badge";
@@ -128,6 +130,10 @@ export function EncryptionKeysPage() {
   const [recovering, setRecovering] = useState<EmployeeKeyStatus | null>(null);
   const [recoveringId, setRecoveringId] = useState<string | null>(null);
   const [serverKeepsRecoveryKey, setServerKeepsRecoveryKey] = useState(false);
+  const [search, setSearch] = useState(""); const [keyState, setKeyState] = useState("");
+  const list = useListView(rows ?? [], { search, fields: r => [r.displayName, r.username], filterKey: keyState,
+    filter: r => !keyState || (keyState === "HAS" ? r.hasKey : keyState === "NONE" ? !r.hasKey : r.filesToRecover > 0),
+    sorts: { name: r => r.displayName, key: r => r.hasKey, setAt: r => r.setAt }, initial: { key: "name", dir: "asc" } });
 
   const load = useCallback(async () => {
     try {
@@ -207,20 +213,28 @@ export function EncryptionKeysPage() {
           <CardDescription>Nhân viên được xem bản scan, hoặc đang giữ key, và tình trạng key của họ.</CardDescription>
         </CardHeader>
         <CardContent>
+          <div className="mb-4 flex flex-wrap gap-2">
+            <Input type="search" aria-label="Tìm nhân viên" placeholder="Tìm tên hoặc tên đăng nhập…" value={search} onChange={(event) => setSearch(event.target.value)} className="max-w-md" />
+            <select aria-label="Lọc tình trạng key" className="h-9 rounded-md border bg-background px-3 text-sm" value={keyState} onChange={(event) => setKeyState(event.target.value)}>
+              <option value="">Mọi tình trạng key</option><option value="HAS">Đã đặt key</option><option value="NONE">Chưa đặt key</option><option value="RECOVER">Có tệp cần mở lại</option></select>
+          </div>
           {!rows ? (
             <Skeleton className="h-24 w-full" />
+          ) : list.total === 0 ? (
+            <p className="py-12 text-center text-sm text-muted-foreground">Không tìm thấy nhân viên phù hợp. Thử đổi từ khóa hoặc bộ lọc.</p>
           ) : (
+            <>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Nhân viên</TableHead>
-                  <TableHead>Key</TableHead>
-                  <TableHead className="hidden sm:table-cell">Đặt lúc</TableHead>
+                  <SortHeader label="Nhân viên" column="name" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap"/>
+                  <SortHeader label="Key" column="key" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap" firstDir="desc"/>
+                  <SortHeader label="Đặt lúc" column="setAt" sort={list.sort} onSort={list.sortBy} className="h-10 px-2 text-left align-middle font-medium whitespace-nowrap hidden sm:table-cell" firstDir="desc"/>
                   <TableHead className="pr-4 text-right">Thao tác</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((row) => (
+                {list.rows.map((row) => (
                   <TableRow key={row.employeeId}>
                     <TableCell>
                       <span className="font-medium">{row.displayName}</span>
@@ -268,6 +282,8 @@ export function EncryptionKeysPage() {
                 ))}
               </TableBody>
             </Table>
+            <ListPager page={list.page} pageSize={list.pageSize} total={list.total} onPage={list.setPage} label="nhân viên" />
+            </>
           )}
         </CardContent>
       </Card>

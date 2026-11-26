@@ -173,8 +173,8 @@ export const scannedContractsApi = {
     return data;
   },
 
-  async listContracts(page = 1, pageSize = 20): Promise<ScanPage<ScannedContract>> {
-    const { data } = await scanApi.get<ScanPage<ScannedContract>>("/scanned-contracts", { params: { page, pageSize } });
+  async listContracts(page = 1, pageSize = 20, query: { search?: string; sort?: string; desc?: boolean } = {}): Promise<ScanPage<ScannedContract>> {
+    const { data } = await scanApi.get<ScanPage<ScannedContract>>("/scanned-contracts", { params: { page, pageSize, ...query } });
     return data;
   },
 
